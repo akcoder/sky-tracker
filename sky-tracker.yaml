@@ -4,7 +4,7 @@
 # (SGP4/SDP4), sky_stars.h (star catalogue). Orbits come from CelesTrak: no API key.
 
 substitutions:
-  fw_version: "4.6.9"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.10"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -297,7 +297,8 @@ http_request:
   timeout: 10s
 
 # UI-68: internet updates. GitHub Actions builds every release and publishes the firmware
-# and its manifest on GitHub Pages; the device checks every hour and on Settings > Updates.
+# and its manifest on GitHub Pages; the device checks every hour, on Settings > Upgrade Check
+# and on the Upgrade Check button (web UI, HA).
 update:
   - platform: http_request
     id: fw_update
@@ -1374,6 +1375,16 @@ button:
     icon: mdi:rocket-launch
     on_press:
       - lambda: sat::rocket::play_now();
+  - platform: template           # UI-68b: the Settings Upgrade Check, from the web UI and HA
+    id: btn_upgrade_check
+    name: Upgrade Check
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 2
+    icon: mdi:cloud-refresh
+    entity_category: config
+    on_press:
+      - component.update: fw_update  # quiet: the Firmware row and the gear-side icon show the result
   - platform: restart            # diagnostic reboot, in HA and the web UI
     id: btn_reboot
     name: Reboot
