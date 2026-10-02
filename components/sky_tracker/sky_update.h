@@ -19,6 +19,8 @@ namespace sat {
 namespace upd {
 void init(esphome::update::UpdateEntity *e, const lv_font_t *title, const lv_font_t *body, const lv_font_t *small);
 void check_now();  // Settings > Upgrade Check
+void check_quiet(const char *why);  // NET-13a: hourly, at boot, the web/HA button (no prompt)
+void set_source(const char *url);   // the manifest URL, for the log
 void set_button(lv_obj_t *b);  // the map page's update icon, beside the gear
 void offer_now();              // that icon tapped
 }  // namespace upd
@@ -33,6 +35,8 @@ void offer_now();              // that icon tapped
 
 namespace sat {
 namespace upd {
+
+inline const char *source = "";  // the manifest URL (NET-13a)
 
 enum Mode : uint8_t { M_NONE = 0, M_CHECKING, M_LATEST, M_AVAILABLE, M_INSTALLING, M_FAILED };
 
@@ -62,6 +66,7 @@ inline std::string current() { return ent ? ent->update_info.current_version : s
 inline bool has_prog() { return ent && ent->update_info.has_progress; }
 inline float prog() { return ent ? ent->update_info.progress : 0.0f; }
 inline void do_check() {
+  ESP_LOGD("upd", "firmware: GET %s", source);  // NET-13a: the update check's request
   if (ent)
     ent->check();
 }
@@ -249,9 +254,23 @@ inline int state_newer_only() {
     return 1;
   return s;
 }
+// NET-13a: log each check's answer once (what the manifest says, against what is installed)
+inline void log_result(int s) {
+  static int last_s = -1;
+  static std::string last_v;
+  const std::string v = latest();
+  if (s == last_s && v == last_v)
+    return;
+  last_s = s;
+  last_v = v;
+  if ((s == 1 || s == 2) && !v.empty())
+    ESP_LOGI("upd", "firmware: manifest has %s, installed %s (%s)", v.c_str(), current().c_str(),
+             s == 2 ? "newer, offered" : "nothing newer");
+}
 // every 500 ms (lv_timer): follow the entity
 inline void tick() {
   const int s = state_newer_only();
+  log_result(s);
   switch (ui_.mode) {
     case M_CHECKING:
       if (s == 2)
@@ -297,6 +316,11 @@ void offer_now() {
   close();
   show(M_AVAILABLE);
 }
+void check_quiet(const char *why) {
+  ESP_LOGD("upd", "firmware check (%s)", why);
+  do_check();
+}
+void set_source(const char *url) { source = url; }
 void check_now() {
   close();
   ui_.asked = true;
