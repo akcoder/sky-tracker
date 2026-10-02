@@ -4,7 +4,8 @@
 // manifest (every hour, and when Settings > Updates is tapped). This shows the result:
 // "Checking for updates", then "Up to date" / "Update available" (Not now, Update), then the
 // download's progress; ESPHome's http_request OTA installs it and restarts. An update found by
-// the hourly check is offered once per version (Not now holds until the next restart).
+// the hourly check does not open anything: an update icon appears beside the gear on the map
+// page, and tapping it shows the prompt. The icon stays until the update is installed.
 // Compiled in sky_extra.cpp (SKY_IMPL), as sky_about.h.
 #include <cstdint>
 namespace esphome {
@@ -18,10 +19,13 @@ namespace sat {
 namespace upd {
 void init(esphome::update::UpdateEntity *e, const lv_font_t *title, const lv_font_t *body, const lv_font_t *small);
 void check_now();  // Settings > Updates
+void set_button(lv_obj_t *b);  // the map page's update icon, beside the gear
+void offer_now();              // that icon tapped
 }  // namespace upd
 }  // namespace sat
 #else
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #ifndef SAT_HOST_TEST
 #include "esphome/components/update/update_entity.h"
@@ -78,7 +82,7 @@ struct Ui {
 };
 inline Ui ui_;
 inline std::string declined;  // the version Not now was given to (until restart)
-inline std::string offered;   // the version already offered by the hourly check
+inline lv_obj_t *icon = nullptr;  // the map page's update icon (YAML upd_btn)
 
 inline void close() {
   if (ui_.root)
@@ -194,7 +198,7 @@ inline void show(Mode m) {
     case M_INSTALLING:
       lv_label_set_text(ui_.title, "Updating firmware");
       lv_label_set_text(ui_.l1, "Downloading");
-      lv_label_set_text(ui_.l2, "Keep the power on; it restarts by itself");
+      lv_label_set_text(ui_.l2, "Keep the power on");
       lv_obj_set_style_text_color(ui_.l2, lv_color_hex(0xFFB547), 0);
       lv_obj_remove_flag(ui_.bar, LV_OBJ_FLAG_HIDDEN);
       lv_bar_set_value(ui_.bar, 0, LV_ANIM_OFF);
@@ -222,9 +226,32 @@ inline void btn_cb(lv_event_t *e) {
     declined = latest();
   close();
 }
+// "4.6.10" > "4.6.9": numbers compared as numbers
+inline int vcmp(const char *a, const char *b) {
+  while (*a && *b) {
+    if (*a >= '0' && *a <= '9' && *b >= '0' && *b <= '9') {
+      unsigned long x = strtoul(a, (char **) &a, 10), y = strtoul(b, (char **) &b, 10);
+      if (x != y)
+        return x < y ? -1 : 1;
+    } else {
+      if (*a != *b)
+        return (unsigned char) *a < (unsigned char) *b ? -1 : 1;
+      a++, b++;
+    }
+  }
+  return *a ? 1 : *b ? -1 : 0;
+}
+// ESPHome calls any difference "update available", an older release included (4.6.5 offered
+// the GitHub 4.6.3 and installed it). Only a newer version counts here.
+inline int state_newer_only() {
+  const int s = st();
+  if (s == 2 && vcmp(latest().c_str(), current().c_str()) <= 0)
+    return 1;
+  return s;
+}
 // every 500 ms (lv_timer): follow the entity
 inline void tick() {
-  const int s = st();
+  const int s = state_newer_only();
   switch (ui_.mode) {
     case M_CHECKING:
       if (s == 2)
@@ -245,18 +272,30 @@ inline void tick() {
       if (s == 2 && now_ms() - ui_.since > 120000)  // back to "available": the install failed
         show(M_AVAILABLE);
       break;
-    case M_NONE:  // the hourly check found something: offer it once per version
-      if (s == 2) {
-        const std::string v = latest();
-        if (!v.empty() && v != declined && v != offered) {
-          offered = v;
-          show(M_AVAILABLE);
-        }
-      }
-      break;
     default:
       break;
   }
+  // the icon: a newer version is waiting and nothing is installing
+  if (icon) {
+    const bool want = s == 2 && ui_.mode != M_INSTALLING;
+    if (want == lv_obj_has_flag(icon, LV_OBJ_FLAG_HIDDEN)) {
+      if (want)
+        lv_obj_remove_flag(icon, LV_OBJ_FLAG_HIDDEN);
+      else
+        lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+}
+void set_button(lv_obj_t *b) {
+  icon = b;
+  if (icon)
+    lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
+}
+void offer_now() {
+  if (state_newer_only() != 2)
+    return;
+  close();
+  show(M_AVAILABLE);
 }
 void check_now() {
   close();
