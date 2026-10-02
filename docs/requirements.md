@@ -1,7 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.10 (queued): the launch's ground cloud is 12 round billows rolling out sideways from the pad, the inner ones warm-lit, then drifting and thinning (UI-69; was three widening rounded bars). Upgrade Check button in the web UI and HA (UI-68b). Satellite and sky updates pause while the launch animation plays (UI-69b). The rocket's flame flickers through five shapes (length, width, lean) with a white-hot core (UI-69c; was two lengths swapped every 80 ms). README animation re-recorded at 30 fps.
+- 4.6.11 (installed): the launch animation was still jerky on the unit. Smoke is now soft round images made at boot (a plain image blend, no anti-aliased circle masks), the ground cloud has 6 billows (was 12) and the trail 32 puffs (was 48); host render time per frame down about 30%, the largest frame's redraw down 37%. Firmware update checks are logged: the manifest URL at DEBUG and the answer at INFO (NET-13a; ESPHome's own update check logged nothing). The unit logs the frame rate after each animation ("animation: N frames in T ms (F fps), longest gap G ms") to tune from.
+- 4.6.10 (installed): the launch's ground cloud is 12 round billows rolling out sideways from the pad, the inner ones warm-lit, then drifting and thinning (UI-69; was three widening rounded bars). Upgrade Check button in the web UI and HA (UI-68b). Satellite and sky updates pause while the launch animation plays (UI-69b). The rocket's flame flickers through five shapes (length, width, lean) with a white-hot core (UI-69c; was two lengths swapped every 80 ms). README animation re-recorded at 30 fps.
 - 4.6.9 (installed): smoother launch animation (UI-69a): positions are set at the start of every display refresh (16 ms) instead of on a 33 ms timer that beat against it, and the smoke puffs grow and fade in 0.18 s steps so only a few change per frame (host test: 6% of the screen redrawn per frame, was 36% with whole-screen frames when the 32 dirty-area limit overflowed).
 - 4.6.8 (installed): every HTTP request is logged with its URL at DEBUG ("launches: GET https://ll.thespacedevs.com/..."), and the URL is added to each failure line (NET-13).
 - 4.6.7 (installed): releases carry the manifest and the .ota/.factory .bin files with checksums, no longer the 33 MB .elf (also left off GitHub Pages); the .elf stays in the build's artifact for 90 days, for decoding crashes. The Settings button Updates is now Upgrade Check (206,440 150x34; the error line beside it is 182 wide). Time zone picker at the top of Settings > Display, also a Time Zone select in HA and the web page (UI-70). Launch alerts from 3 days ahead, the next three (UI-54; was: a nearby launch from 24 h, any launch in its last hour). Space event alerts: dockings, undockings, spacecraft releases, EVAs from Launch Library 2's events, within 3 days, exact times only, up to two (UI-54c).
@@ -926,7 +927,7 @@ UI-68b Upgrade Check button (web UI System group, weight 2, and HA, config categ
 UI-69  Launch animation (sky_rocket.h): at a launch's T-0 (status not flown/scrubbed, within
        2 min after NET) a cartoon rocket lifts off at 140,400 with a pad cloud, climbs on
        x = 140 + 380 u^1.6, y = 400 - 470 u + 110 u^2 (u 0..1 over 4.5 s, rotated along the
-       path, flame flickering), leaves a trail of up to 48 fading smoke puffs (the ground cloud: 12 round billows,
+       path, flame flickering), leaves a trail of up to 32 fading smoke puffs (the ground cloud: 6 round billows,
        PAD_BILLOWS, bursting out sideways from the pad, easing out, drifting outward and
        thinning by u = 0.75) and exits past
        the upper right. Banner 360x46 at 60,424 (0x0E1836, 2 px 0x2D5BD0 border, radius 10)
@@ -940,6 +941,11 @@ UI-69a Launch animation smoothness: frame() runs on the display's LV_EVENT_REFR_
        refresh). Each puff and the pad cloud change only when their age crosses a 0.04 DUR
        step, so the number of dirty areas per frame stays well under LVGL's 32 (past that
        a frame redraws the whole screen).
+UI-69d Smoke images: PR_N = 12 soft round ARGB8888 images (radius 4..37 in steps of 3, colour
+       0xC8CDD7, alpha a smoothstep over the outer half) drawn at boot; each puff and billow is
+       an lv_image showing the nearest size with image_opa for its fade; the three inner
+       billows are recoloured 20% toward 0xFFB070. After each animation the frame count, rate
+       and longest gap between refreshes are logged (INFO, tag rocket).
 UI-69b While the launch animation plays, sat::tick() returns at once (no propagation, marker
        moves, sky layers or data drain); the first tick after it ends redraws for the
        current time.
@@ -1186,6 +1192,10 @@ NET-12 Connection reuse: one kept-alive esp_http_client, reused (esp_http_client
 NET-13 Each request's URL goes to the log at DEBUG when it starts ("<what>: GET <url>"), and the
        failure lines (client init, connect failed, HTTP <code>, read failed) end with the URL,
        so any download can be tried by hand from a browser.
+NET-13a Firmware update checks go through sat::upd (boot +3 min, hourly interval, Settings, the
+       Upgrade Check button; the entity's own polling is off) and log "firmware: GET <manifest>"
+       at DEBUG; each new answer logs "firmware: manifest has X, installed Y (newer, offered |
+       nothing newer)" at INFO. The install's downloads are logged by ESPHome ("Connecting to").
 
 ## 7. Build and deployment (BUILD)
 BUILD-1 OTA MUST use `encryption:` (reusing the API key), not a password.
