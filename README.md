@@ -25,7 +25,10 @@ orbital elements a couple of times a day.
   Dial-A-Moon), the whole Earth and your region from GOES, and built-in photos
   of the planets. Swipe back through earlier frames with the < button.
 - **Launches.** The next rocket launch, from The Space Devs' Launch Library, with
-  RocketLaunch.Live as a backup. At lift-off a cartoon rocket flies across the screen.
+  RocketLaunch.Live as a backup. At lift-off a cartoon rocket flies across the screen
+  with the mission name (tap to skip, or turn it off with the Launch Animation switch):
+
+  ![Launch animation](docs/img/launch.gif)
 - **Home Assistant.** ISS overhead, next pass, aurora chance, solar wind and
   more show up as entities. Location, heading and layers can be set from HA,
   the touch screen, or the built-in web page.
