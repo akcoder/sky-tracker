@@ -51,7 +51,7 @@ dashboard_import:
   import_full_config: true
 
 improv_serial:
-  id: improv
+  id: improv_usb               # not "improv": that is a C++ namespace (build error)
 
 logger:
 """)
