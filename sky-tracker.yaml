@@ -4,7 +4,8 @@
 # (SGP4/SDP4), sky_stars.h (star catalogue). Orbits come from CelesTrak: no API key.
 
 substitutions:
-  fw_version: "4.6.10"      # project version: HA device info and the settings page (bump on every install)
+  manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
+  fw_version: "4.6.11"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -53,7 +54,7 @@ esphome:
     - priority: -200               # UI-68: first update check once the boot downloads are done
       then:                        # (at boot it ran out of memory for a second TLS connection)
         - delay: 3min
-        - component.update: fw_update
+        - lambda: sat::upd::check_quiet("boot");
     - priority: 600                # NET-10: sun tab icon; before web_server's setup (249)
       then:
         - lambda: |-
@@ -127,6 +128,7 @@ esphome:
             sat::upd::init(id(fw_update), id(setup_title)->get_lv_font(), id(mono16)->get_lv_font(),
                            id(mono12)->get_lv_font());  // UI-68
             sat::upd::set_button(id(upd_btn));  // UI-68a
+            sat::upd::set_source("${manifest_url}");  // NET-13a
             sat::rocket::init(id(mono18)->get_lv_font());  // UI-69
             sat::rocket::set_enabled(id(launch_anim).state);
             sat::tz::init();  // UI-70
@@ -303,8 +305,8 @@ update:
   - platform: http_request
     id: fw_update
     name: Firmware
-    source: https://akcoder.github.io/sky-tracker/manifest.json
-    update_interval: 1h
+    source: ${manifest_url}
+    update_interval: never         # NET-13a: checked from the interval below, so each check is logged
     web_server:
       sorting_group_id: grp_system
 
@@ -488,6 +490,9 @@ globals:
     initial_value: "false"
 
 interval:
+  - interval: 1h                 # UI-68: hourly firmware check (logged, NET-13a)
+    then:
+      - lambda: sat::upd::check_quiet("hourly");
   - interval: 200ms              # HW-9: compass at 5 Hz
     id: interval_1
     then:
@@ -1384,7 +1389,7 @@ button:
     icon: mdi:cloud-refresh
     entity_category: config
     on_press:
-      - component.update: fw_update  # quiet: the Firmware row and the gear-side icon show the result
+      - lambda: sat::upd::check_quiet("button");  # quiet: the Firmware row and the gear-side icon show the result
   - platform: restart            # diagnostic reboot, in HA and the web UI
     id: btn_reboot
     name: Reboot
