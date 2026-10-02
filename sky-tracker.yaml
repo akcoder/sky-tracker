@@ -1,0 +1,3079 @@
+# Sky Tracker — Guition ESP32-4848S040 (requirements rev 4)
+# Files: sky-tracker.yaml, sat_net.h (data task: CelesTrak element sets, propagation),
+# sat_tracker.h (scheduling + drawing), sky_math.h (geometry, Sun, Moon), sgp4.h
+# (SGP4/SDP4), sky_stars.h (star catalogue). Orbits come from CelesTrak: no API key.
+
+substitutions:
+  fw_version: "4.6.0"      # project version: HA device info and the settings page (bump on every install)
+  name: sky-tracker
+  friendly_name: Sky Tracker
+  observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
+  observer_lon: "-149.439"  # Longitude entities, editable on the settings page (UI-16)
+  observer_alt_m: "100"
+  sat_group: "visual"     # DATA-2: CelesTrak GP group for the satellite layer (~160 brightest)
+  starlink_radius: "80"   # DATA-3/UI-39: default LEO cone (radius from overhead; 80 = above 10° elevation); the LEO Cone entity sets it (15-90)
+  map_heading: "0"        # UI-15: compass direction at the top of the map (0 = north)
+  backlight_min: "0.10"   # HW-6: lowest PWM duty that is still visible; raise if the
+                          # panel goes dark at the bottom of the brightness slider
+  # HW-8/HW-9: optional GPS and compass (see the wiring diagram)
+  gps_rx_pin: "42"        # GPS TX -> GPIO42 (module pin 35); found by the pin scan (RXD0 is
+                          # shared with the USB-serial chip, which drowns a GPS out)
+  compass_sda: GPIO1      # compass on its own I2C bus (relay-3 pin)
+  compass_scl: GPIO2      # (relay-2 pin)
+  wifi_name: "your Wi-Fi network"  # shown on the Wi-Fi status page while connecting
+
+esphome:
+  name: ${name}
+  name_add_mac_suffix: true       # every unit gets its own name
+  friendly_name: ${friendly_name}
+  project:                       # NET-9: shown in HA's device info
+    name: akcoder.sky_tracker
+    version: "${fw_version}"
+  build_flags:
+    # PERF-8: LVGL tracks 32 dirty areas by default and redraws the WHOLE screen when
+    # they overflow. Every moving marker dirties two areas, so ~16 moving markers
+    # forced a full-screen PSRAM redraw each tick and the panel jumped. ESPHome
+    # passes -D flags to every IDF component, LVGL included, so layouts agree.
+    - "-DLV_INV_BUF_SIZE=128"
+  on_boot:
+    - priority: 1100               # HW-7: before the SPI bus (1000) and the panel init
+      then:
+        - lambda: |-
+            sat::panel_soft_reset(39, 48, 47);   // CS, SCK, MOSI of GUITION-4848S040
+            // NET-2: fallback AP named "Sky Tracker - XXXX" (last 4 hex digits of the MAC).
+            // Set before Wi-Fi starts (setup priority 250); ESPHome's ssid: must be a literal.
+            uint8_t mac[6];
+            get_mac_address_raw(mac);
+            char ssid[33];
+            snprintf(ssid, sizeof(ssid), "Sky Tracker - %02X%02X", mac[4], mac[5]);
+            auto ap = id(wifi_comp).get_ap();
+            ap.set_ssid(ssid);
+            id(wifi_comp).set_ap(ap);
+    - priority: 600                # NET-10: sun tab icon; before web_server's setup (249)
+      then:
+        - lambda: |-
+            skyweb::install();
+            skydiag::install("${fw_version}");  // FAIL-10: before the API takes the crash record
+    - priority: -100
+      then:
+        - lambda: |-
+            sat::Config c;
+            c.lat = std::isnan(id(obs_lat).state) ? ${observer_lat} : id(obs_lat).state;
+            c.lon = std::isnan(id(obs_lon).state) ? ${observer_lon} : id(obs_lon).state;
+            c.alt_m = ${observer_alt_m};
+            c.sat_group = "${sat_group}";
+            c.starlink_radius = std::isnan(id(leo_cone).state) ? ${starlink_radius} : (int) id(leo_cone).state;  // UI-39
+            sat::Widgets w;
+            w.sky = id(sky_box);
+            w.status = id(hdr_status);
+            w.counts = id(hdr_counts);
+            w.clock = id(hdr_clock);
+            w.foot_iss = id(foot_iss);
+            w.foot_pass = id(foot_pass);
+            w.coords = id(hdr_coords);
+            w.alm_sun = id(alm_sun);
+            w.alm_moon = id(alm_moon);
+            w.alm_phase = id(alm_phase);
+            w.moon_img = id(moon_img);
+            w.list = id(list_table)->obj;
+            w.label_font = id(mono12)->get_lv_font();
+            w.title_font = id(mono16)->get_lv_font();
+            w.card_font = id(mono14)->get_lv_font();        // UI-24: card body +2 pt
+            w.alert_font = id(mono15)->get_lv_font();       // UI-41: alerts, one size
+            w.card_title_font = id(mono18)->get_lv_font();  // UI-24: card title +2 pt
+            w.icon_font = id(mdi_icon14)->get_lv_font();  // debris trash glyph
+            w.card_icon_font = id(mdi_card20)->get_lv_font();  // UI-30: details-card type icon
+            w.card_icon_big = id(mdi_card40)->get_lv_font();   // UI-30: the same at 40 px on the card
+            sat::sntp_hold();  // NET-8: SNTP waits for Wi-Fi (restarted in wifi on_connect)
+            sat::set_heading(id(map_heading).state);  // restored values, applied before drawing
+            sat::set_24h(id(clock_24h).state);
+            sat::set_miles(id(use_miles).state);
+            sat::set_debris(id(show_debris).state);
+            sat::set_layers(id(show_satellites).state, id(show_starlink).state, id(show_meo).state, id(show_geo).state);
+            sat::set_stars(id(show_stars).state, id(stars_after_dusk).state);
+            sat::set_trails(id(show_trails).state);
+            sat::set_planets(id(show_planets).state);  // UI-40
+            sat::set_milky_way(id(show_milky_way).state);  // UI-64
+            sat::set_comets(id(show_comets).state);        // UI-63
+            sat::set_alerts(id(aurora_alerts).state, id(planet_alerts).state);  // UI-41a
+            sat::set_sky_alerts(id(sky_alerts).state);  // UI-47..51
+            sat::set_night(id(night_mode).state);      // UI-45
+            sat::setup(c, w);
+            sat::night_install();
+            sat::settings_bind(id(ta_heading), id(ta_lat), id(ta_lon), id(sw_24h), id(settings_status));
+            sat::settings_bind_dms(id(sw_dms), id(box_lat_dd), id(box_lat_dms), id(ta_lat_d), id(ta_lat_m),
+                                   id(ta_lat_s), id(lat_hemi), id(box_lon_dd), id(box_lon_dms), id(ta_lon_d),
+                                   id(ta_lon_m), id(ta_lon_s), id(lon_hemi));
+            sat::settings_set_dms(id(coord_dms));
+            // HW-9: compass on its own I2C bus, with its saved calibration
+            sat::hw::set_bus(id(bus_b));
+            sat::hw::set_calibration(id(cal_cx), id(cal_cy), id(cal_sx), id(cal_sy), id(cal_ok));
+            sat::hw::gps_diag.pin = ${gps_rx_pin};  // HW-8a: shown in GPS Diagnostic
+            sat::logo_show(id(boot_logo), 200);   // UI-65
+            sat::logo_show(id(about_logo), 112);  // UI-67
+            {
+              char d[24], b[64];
+              sat::tidy_date(__DATE__, d, sizeof(d));
+              snprintf(b, sizeof(b), "ESPHome %s, built %s", ESPHOME_VERSION, d);
+              lv_label_set_text(id(about_built), b);
+            }
+            sat::sdfw::init("${fw_version}", id(setup_title)->get_lv_font(), id(mono16)->get_lv_font(),
+                            id(mono12)->get_lv_font());  // UI-66
+            sat::upd::init(id(fw_update), id(setup_title)->get_lv_font(), id(mono16)->get_lv_font(),
+                           id(mono12)->get_lv_font());  // UI-68
+
+esp32:
+  board: esp32-s3-devkitc-1
+  flash_size: 16MB
+  # DATA-10: 4 MB "skydata" partition for the orbital-data cache (two 5.75 MB app
+  # slots remain). Changing the table needs one USB flash; OTA can't move partitions.
+  partitions:
+    - name: skydata
+      type: data
+      subtype: 0x40
+      size: 0x400000
+  framework:
+    type: esp-idf
+    advanced:
+      # UI-66: firmware from a microSD card. ESPHome leaves these IDF parts out by default.
+      include_builtin_idf_components: [fatfs, sdmmc, esp_driver_sdmmc, wear_levelling]
+      disable_vfs_support_dir: false   # opendir/readdir on the card
+    sdkconfig_options:
+      # UI-66: long file names on the card (sky_tracker_firmware_<version>.bin)
+      CONFIG_FATFS_LFN_HEAP: y
+      CONFIG_FATFS_MAX_LFN: "255"
+      # PERF-2: re-sync the RGB panel DMA every vblank so a stall can't leave the
+      # picture permanently shifted.
+      CONFIG_LCD_RGB_RESTART_IN_VSYNC: y
+      # PERF-10: run code and read-only data from PSRAM (Espressif's recommendation for
+      # a PSRAM framebuffer with bounce buffers). Flash and PSRAM share one bus on the
+      # S3: flash instruction fetches starved the panel's refills (jitter), and flash
+      # writes stalled the cache entirely (shift during uploads). This replaces the
+      # need for CONFIG_LCD_RGB_ISR_IRAM_SAFE, which must still NOT be added (PERF-3).
+      CONFIG_SPIRAM_XIP_FROM_PSRAM: y
+      # 64-byte cache lines: fewer, larger PSRAM bursts for the bounce-buffer copies.
+      CONFIG_ESP32S3_DATA_CACHE_LINE_64B: y
+      # NET-11: a 16 KB TCP receive window (default 5.7 KB): from Alaska the NOAA and NASA
+      # servers are ~100 ms away and a download can't run faster than window / round trip.
+      # lwIP and Wi-Fi buffers MUST come from PSRAM (PERF-12): in internal RAM (4.5.35) they
+      # left ~20 KB free and downloads failed ("Failed to allocate memory").
+      CONFIG_LWIP_TCP_WND_DEFAULT: "16384"
+      CONFIG_LWIP_TCP_RECVMBOX_SIZE: "16"
+      CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP: y
+
+# BUILD-7: the C++ (headers, sky_extra.cpp, build flags) is the sky_tracker external component
+external_components:
+  - source:
+      type: git
+      url: https://github.com/akcoder/sky-tracker
+      ref: main
+    components: [sky_tracker]
+sky_tracker:
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+# Made for ESPHome: adopt into your own ESPHome Builder from this file, and set up Wi-Fi
+# over USB with Improv (https://www.improv-wifi.com) or from the fallback access point.
+dashboard_import:
+  package_import_url: github://akcoder/sky-tracker/sky-tracker.yaml@main
+  import_full_config: true
+
+improv_serial:
+  id: improv
+
+logger:
+  id: logger_main
+
+api:
+  reboot_timeout: 0s             # NET-2: the default 15 min "no HA client" reboot would kill the AP
+  max_connections: 8             # HA plus several log viewers; at the default 5 an extra
+                                 # viewer was dropped ("dropped immediately after encrypted hello")
+
+ota:
+  - platform: http_request         # UI-68: installs what the update entity finds
+    id: ota_http
+  - platform: esphome
+    id: ota_esphome
+    on_begin:
+      then:
+        - lambda: sat::ota_begin();
+        - lvgl.page.show: sky_page
+        - lambda: |-
+            lv_label_set_text(id(ota_title), "UPGRADING");
+            lv_label_set_text(id(ota_pct), "starting");
+            lv_obj_remove_flag(id(ota_panel), LV_OBJ_FLAG_HIDDEN);
+            lv_refr_now(NULL);
+    on_progress:
+      then:
+        - lambda: |-
+            static int last = -10;
+            int p = (int) x;
+            if (p < last + 5 && p < 100) return;
+            last = p;
+            char b[16];
+            snprintf(b, sizeof(b), "%d%%", p);
+            lv_label_set_text(id(ota_pct), b);
+            lv_refr_now(NULL);
+    on_end:
+      then:
+        - lambda: |-
+            lv_label_set_text(id(ota_pct), "rebooting");
+            lv_refr_now(NULL);
+    on_error:
+      then:
+        - lambda: |-
+            lv_label_set_text(id(ota_title), "UPGRADE FAILED");
+            lv_label_set_text(id(ota_pct), "resuming");
+            lv_refr_now(NULL);
+            sat::ota_error();
+        - delay: 5s
+        - lambda: lv_obj_add_flag(id(ota_panel), LV_OBJ_FLAG_HIDDEN);
+
+wifi:
+  id: wifi_comp
+  ap:                            # NET-2: open fallback AP; renamed with the MAC suffix at boot
+    ssid: "Sky Tracker"
+    ap_timeout: 30s              # NET-2: start the AP 30 s after Wi-Fi fails (default 90 s)
+  reboot_timeout: 0s             # never reboot away from the AP while someone is configuring
+  on_connect:                    # NET-7: ask for the time as soon as there is a network
+    - lambda: sat::sntp_kick();
+  on_disconnect:                 # NET-8: no network calls while Wi-Fi is down
+    - lambda: sat::sntp_hold();
+
+captive_portal:                  # NET-2: Wi-Fi setup page while the fallback AP is up
+  id: portal
+
+web_server:                      # NET-1: built-in web UI on port 80
+  port: 80
+  version: 3
+  local: true                    # bundle the UI so it also works on the AP (no internet)
+                                 # NET-1: firmware upload from the web page is ON
+  sorting_groups:                # NET-6: sections on the web page (HA is unaffected)
+    - id: grp_sky                # order: Location & Sky, Satellites, Celestial, Display, ISS, System
+      name: Location & Sky       # (the OTA upload form is always last)
+      sorting_weight: 10
+    - id: grp_sats
+      name: Satellites
+      sorting_weight: 20
+    - id: grp_celestial            # NET-6: stars, trails, planets (4.5.2)
+      name: Celestial
+      sorting_weight: 25
+    - id: grp_display
+      name: Display
+      sorting_weight: 30
+    - id: grp_iss
+      name: ISS
+      sorting_weight: 40
+    - id: grp_system
+      name: System
+      sorting_weight: 50
+
+time:
+  - platform: sntp
+    id: sntp_time
+  - platform: homeassistant      # NET-7: second source; sets the clock as soon as HA connects
+    id: ha_time
+
+# ARCH-3: issues no requests. It is here because it pulls in esp_http_client,
+# esp-tls, the certificate bundle and ArduinoJson for sat_net.h.
+http_request:
+  id: http_req
+  verify_ssl: true
+  timeout: 10s
+
+# UI-68: internet updates. GitHub Actions builds every release and publishes the firmware
+# and its manifest on GitHub Pages; the device checks every hour and on Settings > Updates.
+update:
+  - platform: http_request
+    id: fw_update
+    name: Firmware
+    source: https://akcoder.github.io/sky-tracker/manifest.json
+    update_interval: 1h
+    web_server:
+      sorting_group_id: grp_system
+
+# ------------------------------------------------------------------ hardware
+spi:
+  id: spi_panel
+  clk_pin: GPIO48
+  mosi_pin: GPIO47
+
+i2c:
+  - id: bus_a                    # touch (GT911)
+    sda: GPIO19
+    scl: GPIO45
+  - id: bus_b                    # HW-9: optional compass, its own bus (module has pull-ups)
+    sda: ${compass_sda}
+    scl: ${compass_scl}
+    frequency: 100kHz
+    scan: false
+
+uart:                            # HW-8: optional GPS, receive only (NMEA, 9600 baud)
+  id: gps_uart
+  rx_pin:
+    number: ${gps_rx_pin}
+    mode:
+      input: true
+      pullup: true               # idle high when no GPS is fitted
+  baud_rate: 9600
+  rx_buffer_size: 1024
+
+# HW-8: NMEA is read by sat::hw::nmea_feed (interval below), not the gps component,
+# so the raw sentences can be shown on the debug page (UI-27).
+display:
+  - platform: mipi_rgb
+    model: GUITION-4848S040      # HW-1/HW-5: pins, timings, 12 MHz pclk from the model
+    id: main_display
+    update_interval: never
+    auto_clear_enabled: false
+    transform:                   # HW-1: 180° rotation (model default is true/true)
+      mirror_x: false
+      mirror_y: false
+
+touchscreen:
+  - platform: gt911              # HW-2: no transform; any tap flips the page
+    id: touch
+    i2c_id: bus_a
+    # UI-2: page flipping is an LVGL on_click on each page, so the gear button
+    # (UI-16) can take its own taps.
+
+output:
+  - platform: ledc
+    pin: GPIO38
+    id: backlight_pwm
+    frequency: 1000Hz
+    min_power: ${backlight_min}  # HW-6: 1% brightness = this duty, never darker
+    zero_means_zero: true        # only an explicit OFF turns the backlight off
+
+light:
+  - platform: monochromatic     # HW-3
+    id: backlight
+    name: Backlight Light
+    internal: true               # HA and the web UI get the 1-100 % "Backlight" number instead
+    output: backlight_pwm
+    restore_mode: RESTORE_AND_ON # HW-3: always boots on, keeps the brightness
+    default_transition_length: 250ms
+    on_state:                    # keep the settings slider in step with HA / web changes
+      - lambda: |-
+          const float pct = roundf(id(backlight).remote_values.get_brightness() * 100.0f);
+          lv_obj_t *s = id(sl_bright);   // null until LVGL is set up (the light restores first)
+          if (s != nullptr && (int) pct != lv_slider_get_value(s))
+            lv_slider_set_value(s, (int) pct, LV_ANIM_OFF);
+          if (pct >= 1 && id(backlight_pct).state != pct)
+            id(backlight_pct).publish_state(pct);
+
+font:
+  - file: "gfonts://Roboto Mono"
+    id: mono12
+    size: 12
+    bpp: 4                       # anti-aliased (ESPHome default is 1: jagged edges)
+    glyphs: &glyphs " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_abcdefghijklmnopqrstuvwxyz|°"
+  - file: "gfonts://Roboto Mono"
+    id: mono16
+    size: 16
+    bpp: 4                       # anti-aliased (ESPHome default is 1: jagged edges)
+    glyphs: *glyphs
+  - file: "gfonts://Roboto Mono"
+    id: mono14                   # UI-24: details card body (2 pt over mono12)
+    size: 14
+    bpp: 4                       # anti-aliased (ESPHome default is 1: jagged edges)
+    glyphs: *glyphs
+  - file: "gfonts://Roboto Mono"
+    id: mono15                   # UI-41: status-line alerts (1 pt over mono14)
+    size: 15
+    bpp: 4                       # anti-aliased (ESPHome default is 1: jagged edges)
+    glyphs: *glyphs
+  - file: "gfonts://Roboto Mono"
+    id: mono18                   # UI-24: details card title (2 pt over mono16)
+    size: 18
+    bpp: 4                       # anti-aliased (ESPHome default is 1: jagged edges)
+    glyphs: *glyphs
+  - file: "gfonts://Roboto Mono@500"
+    id: mono24
+    size: 24
+    bpp: 4                       # anti-aliased (ESPHome default is 1: jagged edges)
+    glyphs: " -0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ"  # clock ("--:--" before time sync), AM/PM, OTA panel title
+  # NET-2b Wi-Fi status page: Roboto Light 34 (name, firmware prompt titles), Roboto 22
+  - file:
+      type: web
+      url: https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf
+    id: mdi_icon14
+    size: 14
+    bpp: 4
+    # trash-can (debris on the map) plus the UI-30 list icons: space-station,
+    # satellite-uplink, satellite-variant, earth, crosshairs-gps, weather-sunny, moon-waning-crescent, orbit (UI-40b planets)
+    glyphs: ["\U000F0A79", "\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0599", "\U000F0F65", "\U000F0018", "\U000F14DE", "\U000F0629"]  # + rocket-launch (UI-54 list), meteor (UI-63 comets)
+  - file:
+      type: web
+      url: https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf
+    id: mdi_card20
+    size: 20
+    bpp: 4
+    # UI-30 details-card icons: space-station, satellite-uplink, satellite-variant,
+    # earth, crosshairs-gps, trash-can; weather-sunny (UI-36 Sun card); aurora (UI-38 notice);
+    # monitor, map-marker, weather-night (UI-16a settings tabs); star-shooting, star-four-points,
+    # weather-sunset-down (UI-33 Sat Trails, Stars, After dusk)
+    # moon-full (UI-48/49 alerts, 4.5.15)
+    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F1BB9", "\U000F0379", "\U000F034E", "\U000F0594", "\U000F1741", "\U000F0AE2", "\U000F059B", "\U000F0F62", "\U000F018C", "\U000F14DE", "\U000F0629", "\U000F00B8", "\U000F0150", "\U000F00DF", "\U000F00E1", "\U000F08F0", "\U000F0F57", "\U000F0F5A", "\U000F1382"]  # moon-full, compass-outline, rocket-launch, meteor (UI-63), blur-radial (UI-64); settings row icons (UI-16a, 4.5.38): clock-outline, brightness-6, brightness-auto, map-marker-distance; latitude, longitude, compass-rose
+  - file:
+      type: web
+      url: https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf
+    id: mdi_card40
+    size: 40
+    bpp: 4
+    # UI-30 (4.5.5): details-card icons at the Moon picture's size: space-station, satellite-uplink,
+    # satellite-variant, earth, crosshairs-gps, trash-can, weather-sunny, star-four-points
+    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F0AE2", "\U000F1741", "\U000F0629"]  # + star-shooting (UI-47 shower card), meteor (UI-63 comet card)
+  - file: "gfonts://Roboto@300"
+    id: setup_title
+    size: 34
+    bpp: 4
+    glyphs: &ascii " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+  - file: "gfonts://Roboto"
+    id: setup_body
+    size: 22
+    bpp: 4
+    glyphs: *ascii
+
+globals:
+  - id: bright_on_open           # UI-16: brightness when settings opened (Cancel restores it)
+    type: float
+    initial_value: "1.0"
+  - id: bright_day               # UI-44: daytime brightness for Auto Brightness (0..1)
+    type: float
+    restore_value: true
+    initial_value: "0.8"
+  - id: bright_day_open          # UI-44: bright_day when settings opened (Cancel restores it)
+    type: float
+    initial_value: "0.8"
+  - id: coord_dms                # UI-16: coordinate entry format (false = decimal, true = DMS)
+    type: bool
+    restore_value: true
+    initial_value: "false"
+  - id: cal_cx                   # HW-9: compass calibration (hard-iron centre, soft-iron scale)
+    type: float
+    restore_value: true
+    initial_value: "0"
+  - id: cal_cy
+    type: float
+    restore_value: true
+    initial_value: "0"
+  - id: cal_sx
+    type: float
+    restore_value: true
+    initial_value: "1"
+  - id: cal_sy
+    type: float
+    restore_value: true
+    initial_value: "1"
+  - id: cal_ok
+    type: bool
+    restore_value: true
+    initial_value: "false"
+
+interval:
+  - interval: 200ms              # HW-9: compass at 5 Hz
+    id: interval_1
+    then:
+      - lambda: |-
+          if (sat::hw::compass_poll(esphome::millis())) {  // a calibration run just ended
+            auto c = sat::hw::calibrate_finish();
+            if (c.valid) {
+              id(cal_cx) = c.cx; id(cal_cy) = c.cy; id(cal_sx) = c.sx; id(cal_sy) = c.sy; id(cal_ok) = true;
+              sat::show_notice("Compass calibrated", 8);
+            } else {
+              sat::show_notice("Compass calibration failed: turn the display a full circle", 12);
+            }
+            sat::hw::cal_screen_result(c.valid);  // HW-9b
+          }
+          sat::hw::cal_screen_update(esphome::millis());
+          if (sat::finder_open()) {  // UI-57: the arrow follows the compass at 5 Hz
+            const float mag = sat::hw::magnetic_heading(id(compass_reverse).state);
+            sat::finder_update(std::isnan(mag) ? NAN
+                               : sat::hw::wrap360(mag + sat::declination() + id(compass_offset).state));
+          }
+  - interval: 30s                # UI-44: auto brightness follows the Sun
+    id: interval_2
+    then:
+      - lambda: |-
+          if (!id(auto_bright).state || id(settings_page)->is_showing() || !id(backlight).current_values.is_on()) return;
+          const float want = std::max(0.01f, id(bright_day) * sat::auto_bright_factor());
+          if (fabsf(id(backlight).current_values.get_brightness() - want) < 0.01f) return;
+          auto call = id(backlight).turn_on();
+          call.set_brightness(want);
+          call.set_transition_length(3000);
+          call.perform();
+  - interval: 5s                 # UI-66: look for a microSD card with firmware on it
+    id: interval_3
+    then:
+      - lambda: sat::sdfw::tick(esphome::millis());
+  - interval: 1s                 # UI-27: debug pages, only while one is showing
+    id: interval_4
+    then:
+      - lambda: |-
+          if (id(debug_page)->is_showing()) {  // page 1: system, orbital data, last crash
+            static char b[1800];
+            const uint32_t s = esphome::millis() / 1000;
+            char up[24];
+            sat::fmt_dur((double) s, up, sizeof(up));  // UI-17a
+            const std::string ip = id(ip_addr).state, ssid = id(wifi_ssid_info).state;
+            int k = snprintf(b, sizeof(b),
+                             "SYSTEM\n  IP %s\n  Wi-Fi %s  %d dBm\n  Firmware %s  ESPHome %s\n"
+                             "  Up %s  RAM %u kB  PSRAM %u kB free\n",
+                             ip.empty() ? "-" : ip.c_str(), ssid.empty() ? "-" : ssid.c_str(),
+                             (int) id(wifi_comp).wifi_rssi(), "${fw_version}", ESPHOME_VERSION,
+                             up,
+                             (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                             (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+            char orb[400];  // UI-27: age of the orbital data
+            sat::orbital_debug(orb, sizeof(orb), sat::clock_now());
+            char diag[600];  // FAIL-10: reset reason and the last crash
+            skydiag::debug_text(diag, sizeof(diag));
+            if (k < (int) sizeof(b)) snprintf(b + k, sizeof(b) - k, "%s\n%s", orb, diag);
+            lv_label_set_text(id(debug_label), b);
+          } else if (id(about_page)->is_showing()) {  // UI-67
+            static char b[200];
+            const std::string ip = id(ip_addr).state, ssid = id(wifi_ssid_info).state;
+            sat::about_device_text(b, sizeof(b), App.get_name().c_str(), ip.c_str(), ssid.c_str(),
+                                   (int) id(wifi_comp).wifi_rssi(), get_mac_address_pretty().c_str(),
+                                   esphome::millis() / 1000.0);
+            if (strcmp(lv_label_get_text(id(about_dev)), b) != 0) lv_label_set_text(id(about_dev), b);
+          } else if (id(debug2_page)->is_showing()) {  // page 2: GPS and compass
+            static char b[1400];
+            sat::hw::debug_text(b, sizeof(b), esphome::millis(), 2);  // the 2 newest NMEA lines
+            lv_label_set_text(id(debug2_label), b);
+            const bool can = sat::hw::compass_present();  // HW-9b: no compass, no button
+            if (can == lv_obj_has_state(id(btn_dbg_cal), LV_STATE_DISABLED)) {
+              if (can) lv_obj_remove_state(id(btn_dbg_cal), LV_STATE_DISABLED);
+              else lv_obj_add_state(id(btn_dbg_cal), LV_STATE_DISABLED);
+              lv_obj_set_style_text_color(id(lbl_btn_dbg_cal), lv_color_hex(can ? 0xEEF2FF : 0x4A5577), 0);
+            }
+          }
+  - interval: 50ms               # HW-8: drain the GPS UART into the NMEA reader
+    id: interval_5
+    then:
+      - lambda: |-
+          const uint32_t now = esphome::millis();
+          uint8_t c;
+          int n = 0;
+          while (n++ < 512 && id(gps_uart).available() && id(gps_uart).read_byte(&c))
+            sat::hw::nmea_feed(c, now);
+  - interval: 1s                 # HW-8/HW-9: GPS location and compass heading
+    id: interval_6
+    then:
+      - lambda: |-
+          // ---- GPS
+          const auto &m = sat::hw::nmea;
+          const bool valid = sat::hw::nmea_fix_ok(esphome::millis());
+          sat::hw::gps_update(esphome::millis(), m.chars, valid, m.lat, m.lon, m.alt, m.sats_used < 0 ? 0 : m.sats_used);
+          {  // HW-8 diagnostics: bytes, checksums; steps the baud rate if needed
+            const uint32_t nb = sat::hw::gps_diag_tick(esphome::millis(), m.chars, m.passed, m.failed);
+            if (nb) {
+              id(gps_uart).set_baud_rate(nb);
+              id(gps_uart).load_settings(false);
+            }
+            static uint8_t n = 0;
+            if (++n % 5 == 0) {
+              char d[128];
+              sat::hw::gps_diag_text(d, sizeof(d));
+              if (n % 10 == 0) ESP_LOGI("sky_hw", "GPS diag: %s", d);
+            }
+          }
+          double lat, lon;
+          if (sat::hw::gps_new_position(id(obs_lat).state, id(obs_lon).state, lat, lon)) {
+            id(obs_lat).make_call().set_value(lat).perform();   // saved, so a reboot starts here
+            id(obs_lon).make_call().set_value(lon).perform();
+          } else if (sat::hw::gps_locked() && sat::hw::gps.applied) {
+            // undo edits made from HA or the web page while the GPS owns the location
+            if (fabs(id(obs_lat).state - sat::hw::gps.applied_lat) > 1e-6) id(obs_lat).publish_state(sat::hw::gps.applied_lat);
+            if (fabs(id(obs_lon).state - sat::hw::gps.applied_lon) > 1e-6) id(obs_lon).publish_state(sat::hw::gps.applied_lon);
+          }
+          // ---- compass
+          const float mag = sat::hw::magnetic_heading(id(compass_reverse).state);
+          if (!std::isnan(mag)) {
+            // HW-9a: declination from the location (WMM2025), not a fixed setting
+            const float h = sat::hw::wrap360(mag + sat::declination() + id(compass_offset).state);
+            const float cur = id(map_heading).state;
+            if (std::isnan(sat::hw::head_pub) || std::isnan(cur) || fabsf(sat::hw::angle_diff(h, cur)) >= 1.0f) {
+              sat::hw::head_pub = roundf(h) >= 360 ? 0 : roundf(h);
+              id(map_heading).publish_state(sat::hw::head_pub);   // not saved: no flash wear
+            }
+          }
+          if (sat::hw::compass_calibrating()) {
+            char b[120];
+            const int left = (int) ((int32_t) (sat::hw::compass.cal_end_ms - esphome::millis()) / 1000);
+            char ls[16];
+            sat::fmt_dur(left > 0 ? left : 0, ls, sizeof(ls));  // UI-17a
+            snprintf(b, sizeof(b), "Compass calibration: turn the display slowly\nthrough a full circle (%s)", ls);
+            sat::show_notice(b, 3);
+          }
+          {  // HW-9a: the settings button shows the run and the result
+            char lb[24], st[24];
+            if (sat::hw::compass_calibrating()) {
+              const int left = (int) ((int32_t) (sat::hw::compass.cal_end_ms - esphome::millis()) / 1000);
+              char ls[16];
+              sat::fmt_dur(left > 0 ? left : 0, ls, sizeof(ls));  // UI-17a
+              snprintf(lb, sizeof(lb), "Turn... %s", ls);
+              snprintf(st, sizeof(st), "%s", "turn slowly");
+            } else {
+              snprintf(lb, sizeof(lb), "%s", "Calibrate");
+              snprintf(st, sizeof(st), "%s", !sat::hw::compass_present() ? "no compass"
+                                             : sat::hw::compass_calibrated() ? "calibrated" : "not calibrated");
+            }
+            if (strcmp(lv_label_get_text(id(lbl_cal)), lb) != 0) lv_label_set_text(id(lbl_cal), lb);
+            if (strcmp(lv_label_get_text(id(lbl_cal_state)), st) != 0) lv_label_set_text(id(lbl_cal_state), st);
+            const bool can = sat::hw::compass_present();  // HW-9b: no compass, no button
+            if (can == lv_obj_has_state(id(btn_cal), LV_STATE_DISABLED)) {
+              if (can) lv_obj_remove_state(id(btn_cal), LV_STATE_DISABLED);
+              else lv_obj_add_state(id(btn_cal), LV_STATE_DISABLED);
+              lv_obj_set_style_text_color(id(lbl_cal), lv_color_hex(can ? 0xEEF2FF : 0x4A5577), 0);
+            }
+          }
+          sat::set_locks(sat::hw::gps_locked(), sat::hw::heading_locked());
+          // ---- boot / Wi-Fi status page: say which add-ons are connected
+          if (id(wifi_page)->is_showing()) {
+            char hw[96], g[48], c[48];
+            const auto &gs = sat::hw::gps;
+            if (gs.state == sat::hw::GPS_FIX)
+              snprintf(g, sizeof(g), "GPS: connected, fix (%d sat)", gs.sats);
+            else if (gs.state == sat::hw::GPS_SEARCHING)
+              snprintf(g, sizeof(g), "GPS: connected, searching");
+            else
+              snprintf(g, sizeof(g), "GPS: not connected");
+            if (sat::hw::compass_present())
+              snprintf(c, sizeof(c), "Compass: connected (%s)", sat::hw::compass_chip());
+            else
+              snprintf(c, sizeof(c), "Compass: not connected");
+            snprintf(hw, sizeof(hw), "%s\n%s", g, c);
+            if (strcmp(lv_label_get_text(id(wifi_hw)), hw) != 0) lv_label_set_text(id(wifi_hw), hw);
+          }
+          // ---- HA text
+          char src[48];
+          if (sat::hw::gps_locked())
+            snprintf(src, sizeof(src), "GPS (%d satellites)", sat::hw::gps.sats);
+          else if (sat::hw::gps.state != sat::hw::GPS_ABSENT)
+            snprintf(src, sizeof(src), "Manual; GPS searching (%d satellites)", sat::hw::gps.sats);
+          else
+            snprintf(src, sizeof(src), "Manual");
+          if (id(location_source).state != src) id(location_source).publish_state(src);
+          if (sat::hw::heading_locked())
+            snprintf(src, sizeof(src), "Compass (%s%s)", sat::hw::compass_chip(), sat::hw::compass_calibrated() ? "" : ", not calibrated");
+          else
+            snprintf(src, sizeof(src), "Manual");
+          if (id(heading_source).state != src) id(heading_source).publish_state(src);
+  - interval: 2s                 # motion tick (MOTION-7), drain, HUD
+    id: interval_7
+    then:
+      - lambda: sat::tick();
+      - lambda: |-
+          // NET-2b: Wi-Fi status page (layout modelled on espcontrol's boot screen).
+          // The map is not shown until Wi-Fi connects; after that, 10 s without Wi-Fi
+          // brings the status page back (never over the settings page).
+          static uint32_t lost_since = 0;
+          static int state = -1;  // 0 connected, 1 connecting, 2 fallback AP up
+          const uint32_t now = esphome::millis();
+          int st;
+          if (id(wifi_comp).is_connected()) {
+            st = 0;
+            lost_since = 0;
+          } else {
+            if (lost_since == 0)
+              lost_since = now | 1;
+            st = id(wifi_comp).is_ap_active() ? 2 : 1;
+          }
+          const bool on_status = id(wifi_page)->is_showing();
+          if (st == 0) {
+            if (on_status)
+              id(lvgl_comp)->show_page(id(sky_page)->index, LV_SCREEN_LOAD_ANIM_FADE_IN, 300);
+          } else {
+            if (st != state) {
+              if (st == 1) {
+                lv_label_set_text(id(wifi_title), "Connecting to Wi-Fi");
+                lv_label_set_text(id(wifi_body), "${wifi_name}");
+              } else {
+                auto ap = id(wifi_comp).get_ap();
+                char b[128];
+                snprintf(b, sizeof(b), "Join '%.*s'\nfrom your phone", (int) ap.get_ssid().size(), ap.get_ssid().c_str());
+                lv_label_set_text(id(wifi_title), "Set up Wi-Fi");
+                lv_label_set_text(id(wifi_body), b);
+              }
+            }
+            if (!on_status && now - lost_since > 10000 && !id(settings_page)->is_showing())
+              id(lvgl_comp)->show_page(id(wifi_page)->index, LV_SCREEN_LOAD_ANIM_FADE_IN, 300);
+          }
+          state = st;
+
+# ------------------------------------------------------------------ Home Assistant (ARCH-9)
+sensor:
+  - platform: template           # HW-9a: magnetic -> true north, computed (WMM2025) for the location
+    id: s_magnetic_declination
+    name: Magnetic Declination
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 11
+    icon: mdi:magnet
+    entity_category: diagnostic
+    unit_of_measurement: "°"
+    accuracy_decimals: 1
+    update_interval: 300s
+    lambda: return sat::declination();
+  - platform: template           # UI-37: planetary Kp from NOAA SWPC (latest 3-hour value)
+    id: s_aurora_kp
+    name: Aurora Kp
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 12
+    icon: mdi:aurora
+    accuracy_decimals: 1
+    update_interval: 300s
+    lambda: return sat::kp_now();
+  - platform: template           # UI-55: solar wind at L1 (NOAA SWPC real-time), 15-minute means
+    id: s_solar_wind_bz
+    name: Solar Wind Bz
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 16
+    icon: mdi:magnet
+    unit_of_measurement: nT
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 300s
+    lambda: return sat::wind_bz();
+  - platform: template
+    id: s_solar_wind_speed
+    name: Solar Wind Speed
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 17
+    icon: mdi:weather-windy
+    unit_of_measurement: km/s
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 300s
+    lambda: return sat::wind_speed();
+  - platform: template           # UI-58: NOAA OVATION nowcast, chance of visible aurora overhead
+    id: s_aurora_chance
+    name: Aurora Chance
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 19
+    icon: mdi:aurora
+    unit_of_measurement: "%"
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 300s
+    lambda: return sat::aurora_chance();
+  - platform: template           # UI-58: the most within ~800 km (seen low in the sky)
+    id: s_aurora_chance_in_view
+    name: Aurora Chance In View
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 20
+    icon: mdi:aurora
+    unit_of_measurement: "%"
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 300s
+    lambda: return sat::aurora_chance_view();
+  - platform: template
+    id: s_iss_elevation
+    name: ISS Elevation
+    web_server:
+      sorting_group_id: grp_iss
+      sorting_weight: 1
+    icon: mdi:angle-acute
+    unit_of_measurement: "°"
+    accuracy_decimals: 1
+    update_interval: 60s
+    lambda: return sat::iss_el();
+  - platform: template
+    id: s_iss_azimuth
+    name: ISS Azimuth
+    web_server:
+      sorting_group_id: grp_iss
+      sorting_weight: 2
+    icon: mdi:sun-compass
+    unit_of_measurement: "°"
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: return sat::iss_az();
+  - platform: template
+    id: s_satellites_overhead
+    name: Satellites Overhead
+    web_server:
+      sorting_group_id: grp_sats
+      sorting_weight: 3
+    icon: mdi:counter
+    accuracy_decimals: 0
+    update_interval: 60s
+    lambda: return sat::sat_count();
+  - platform: template
+    id: s_starlink_overhead
+    name: Starlink Overhead
+    web_server:
+      sorting_group_id: grp_sats
+      sorting_weight: 4
+    icon: mdi:counter
+    accuracy_decimals: 0
+    update_interval: 90s
+    lambda: return sat::starlink_count();
+  # NET-9 diagnostics (entity_category diagnostic: HA's device page, System group on the web)
+  - platform: uptime
+    id: s_uptime
+    name: Uptime
+    icon: mdi:timer-outline
+    entity_category: diagnostic
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 2
+  - platform: wifi_signal
+    id: s_wi_fi_signal
+    name: Wi-Fi Signal
+    icon: mdi:wifi
+    update_interval: 60s
+    entity_category: diagnostic
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 3
+  - platform: template           # HW-8 (was the gps component's)
+    id: s_gps_satellites
+    name: GPS Satellites
+    icon: mdi:satellite-variant
+    state_class: measurement     # keeps HA's long-term statistics (the gps component set it)
+    accuracy_decimals: 0
+    update_interval: 30s
+    entity_category: diagnostic
+    lambda: "return sat::hw::nmea.sats_used < 0 ? NAN : (float) sat::hw::nmea.sats_used;"
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 13
+  - platform: template
+    id: s_gps_altitude
+    name: GPS Altitude
+    icon: mdi:altimeter
+    unit_of_measurement: m
+    device_class: distance
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 30s
+    entity_category: diagnostic
+    lambda: "return sat::hw::nmea_fix_ok(esphome::millis()) ? sat::hw::nmea.alt : NAN;"
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 14
+  - platform: template
+    id: s_orbital_data_age
+    name: Orbital Data Age
+    icon: mdi:clock-alert-outline
+    unit_of_measurement: h
+    accuracy_decimals: 1
+    update_interval: 60s
+    entity_category: diagnostic
+    lambda: return sat::data_age_h();
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 4
+  - platform: template
+    id: s_satellites_tracked
+    name: Satellites Tracked
+    icon: mdi:satellite-variant
+    accuracy_decimals: 0
+    update_interval: 300s
+    entity_category: diagnostic
+    lambda: return sat::tracked_sats();
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 5
+  - platform: template
+    id: s_starlink_tracked
+    name: Starlink Tracked
+    icon: mdi:satellite-uplink
+    accuracy_decimals: 0
+    update_interval: 300s
+    entity_category: diagnostic
+    lambda: return sat::tracked_starlink();
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 6
+  - platform: template
+    id: s_free_internal_ram
+    name: Free Internal RAM
+    icon: mdi:memory
+    unit_of_measurement: kB
+    accuracy_decimals: 0
+    update_interval: 60s
+    entity_category: diagnostic
+    lambda: return heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0f;  // a counter, no heap walk (FAIL-9)
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 7
+  - platform: template
+    id: s_free_psram
+    name: Free PSRAM
+    icon: mdi:memory
+    unit_of_measurement: kB
+    accuracy_decimals: 0
+    update_interval: 60s
+    entity_category: diagnostic
+    lambda: return heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024.0f;
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 8
+
+number:
+  - platform: template           # UI-39: LEO cone, degrees from overhead (the Starlink layer)
+    id: leo_cone
+    name: LEO Cone
+    icon: mdi:angle-acute
+    unit_of_measurement: "°"
+    min_value: 15
+    max_value: 90
+    step: 5
+    mode: slider
+    optimistic: true
+    restore_value: true
+    initial_value: ${starlink_radius}
+    web_server:
+      sorting_group_id: grp_sats
+      sorting_weight: 0
+    on_value:
+      - lambda: sat::set_starlink_radius((int) x);
+  - platform: template           # HW-6: brightness as 1-100 % (the light itself is internal)
+    id: backlight_pct
+    name: Backlight
+    icon: mdi:brightness-percent
+    min_value: 1
+    max_value: 100
+    step: 1
+    unit_of_measurement: "%"
+    mode: slider
+    web_server:
+      sorting_group_id: grp_display
+      sorting_weight: 1
+    set_action:
+      - lambda: |-
+          float v = x / 100.0f;
+          if (id(auto_bright).state) {  // UI-44: sets the daytime level
+            id(bright_day) = v;
+            v = std::max(0.01f, v * sat::auto_bright_factor());
+          }
+          auto call = id(backlight).turn_on();
+          call.set_brightness(v);
+          call.perform();
+  - platform: template           # UI-15: rotate the map from Home Assistant
+    id: map_heading
+    name: Map Heading
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 3
+    icon: mdi:compass-outline
+    unit_of_measurement: "°"
+    min_value: 0
+    max_value: 359
+    step: 1
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${map_heading}
+    on_value:
+      - lambda: |-
+          if (!sat::hw::head_edit_allowed(x)) {  // HW-9: the compass owns the heading
+            ESP_LOGW("sky_hw", "Map Heading is set by the compass; change ignored");
+            id(map_heading).publish_state(sat::hw::head_pub);
+            return;
+          }
+          sat::set_heading(x);
+
+  - platform: template           # UI-16: observer, editable here or on the settings page
+    id: obs_lat
+    name: Observer Latitude
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 1
+    icon: mdi:latitude
+    unit_of_measurement: "°"
+    min_value: -90
+    max_value: 90
+    step: 0.001
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${observer_lat}
+    on_value:
+      - lambda: |-
+          if (sat::hw::gps_locked() && sat::hw::gps.applied && fabs(x - sat::hw::gps.applied_lat) > 1e-6) {
+            ESP_LOGW("sky_hw", "Observer Latitude is set by the GPS; change ignored");
+            return;  // HW-8: put back by the 1 s interval
+          }
+          sat::set_observer(id(obs_lat).state, id(obs_lon).state);
+  - platform: template
+    id: obs_lon
+    name: Observer Longitude
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 2
+    icon: mdi:longitude
+    unit_of_measurement: "°"
+    min_value: -180
+    max_value: 180
+    step: 0.001
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: ${observer_lon}
+    on_value:
+      - lambda: |-
+          if (sat::hw::gps_locked() && sat::hw::gps.applied && fabs(x - sat::hw::gps.applied_lon) > 1e-6) {
+            ESP_LOGW("sky_hw", "Observer Longitude is set by the GPS; change ignored");
+            return;
+          }
+          sat::set_observer(id(obs_lat).state, id(obs_lon).state);
+
+  - platform: template           # HW-9: added to the compass reading (mounting angle)
+    id: compass_offset
+    name: Compass Offset
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 10
+    icon: mdi:compass-rose
+    entity_category: config
+    unit_of_measurement: "°"
+    min_value: -180
+    max_value: 180
+    step: 1
+    mode: box
+    optimistic: true
+    restore_value: true
+    initial_value: 0
+
+switch:
+  - platform: template           # HW-9: map turns the wrong way when the display is turned
+    id: compass_reverse
+    name: Compass Reverse
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 12
+    icon: mdi:swap-horizontal
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: template           # UI-17
+    id: clock_24h
+    name: 24-hour Clock
+    web_server:
+      sorting_group_id: grp_display
+      sorting_weight: 2
+    icon: mdi:clock-digital
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF   # default = Dan's setting (2026-09-25)
+    on_turn_on:
+      - lambda: sat::set_24h(true);
+    on_turn_off:
+      - lambda: sat::set_24h(false);
+  - platform: template           # UI-29: heights, ranges and speeds in miles
+    id: use_miles
+    name: Distances in Miles
+    web_server:
+      sorting_group_id: grp_display
+      sorting_weight: 3
+    icon: mdi:ruler
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON   # default = Dan's setting (2026-09-25)
+    on_turn_on:
+      - lambda: sat::set_miles(true);
+    on_turn_off:
+      - lambda: sat::set_miles(false);
+  - platform: template           # UI-22: off = no markers, no downloads or maths for the layer
+    id: show_satellites          # the LEO switch (Starlink is part of LEO)
+    name: Show LEO
+    web_server:
+      sorting_group_id: grp_sats
+      sorting_weight: 1
+    icon: mdi:satellite-variant
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_layers(id(show_satellites).state, id(show_starlink).state, id(show_meo).state, id(show_geo).state);
+    on_turn_off:
+      - lambda: sat::set_layers(id(show_satellites).state, id(show_starlink).state, id(show_meo).state, id(show_geo).state);
+  - platform: template           # UI-22
+    id: show_starlink
+    name: Show Starlink
+    web_server:
+      sorting_group_id: grp_sats
+      sorting_weight: 2
+    icon: mdi:satellite-uplink
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_layers(id(show_satellites).state, id(show_starlink).state, id(show_meo).state, id(show_geo).state);
+    on_turn_off:
+      - lambda: sat::set_layers(id(show_satellites).state, id(show_starlink).state, id(show_meo).state, id(show_geo).state);
+  - platform: template           # MEO (includes HEO): GNSS lists downloaded only while on
+    id: show_meo
+    name: Show MEO
+    web_server:
+      sorting_group_id: grp_sats
+      sorting_weight: 3
+    icon: mdi:satellite
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF   # default = Dan's setting (2026-09-25)
+    on_turn_on:
+      - lambda: sat::set_layers(id(show_satellites).state, id(show_starlink).state, id(show_meo).state, id(show_geo).state);
+    on_turn_off:
+      - lambda: sat::set_layers(id(show_satellites).state, id(show_starlink).state, id(show_meo).state, id(show_geo).state);
+  - platform: template           # GEO: dim dots, geo list downloaded only while on
+    id: show_geo
+    name: Show GEO
+    web_server:
+      sorting_group_id: grp_sats
+      sorting_weight: 4
+    icon: mdi:earth
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - lambda: sat::set_layers(id(show_satellites).state, id(show_starlink).state, id(show_meo).state, id(show_geo).state);
+    on_turn_off:
+      - lambda: sat::set_layers(id(show_satellites).state, id(show_starlink).state, id(show_meo).state, id(show_geo).state);
+  - platform: template           # UI-35: rocket bodies and debris (trash icons)
+    id: show_debris
+    name: Show Orbital Debris
+    web_server:
+      sorting_group_id: grp_sats
+      sorting_weight: 5
+    icon: mdi:trash-can-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF   # default = Dan's setting (2026-09-25)
+    on_turn_on:
+      - lambda: sat::set_debris(true);
+    on_turn_off:
+      - lambda: sat::set_debris(false);
+  - platform: template           # UI-40: planets on the map, their alerts and alignments
+    id: show_planets
+    name: Show Planets
+    web_server:
+      sorting_group_id: grp_celestial
+      sorting_weight: 7
+    icon: mdi:orbit
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_planets(true);
+    on_turn_off:
+      - lambda: sat::set_planets(false);
+  - platform: template           # UI-64: the Milky Way under the stars
+    id: show_milky_way
+    name: Show Milky Way
+    web_server:
+      sorting_group_id: grp_celestial
+      sorting_weight: 4.5
+    icon: mdi:blur-radial
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_milky_way(true);
+    on_turn_off:
+      - lambda: sat::set_milky_way(false);
+  - platform: template           # UI-63: bright comets on the map, their cards and alerts
+    id: show_comets
+    name: Show Comets
+    web_server:
+      sorting_group_id: grp_celestial
+      sorting_weight: 7.5
+    icon: mdi:meteor
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_comets(true);
+    on_turn_off:
+      - lambda: sat::set_comets(false);
+  - platform: template           # UI-41a: aurora notice and glow on or off
+    id: aurora_alerts
+    name: Aurora Alerts
+    web_server:
+      sorting_group_id: grp_celestial
+      sorting_weight: 8
+    icon: mdi:aurora
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_alerts(true, id(planet_alerts).state);
+    on_turn_off:
+      - lambda: sat::set_alerts(false, id(planet_alerts).state);
+  - platform: template           # UI-41a: planet-visible and alignment alerts on or off
+    id: planet_alerts
+    name: Planet Alerts
+    web_server:
+      sorting_group_id: grp_celestial
+      sorting_weight: 9
+    icon: mdi:orbit
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_alerts(id(aurora_alerts).state, true);
+    on_turn_off:
+      - lambda: sat::set_alerts(id(aurora_alerts).state, false);
+  - platform: template           # UI-47..51 (and UI-41b): meteor showers, full Moons, Moon near a
+    id: sky_alerts               # planet or star, eclipses, solstices and equinoxes
+    name: Sky Event Alerts
+    web_server:
+      sorting_group_id: grp_celestial
+      sorting_weight: 10
+    icon: mdi:weather-night
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_sky_alerts(true);
+    on_turn_off:
+      - lambda: sat::set_sky_alerts(false);
+  - platform: template           # UI-44: brightness follows the Sun (Backlight = daytime level)
+    id: auto_bright
+    name: Auto Brightness
+    web_server:
+      sorting_group_id: grp_display
+      sorting_weight: 2
+    icon: mdi:brightness-auto
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - lambda: id(bright_day) = std::max(0.05f, id(backlight).current_values.get_brightness());
+  - platform: template           # UI-45: red display after dusk
+    id: night_mode
+    name: Night Mode
+    web_server:
+      sorting_group_id: grp_display
+      sorting_weight: 5
+    icon: mdi:weather-night
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    on_turn_on:
+      - lambda: sat::set_night(true);
+    on_turn_off:
+      - lambda: sat::set_night(false);
+  - platform: template           # UI-21
+    id: show_stars
+    name: Show Stars & Constellations
+    web_server:
+      sorting_group_id: grp_celestial
+      sorting_weight: 4
+    icon: mdi:star-four-points-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_stars(true, id(stars_after_dusk).state);
+    on_turn_off:
+      - lambda: sat::set_stars(false, id(stars_after_dusk).state);
+  - platform: template           # UI-26: fading trails behind satellites and the ISS
+    id: show_trails
+    name: Show Motion Trails
+    web_server:
+      sorting_group_id: grp_celestial
+      sorting_weight: 6
+    icon: mdi:chart-timeline-variant
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_trails(true);
+    on_turn_off:
+      - lambda: sat::set_trails(false);
+  - platform: template           # UI-21: only once the Sun is 6° below the horizon
+    id: stars_after_dusk
+    name: Stars Only After Dusk
+    web_server:
+      sorting_group_id: grp_celestial
+      sorting_weight: 5
+    icon: mdi:weather-night
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF   # default = Dan's setting (2026-09-25)
+    on_turn_on:
+      - lambda: sat::set_stars(id(show_stars).state, true);
+    on_turn_off:
+      - lambda: sat::set_stars(id(show_stars).state, false);
+
+button:
+  - platform: template           # HW-9
+    id: btn_calibrate_compass
+    name: Calibrate Compass
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 13
+    icon: mdi:compass-outline
+    entity_category: config
+    on_press:
+      - lambda: |-
+          if (!sat::hw::compass_present()) {
+            sat::show_notice("No compass detected", 8);
+            return;
+          }
+          sat::hw::cal_screen_open(esphome::millis());  // HW-9b: the same guide on the display
+  - platform: restart            # diagnostic reboot, in HA and the web UI
+    id: btn_reboot
+    name: Reboot
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 1
+    icon: mdi:restart
+    entity_category: diagnostic
+
+binary_sensor:
+  - platform: template
+    id: bs_iss_overhead
+    name: ISS Overhead
+    web_server:
+      sorting_group_id: grp_iss
+      sorting_weight: 3
+    icon: mdi:space-station      # ESPHome sends one icon; per-state icons are set in HA
+    lambda: return sat::iss_up();
+
+text_sensor:
+  - platform: template           # HW-8
+    id: location_source
+    name: Location Source
+    icon: mdi:crosshairs-gps
+    update_interval: never
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 8
+  - platform: template           # HW-9
+    id: heading_source
+    name: Heading Source
+    icon: mdi:compass
+    update_interval: never
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 9
+  - platform: template
+    id: ts_next_iss_pass
+    name: Next ISS Pass
+    web_server:
+      sorting_group_id: grp_iss
+      sorting_weight: 4
+    icon: mdi:calendar-clock
+    update_interval: 60s
+    lambda: return sat::next_pass_text();
+  - platform: template           # UI-54: Launch Library 2
+    id: ts_next_launch
+    name: Next Launch
+    web_server:
+      sorting_group_id: grp_sky
+      sorting_weight: 18
+    icon: mdi:rocket-launch
+    update_interval: 300s
+    lambda: return sat::next_launch_text();
+  - platform: template           # UI-25: the same message as the screen's status line
+    id: ts_data_status
+    name: Data Status
+    icon: mdi:information-outline
+    update_interval: 60s
+    entity_category: diagnostic
+    lambda: return sat::data_status();
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 9
+  - platform: template           # FAIL-10: the last crash (reason / PC), kept until the next one
+    id: ts_last_crash
+    name: Last Crash
+    entity_category: diagnostic
+    icon: mdi:alert-octagon-outline
+    update_interval: 60s
+    lambda: return {skydiag::summary()};
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 13
+  - platform: template   # "ESPHome 2026.9.0 · Sky Tracker 4.3.5" (replaces the hash/timestamp string)
+    id: ts_firmware_version
+    name: Firmware Version
+    icon: mdi:chip
+    entity_category: diagnostic
+    update_interval: 6h
+    lambda: 'return {std::string("ESPHome " ESPHOME_VERSION " \u00b7 Sky Tracker ${fw_version}")};'
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 10
+  - platform: wifi_info
+    id: ts_wifi_info
+    ip_address:
+      id: ip_addr                # UI-27: also on the debug page
+      name: IP Address
+      icon: mdi:ip-network
+      entity_category: diagnostic
+      web_server:
+        sorting_group_id: grp_system
+        sorting_weight: 11
+    ssid:
+      id: wifi_ssid_info         # UI-27: debug page 1
+      name: Wi-Fi Network
+      icon: mdi:access-point-network
+      entity_category: diagnostic
+      web_server:
+        sorting_group_id: grp_system
+        sorting_weight: 12
+
+# ------------------------------------------------------------------ LVGL
+lvgl:
+  id: lvgl_comp
+  displays: main_display
+  touchscreens:
+    - touchscreen_id: touch
+      long_press_time: 1000ms    # UI-27: hold the gear 1 s for the debug page
+  # PERF-4: 12.5% (57.6 KB) asks for internal RAM first (falls back to PSRAM; the
+  # 20 s boot diagnostic logs which). LVGL then blends in SRAM and only the finished
+  # pixels cross to the PSRAM framebuffer, which leaves the PSRAM bus to the panel's
+  # bounce-buffer refills (their starvation is the vsync shift / garbage lines).
+  buffer_size: 12.5%
+  log_level: WARN
+  bg_color: 0x000000
+  text_color: 0xC9D3F2
+  text_font: mono16
+  top_layer:
+    widgets:
+      - obj:                     # UI-12
+          id: ota_panel
+          align: CENTER
+          width: 300
+          height: 130
+          hidden: true
+          bg_color: 0x101B3D
+          bg_opa: COVER
+          border_color: 0xFF8A1F
+          border_width: 2
+          radius: 12
+          scrollable: false
+          pad_all: 0
+          widgets:
+            - label:
+                id: ota_title
+                align: CENTER            # UI-12: title + progress centred as a pair (measured:
+                y: -14                   # ink centre within 0.5 px of the panel centre)
+                text: "UPGRADING"
+                text_font: mono24
+                text_color: 0xFF8A1F
+            - label:
+                id: ota_pct
+                align: CENTER
+                y: 18                    # below the title
+                text: ""
+                text_color: 0xC9D3F2     # the theme default is dark grey: invisible on this panel
+                text_font: mono16
+  pages:
+    - id: wifi_page              # NET-2b: first page, so it is what boots; skipped by page flips
+      skip: true
+      bg_color: 0x000000
+      bg_opa: COVER
+      scrollable: false
+      widgets:
+        - obj:
+            align: CENTER
+            width: 380
+            height: SIZE_CONTENT
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+            layout:
+              type: FLEX
+              flex_flow: COLUMN
+              flex_align_main: CENTER
+              flex_align_cross: CENTER
+              flex_align_track: CENTER
+              pad_row: 6
+            widgets:
+              - obj:                     # UI-65: the logo, 200 px (sat::logo_show at boot)
+                  id: boot_logo
+                  width: 200
+                  height: 200
+                  bg_opa: TRANSP
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+              - label:
+                  id: boot_name
+                  text: "Sky Tracker"
+                  text_font: setup_title
+                  text_color: 0xFFFFFF
+                  width: 380
+                  text_align: CENTER
+                  pad_top: 10
+                  pad_bottom: 8
+              - label:
+                  id: wifi_title
+                  text: "Connecting to Wi-Fi"
+                  text_font: setup_body
+                  text_color: 0xFFFFFF
+                  width: 380
+                  text_align: CENTER
+              - label:
+                  id: wifi_body
+                  text: "${wifi_name}"
+                  text_font: setup_body
+                  text_color: 0xB0B0B0
+                  width: 380
+                  text_align: CENTER
+                  pad_bottom: 18
+              - label:               # HW-8/HW-9: which add-on sensors were found
+                  id: wifi_hw
+                  text: "GPS: checking...\nCompass: checking..."
+                  text_font: mono16
+                  text_color: 0x7E8BB3
+                  width: 380
+                  text_align: CENTER
+        - label:                     # NET-2b: firmware version, lower right (as on settings)
+            align: BOTTOM_RIGHT
+            x: -10
+            y: -8
+            text: "v${fw_version}"
+            text_font: mono12
+            text_color: 0x5A6687
+    - id: sky_page               # UI-1
+      bg_color: 0x000000
+      bg_opa: COVER
+      scrollable: false
+      on_click:                  # UI-2: tap anywhere except the gear flips pages
+        - if:                    # UI-24: with the details card up, a tap only closes it
+            condition:
+              lambda: return sat::card_open();
+            then:
+              - lambda: sat::deselect();
+            else:
+              - lvgl.page.next:
+                  animation: FADE_IN
+                  time: 200ms
+      widgets:
+        - label:
+            x: 10
+            y: 4
+            text: "SKY TRACKER"
+            text_font: mono16
+            text_color: 0xFF8A1F
+        - label:                 # UI-23: observer position, between the title and the clock
+            id: hdr_coords
+            align: TOP_MID
+            y: 4                 # same line as the title
+            text: ""
+            text_font: mono16
+            text_color: 0x7E8BB3
+        - label:                 # UI-25 data status / errors (width and wrap set in sat::setup)
+            id: hdr_status
+            x: 10
+            y: 27                # UI-38: 3 px clear of the title (the aurora icon sits above the text)
+            text: ""
+            text_font: mono12
+            text_color: 0x7E8BB3
+        - label:
+            id: hdr_counts
+            align: TOP_RIGHT
+            x: -10
+            y: 31
+            text: ""
+            text_font: mono12
+            text_color: 0x7E8BB3
+            text_align: RIGHT
+        - label:
+            id: hdr_clock
+            align: TOP_RIGHT
+            x: -10
+            y: 1                 # digit tops (8 px into a mono24 line) level with the title's capitals (5 px into mono16 at y 4)
+            text: "--:--"
+            text_font: mono24
+            text_color: 0xC9D3F2
+        - obj:                   # the sky disc; SKY_BG in sat_tracker.h must match (UI-11)
+            id: sky_box
+            x: 56
+            y: 58
+            width: 368
+            height: 368
+            radius: 184
+            bg_color: 0x0B1220   # UI-11: keep in step with SKY_BG (sat_tracker.h)
+            bg_opa: COVER
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+            clickable: false     # taps fall through to the page
+        - label:                 # UI-9 footer
+            id: foot_iss
+            x: 10
+            y: 432
+            text: ""
+            text_font: mono16
+        - label:
+            id: foot_pass
+            x: 10
+            y: 454
+            text: ""
+            text_font: mono16
+            text_color: 0xFFD54A
+        # UI-20: Sun bottom-left, Moon bottom-right, both outside the sky disc
+        - label:
+            id: alm_sun
+            x: 10
+            y: 412
+            text: ""
+            text_font: mono12
+            text_color: 0xFFD54A
+        - canvas:                # Moon phase picture, drawn by sat::draw_moon_icon
+            id: moon_img
+            align: TOP_RIGHT
+            x: -10
+            y: 360
+            width: 32
+            height: 32
+            transparent: true
+        - label:
+            id: alm_moon
+            align: TOP_RIGHT
+            x: -10
+            y: 396
+            text: ""
+            text_font: mono12
+            text_color: 0xDCE2EE
+            text_align: RIGHT
+        - label:
+            id: alm_phase
+            align: TOP_RIGHT
+            x: -10
+            y: 412
+            text: ""
+            text_font: mono12
+            text_color: 0x7E8BB3
+            text_align: RIGHT
+        - button:                # UI-16: settings gear, lower right
+            id: gear_btn
+            align: BOTTOM_RIGHT
+            x: -2
+            y: -2
+            width: 46
+            height: 46
+            bg_opa: TRANSP
+            shadow_width: 0
+            border_width: 0
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "\uF013"   # LV_SYMBOL_SETTINGS
+                  text_font: montserrat_28
+                  text_color: 0xB8BEC9
+            on_short_click:          # UI-16 (short, so a long press doesn't also open it)
+              - if:                  # UI-24: with the details card up, a tap only closes it
+                  condition:
+                    lambda: return sat::card_open();
+                  then:
+                    - lambda: sat::deselect();
+                  else:
+                    - lvgl.page.show: settings_page
+            on_long_press:           # UI-27: hold the gear for the debug page
+              - lvgl.page.show: debug_page
+    - id: debug_page             # UI-27 page 1: system, orbital data, last crash (4.5.18). Close sits top right on both pages; < Prev bottom left, Next > bottom right
+      skip: true
+      bg_color: 0x000000
+      bg_opa: COVER
+      scrollable: false
+      widgets:
+        - label:
+            x: 8
+            y: 12                  # UI-27: the same size as the SKY TRACKER title
+            text: "DEBUG  1 of 2: System"
+            text_font: mono16
+            text_color: 0xFF8A1F
+        - label:
+            id: debug_label
+            x: 8
+            y: 48
+            width: 464
+            height: 368
+            text: "..."
+            text_font: mono16
+            text_color: 0xDCE4F8
+            long_mode: WRAP
+        - button:
+            id: btn_dbg_close1
+            x: 376
+            y: 4
+            width: 96
+            height: 36
+            bg_color: 0x1A2547
+            shadow_width: 0
+            widgets:
+              - label:
+                  id: lbl_btn_dbg_close1
+                  align: CENTER
+                  text: "Close"
+                  text_font: mono16
+            on_click:
+              - lvgl.page.show: sky_page
+        - button:
+            id: btn_dbg_next
+            x: 362
+            y: 424
+            width: 110
+            height: 44
+            bg_color: 0x1A2547
+            shadow_width: 0
+            widgets:
+              - label:
+                  id: lbl_btn_dbg_next
+                  align: CENTER
+                  text: "Next >"
+                  text_font: mono16
+            on_click:
+              - lvgl.page.show: debug2_page
+    - id: debug2_page            # UI-27 page 2: GPS and compass, with compass calibration
+      skip: true
+      bg_color: 0x000000
+      bg_opa: COVER
+      scrollable: false
+      widgets:
+        - label:
+            x: 8
+            y: 12                  # UI-27: the same size as the SKY TRACKER title
+            text: "DEBUG  2 of 2: GPS & compass"
+            text_font: mono16
+            text_color: 0xFF8A1F
+        - label:
+            id: debug2_label
+            x: 8
+            y: 48
+            width: 464
+            height: 368
+            text: "..."
+            text_font: mono16
+            text_color: 0xDCE4F8
+            long_mode: WRAP
+        - button:
+            id: btn_dbg_prev
+            x: 8
+            y: 424
+            width: 110
+            height: 44
+            bg_color: 0x1A2547
+            shadow_width: 0
+            widgets:
+              - label:
+                  id: lbl_btn_dbg_prev
+                  align: CENTER
+                  text: "< Prev"
+                  text_font: mono16
+            on_click:
+              - lvgl.page.show: debug_page
+        - button:
+            id: btn_dbg_cal
+            x: 132
+            y: 424
+            width: 216
+            height: 44
+            bg_color: 0x1A2547
+            shadow_width: 0
+            disabled:
+              bg_color: 0x121A33
+            widgets:
+              - label:
+                  id: lbl_btn_dbg_cal
+                  align: CENTER
+                  text: "Calibrate compass"
+                  text_font: mono16
+            on_click:
+              - lambda: sat::hw::cal_screen_open(esphome::millis());  # HW-9b, only with a compass
+        - button:
+            id: btn_dbg_close2
+            x: 376
+            y: 4
+            width: 96
+            height: 36
+            bg_color: 0x1A2547
+            shadow_width: 0
+            widgets:
+              - label:
+                  id: lbl_btn_dbg_close2
+                  align: CENTER
+                  text: "Close"
+                  text_font: mono16
+            on_click:
+              - lvgl.page.show: sky_page
+    - id: list_page              # UI-2 / UI-10
+      bg_color: 0x000000
+      bg_opa: COVER
+      scrollable: false
+      on_click:
+        - lvgl.page.next:
+            animation: FADE_IN
+            time: 200ms
+      widgets:
+        - table:                 # UI-10: columns and row colours set in sat::list_build / draw_list
+            id: list_table
+            x: 10
+            y: 8
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            clickable: false
+            items:
+              text_font: mono12
+              text_color: 0xC9D3F2
+              bg_opa: TRANSP
+              pad_all: 5
+              border_width: 1
+              border_side: BOTTOM
+              border_color: 0x22305A
+            column_count: 5
+            rows:
+              - ["NAME", "CTRY", "DIR", "EL", "HEIGHT"]
+    - id: about_page             # UI-67: from Settings > About; Close returns to Settings
+      skip: true
+      bg_color: 0x000000
+      bg_opa: COVER
+      scrollable: false
+      widgets:
+        - label:
+            x: 8
+            y: 12
+            text: "ABOUT"
+            text_font: mono16
+            text_color: 0xFF8A1F
+        - button:
+            id: btn_about_close
+            x: 376
+            y: 4
+            width: 96
+            height: 36
+            bg_color: 0x1A2547
+            shadow_width: 0
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Close"
+                  text_font: mono16
+            on_click:
+              - lvgl.page.show: settings_page
+        - obj:                         # UI-65: the logo (sat::logo_show at boot)
+            id: about_logo
+            x: 12
+            y: 50
+            width: 112
+            height: 112
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+        - label:
+            x: 138
+            y: 56
+            text: "Sky Tracker"
+            text_font: setup_title
+            text_color: 0xFFFFFF
+        - label:
+            x: 140
+            y: 104
+            text: "Version ${fw_version}"
+            text_font: mono16
+            text_color: 0xDCE4F8
+        - label:
+            x: 140
+            y: 128
+            text: "by Dan Morphis"
+            text_font: mono14
+            text_color: 0xC9D3F2
+        - label:
+            id: about_built
+            x: 140
+            y: 150
+            text: ""
+            text_font: mono12
+            text_color: 0x7E8BB3
+        - label:
+            x: 8
+            y: 178
+            text: "THIS DEVICE"
+            text_font: mono12
+            text_color: 0xFF8A1F
+        - label:
+            id: about_dev
+            x: 8
+            y: 198
+            width: 464
+            text: ""
+            text_font: mono14
+            text_color: 0xDCE4F8
+            long_mode: WRAP
+        - label:
+            x: 8
+            y: 288
+            text: "DATA FROM"
+            text_font: mono12
+            text_color: 0xFF8A1F
+        - label:
+            x: 8
+            y: 308
+            width: 464
+            text: "Orbits: CelesTrak\nSpace weather, aurora: NOAA SWPC\nSun, Earth: NOAA GOES-19 / GOES-18\nMoon: NASA SVS   Comets: NASA JPL\nLaunches: The Space Devs\nPlanet photos: NASA, via Wikimedia"
+            text_font: mono14
+            text_color: 0xC9D3F2
+            text_line_space: 1
+        - label:
+            x: 8
+            y: 452
+            text: "Update from a microSD card: sky_tracker_firmware_<ver>.bin"
+            text_font: mono12
+            text_color: 0x5A6687
+    - id: settings_page          # UI-16
+      skip: true                 # never reached by tap-to-flip
+      bg_color: 0x000000
+      bg_opa: COVER
+      scrollable: false
+      on_load:
+        - lambda: |-
+            sat::settings_fill();
+            id(bright_on_open) = id(backlight).current_values.get_brightness();
+            id(bright_day_open) = id(bright_day);
+        - lvgl.slider.update:
+            id: sl_bright
+            value: !lambda |-
+              // UI-44: with auto brightness the slider is the daytime level
+              return (int) roundf((id(auto_bright).state ? id(bright_day) : id(bright_on_open)) * 100.0f);
+        - lvgl.keyboard.update:
+            id: settings_kb
+            textarea: ta_heading
+        - lvgl.widget.hide: settings_kb   # shown when a text field is tapped
+        - lambda: |-
+            auto set = [](lv_obj_t *o, bool on) {
+              if (on) lv_obj_add_state(o, LV_STATE_CHECKED); else lv_obj_remove_state(o, LV_STATE_CHECKED);
+            };
+            set(id(sw_sats), id(show_satellites).state);
+            set(id(sw_starlink), id(show_starlink).state);
+            set(id(sw_meo), id(show_meo).state);
+            set(id(sw_geo), id(show_geo).state);
+            set(id(sw_stars), id(show_stars).state);
+            set(id(sw_dusk), id(stars_after_dusk).state);
+            set(id(sw_trails), id(show_trails).state);
+            set(id(sw_miles), id(use_miles).state);
+            set(id(sw_debris), id(show_debris).state);
+            set(id(sw_planets), id(show_planets).state);  // UI-40
+            set(id(sw_autob), id(auto_bright).state);     // UI-44
+            set(id(sw_night), id(night_mode).state);      // UI-45
+            sat::settings_planet_icon(id(pnl_celestial), 122, 244);
+            set(id(sw_aur_alerts), id(aurora_alerts).state);  // UI-41a
+            set(id(sw_pl_alerts), id(planet_alerts).state);
+            set(id(sw_sky_alerts), id(sky_alerts).state);  // UI-47..51
+            set(id(sw_milky_way), id(show_milky_way).state);  // UI-64
+            set(id(sw_comets), id(show_comets).state);        // UI-63
+            // UI-39: cone slider from the entity; UI-16a: open on General
+            lv_slider_set_value(id(sl_cone), (int) id(leo_cone).state, LV_ANIM_OFF);
+            sat::cone_label(id(lbl_cone), (int) id(leo_cone).state);
+            sat::settings_tab(0, id(pnl_display), id(pnl_location), id(pnl_celestial), id(tab_display), id(tab_location), id(tab_celestial));
+            // Starlink is part of LEO: editable only while LEO is on
+            if (id(show_satellites).state) lv_obj_remove_state(id(sw_starlink), LV_STATE_DISABLED);
+            else lv_obj_add_state(id(sw_starlink), LV_STATE_DISABLED);
+            if (id(show_satellites).state) lv_obj_remove_state(id(lbl_starlink), LV_STATE_DISABLED);
+            else lv_obj_add_state(id(lbl_starlink), LV_STATE_DISABLED);
+            if (id(show_satellites).state) lv_obj_remove_state(id(ico_starlink), LV_STATE_DISABLED);
+            else lv_obj_add_state(id(ico_starlink), LV_STATE_DISABLED);
+      widgets:
+        - label:
+            x: 16
+            y: 16
+            text: "SETTINGS"
+            text_font: mono16
+            text_color: 0xFF8A1F
+        - button:
+            x: 240
+            y: 6
+            width: 110
+            height: 38
+            bg_color: 0x1A2547
+            shadow_width: 0
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Cancel"
+                  text_font: mono16
+            on_click:
+              - lambda: id(bright_day) = id(bright_day_open);  # UI-44
+              - light.turn_on:           # undo a brightness change
+                  id: backlight
+                  brightness: !lambda return id(bright_on_open);
+                  transition_length: 0s
+              - lvgl.page.show: sky_page
+        - button:
+            x: 360
+            y: 6
+            width: 110
+            height: 38
+            bg_color: 0x2D5BD0
+            shadow_width: 0
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Save"
+                  text_font: mono16
+            on_click:
+              - if:
+                  condition:
+                    lambda: return sat::settings_parse();
+                  then:
+                    - lambda: |-
+                        const auto &v = sat::form_values;
+                        if (!sat::lock_head) id(map_heading).make_call().set_value(v.heading).perform();
+                        if (!sat::lock_loc) {  // HW-8: GPS owns the location
+                          id(obs_lat).make_call().set_value(v.lat).perform();
+                          id(obs_lon).make_call().set_value(v.lon).perform();
+                        }
+                        if (v.h24) id(clock_24h).turn_on(); else id(clock_24h).turn_off();
+                        auto sw = [](lv_obj_t *o, switch_::Switch *e) {  // UI-21/22
+                          if (lv_obj_has_state(o, LV_STATE_CHECKED)) e->turn_on(); else e->turn_off();
+                        };
+                        sw(id(sw_sats), id(show_satellites));
+                        sw(id(sw_starlink), id(show_starlink));
+                        sw(id(sw_meo), id(show_meo));
+                        sw(id(sw_geo), id(show_geo));
+                        sw(id(sw_stars), id(show_stars));
+                        sw(id(sw_dusk), id(stars_after_dusk));
+                        sw(id(sw_trails), id(show_trails));
+                        sw(id(sw_miles), id(use_miles));
+                        sw(id(sw_debris), id(show_debris));
+                        sw(id(sw_planets), id(show_planets));
+                        sw(id(sw_aur_alerts), id(aurora_alerts));
+                        sw(id(sw_pl_alerts), id(planet_alerts));
+                        sw(id(sw_sky_alerts), id(sky_alerts));
+                        sw(id(sw_milky_way), id(show_milky_way));  // UI-64
+                        sw(id(sw_comets), id(show_comets));        // UI-63
+                        sw(id(sw_autob), id(auto_bright));
+                        sw(id(sw_night), id(night_mode));
+                        // UI-39: LEO cone, 5° steps
+                        id(leo_cone).make_call().set_value(sat::cone_snap(lv_slider_get_value(id(sl_cone)))).perform();
+                    - lvgl.page.show: sky_page
+        # UI-16a: three tabs under the header (Display, Location, Celestial); each tab is a panel, only one shown
+        - button:
+            id: tab_display
+            x: 8
+            y: 52
+            width: 148
+            height: 40
+            bg_color: 0x2D5BD0
+            shadow_width: 0
+            radius: 8
+            widgets:
+              - obj:                   # icon + text, centred together
+                  align: CENTER
+                  width: SIZE_CONTENT
+                  height: SIZE_CONTENT
+                  bg_opa: TRANSP
+                  text_color: 0xFFFFFF
+                  border_width: 0
+                  pad_all: 0
+                  clickable: false
+                  scrollable: false
+                  layout:
+                    type: FLEX
+                    flex_flow: ROW
+                    flex_align_cross: CENTER
+                    pad_column: 6
+                  widgets:
+                    - label:
+                        text: "\U000F0379"   # monitor
+                        text_font: mdi_card20
+                    - label:
+                        text: "Display"
+                        text_font: mono16
+            on_click:
+              - lambda: |-
+                  sat::settings_tab(0, id(pnl_display), id(pnl_location), id(pnl_celestial), id(tab_display), id(tab_location), id(tab_celestial));
+              - lvgl.widget.hide: settings_kb
+        - button:
+            id: tab_location
+            x: 166
+            y: 52
+            width: 148
+            height: 40
+            bg_color: 0x1A2547
+            shadow_width: 0
+            radius: 8
+            widgets:
+              - obj:                   # icon + text, centred together
+                  align: CENTER
+                  width: SIZE_CONTENT
+                  height: SIZE_CONTENT
+                  bg_opa: TRANSP
+                  text_color: 0xFFFFFF
+                  border_width: 0
+                  pad_all: 0
+                  clickable: false
+                  scrollable: false
+                  layout:
+                    type: FLEX
+                    flex_flow: ROW
+                    flex_align_cross: CENTER
+                    pad_column: 6
+                  widgets:
+                    - label:
+                        text: "\U000F034E"   # map-marker
+                        text_font: mdi_card20
+                    - label:
+                        text: "Location"
+                        text_font: mono16
+            on_click:
+              - lambda: |-
+                  sat::settings_tab(1, id(pnl_display), id(pnl_location), id(pnl_celestial), id(tab_display), id(tab_location), id(tab_celestial));
+              - lvgl.widget.hide: settings_kb
+        - button:
+            id: tab_celestial
+            x: 324
+            y: 52
+            width: 148
+            height: 40
+            bg_color: 0x1A2547
+            shadow_width: 0
+            radius: 8
+            widgets:
+              - obj:                   # icon + text, centred together
+                  align: CENTER
+                  width: SIZE_CONTENT
+                  height: SIZE_CONTENT
+                  bg_opa: TRANSP
+                  text_color: 0xFFFFFF
+                  border_width: 0
+                  pad_all: 0
+                  clickable: false
+                  scrollable: false
+                  layout:
+                    type: FLEX
+                    flex_flow: ROW
+                    flex_align_cross: CENTER
+                    pad_column: 6
+                  widgets:
+                    - label:
+                        text: "\U000F0594"   # weather-night
+                        text_font: mdi_card20
+                    - label:
+                        text: "Celestial"
+                        text_font: mono16
+            on_click:
+              - lambda: |-
+                  sat::settings_tab(2, id(pnl_display), id(pnl_location), id(pnl_celestial), id(tab_display), id(tab_location), id(tab_celestial));
+              - lvgl.widget.hide: settings_kb
+        - obj:
+            id: pnl_display
+            x: 0
+            y: 100
+            width: 480
+            height: 340
+            bg_opa: TRANSP
+            text_color: 0xC9D3F2   # obj containers take the theme text colour (dark grey) otherwise
+            border_width: 0
+            radius: 0
+            pad_all: 0
+            scrollable: false
+            clickable: false
+            widgets:
+              - label:
+                  x: 16
+                  y: 16
+                  text: "Time format"
+                  text_font: mono16
+              - label:                 # UI-16a: row icon, as on the Celestial tab
+                  x: 128
+                  y: 14
+                  text: "\U000F0150"   # clock-outline
+                  text_font: mdi_card20
+                  text_color: 0xA8D8FF
+              - label:
+                  x: 190
+                  y: 16
+                  text: "12h"
+                  text_font: mono16
+              - switch:
+                  id: sw_24h
+                  x: 232
+                  y: 10
+                  width: 56
+                  height: 28
+              - label:
+                  x: 298
+                  y: 16
+                  text: "24h"
+                  text_font: mono16
+              - label:
+                  x: 16
+                  y: 58
+                  text: "Brightness"
+                  text_font: mono16
+              - label:                 # UI-16a: row icon, as on the Celestial tab
+                  x: 128
+                  y: 56
+                  text: "\U000F00DF"   # brightness-6
+                  text_font: mdi_card20
+                  text_color: 0xFFD54A
+              - slider:                # HW-6: 1..100 maps onto backlight_min..100% duty
+                  id: sl_bright
+                  x: 200
+                  y: 62
+                  width: 250
+                  height: 14
+                  min_value: 1
+                  max_value: 100
+                  on_value:            # live while dragging; ignores its own echo from on_state
+                    - lambda: |-
+                        float v = x / 100.0f;
+                        if (id(auto_bright).state) {  // UI-44: the day level, shown at tonight's scale
+                          id(bright_day) = v;
+                          v = std::max(0.01f, v * sat::auto_bright_factor());
+                        }
+                        if (fabsf(id(backlight).remote_values.get_brightness() - v) < 0.005f) return;
+                        auto call = id(backlight).turn_on();
+                        call.set_brightness(v);
+                        call.set_transition_length(0);
+                        call.perform();
+              - label:                 # UI-29
+                  x: 16
+                  y: 142
+                  text: "Miles"
+                  text_font: mono16
+              - label:                 # UI-16a: row icon, as on the Celestial tab
+                  x: 128
+                  y: 140
+                  text: "\U000F08F0"   # map-marker-distance
+                  text_font: mdi_card20
+                  text_color: 0xA8D8FF
+              - switch:
+                  id: sw_miles
+                  x: 232
+                  y: 136
+                  width: 56
+                  height: 28
+              - label:                 # UI-44
+                  x: 16
+                  y: 100
+                  text: "Auto bright"
+                  text_font: mono16
+              - label:                 # UI-16a: row icon, as on the Celestial tab
+                  x: 128
+                  y: 98
+                  text: "\U000F00E1"   # brightness-auto
+                  text_font: mdi_card20
+                  text_color: 0xFFD54A
+              - switch:
+                  id: sw_autob
+                  x: 232
+                  y: 94
+                  width: 56
+                  height: 28
+              - label:
+                  x: 298
+                  y: 102
+                  text: "dims after sunset"
+                  text_font: mono12
+                  text_color: 0x7E8BB3
+              - label:                 # UI-45
+                  x: 16
+                  y: 184
+                  text: "Night mode"
+                  text_font: mono16
+              - label:                 # UI-16a: row icon, as on the Celestial tab
+                  x: 128
+                  y: 182
+                  text: "\U000F0594"   # weather-night
+                  text_font: mdi_card20
+                  text_color: 0xFF6B6B
+              - switch:
+                  id: sw_night
+                  x: 232
+                  y: 178
+                  width: 56
+                  height: 28
+              - label:
+                  x: 298
+                  y: 186
+                  text: "red after dusk"
+                  text_font: mono12
+                  text_color: 0x7E8BB3
+        - obj:
+            id: pnl_location
+            x: 0
+            y: 100
+            width: 480
+            height: 340
+            bg_opa: TRANSP
+            text_color: 0xC9D3F2   # obj containers take the theme text colour (dark grey) otherwise
+            border_width: 0
+            radius: 0
+            pad_all: 0
+            scrollable: false
+            clickable: false
+            hidden: true
+            widgets:
+              - label:
+                  x: 16
+                  y: 16
+                  text: "Heading"
+                  text_font: mono16
+              - label:                 # UI-16a: row icon, as on the Celestial tab
+                  x: 128
+                  y: 14
+                  text: "\U000F1382"   # compass-rose (heading)
+                  text_font: mdi_card20
+                  text_color: 0xA8D8FF
+              - textarea:
+                  id: ta_heading
+                  x: 190
+                  y: 8
+                  width: 90
+                  height: 36
+                  one_line: true
+                  max_length: 3
+                  accepted_chars: "0123456789"
+                  text_font: mono16
+                  text_color: 0xEEF2FF   # theme default is dark grey
+                  bg_color: 0x0E1836
+                  border_color: 0x3A4E86
+                  border_width: 2
+                  pad_all: 6
+                  on_click:
+                    - lvgl.keyboard.update:
+                        id: settings_kb
+                        textarea: ta_heading
+                    - lvgl.widget.show: settings_kb
+              - label:
+                  x: 290
+                  y: 18
+                  text: "deg (0 = N up)"
+                  text_font: mono12
+                  text_color: 0x7E8BB3
+              - label:
+                  x: 16
+                  y: 56
+                  text: "Coordinates"
+                  text_font: mono16
+              - label:                 # UI-16a: row icon, as on the Celestial tab
+                  x: 128
+                  y: 54
+                  text: "\U000F01A4"   # crosshairs-gps
+                  text_font: mdi_card20
+                  text_color: 0x7EE0B0
+              - label:
+                  x: 190
+                  y: 56
+                  text: "Dec"
+                  text_font: mono16
+              - switch:
+                  id: sw_dms
+                  x: 232
+                  y: 50
+                  width: 56
+                  height: 28
+                  on_value:
+                    - lambda: |-
+                        id(coord_dms) = x;
+                        sat::settings_set_dms(x);
+              - label:
+                  x: 298
+                  y: 56
+                  text: "DMS"
+                  text_font: mono16
+              - label:
+                  x: 16
+                  y: 96
+                  text: "Latitude"
+                  text_font: mono16
+              - label:                 # UI-16a: row icon, as on the Celestial tab
+                  x: 128
+                  y: 94
+                  text: "\U000F0F57"   # latitude
+                  text_font: mdi_card20
+                  text_color: 0x7EE0B0
+              - obj:
+                  id: box_lat_dd
+                  x: 190
+                  y: 88
+                  width: 284
+                  height: 36
+                  bg_opa: TRANSP
+                  text_color: 0xC9D3F2   # obj containers take the theme text colour (dark grey) otherwise
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  clickable: false
+                  hidden: false
+                  widgets:
+                    - textarea:
+                        id: ta_lat
+                        x: 0
+                        y: 0
+                        width: 150
+                        height: 36
+                        one_line: true
+                        max_length: 8
+                        accepted_chars: "-.0123456789"
+                        text_font: mono16
+                        text_color: 0xEEF2FF   # theme default is dark grey
+                        bg_color: 0x0E1836
+                        border_color: 0x3A4E86
+                        border_width: 2
+                        pad_all: 6
+                        on_click:
+                          - lvgl.keyboard.update:
+                              id: settings_kb
+                              textarea: ta_lat
+                          - lvgl.widget.show: settings_kb
+                    - label:
+                        x: 160
+                        y: 10
+                        text: "N +  S -"
+                        text_font: mono12
+                        text_color: 0x7E8BB3
+              - obj:
+                  id: box_lat_dms
+                  x: 190
+                  y: 88
+                  width: 284
+                  height: 36
+                  bg_opa: TRANSP
+                  text_color: 0xC9D3F2   # obj containers take the theme text colour (dark grey) otherwise
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  clickable: false
+                  hidden: true
+                  widgets:
+                    - textarea:
+                        id: ta_lat_d
+                        x: 0
+                        y: 0
+                        width: 52
+                        height: 36
+                        one_line: true
+                        max_length: 3
+                        accepted_chars: "0123456789"
+                        text_font: mono16
+                        text_color: 0xEEF2FF   # theme default is dark grey
+                        bg_color: 0x0E1836
+                        border_color: 0x3A4E86
+                        border_width: 2
+                        pad_all: 6
+                        on_click:
+                          - lvgl.keyboard.update:
+                              id: settings_kb
+                              textarea: ta_lat_d
+                          - lvgl.widget.show: settings_kb
+                    - label:
+                        x: 54
+                        y: 4
+                        text: "°"
+                        text_font: mono16
+                    - textarea:
+                        id: ta_lat_m
+                        x: 66
+                        y: 0
+                        width: 62
+                        height: 36
+                        one_line: true
+                        max_length: 6
+                        accepted_chars: "0123456789."
+                        text_font: mono16
+                        text_color: 0xEEF2FF   # theme default is dark grey
+                        bg_color: 0x0E1836
+                        border_color: 0x3A4E86
+                        border_width: 2
+                        pad_all: 6
+                        on_click:
+                          - lvgl.keyboard.update:
+                              id: settings_kb
+                              textarea: ta_lat_m
+                          - lvgl.widget.show: settings_kb
+                    - label:
+                        x: 130
+                        y: 4
+                        text: "'"
+                        text_font: mono16
+                    - textarea:
+                        id: ta_lat_s
+                        x: 140
+                        y: 0
+                        width: 62
+                        height: 36
+                        one_line: true
+                        max_length: 4
+                        accepted_chars: "0123456789."
+                        text_font: mono16
+                        text_color: 0xEEF2FF   # theme default is dark grey
+                        bg_color: 0x0E1836
+                        border_color: 0x3A4E86
+                        border_width: 2
+                        pad_all: 6
+                        on_click:
+                          - lvgl.keyboard.update:
+                              id: settings_kb
+                              textarea: ta_lat_s
+                          - lvgl.widget.show: settings_kb
+                    - label:
+                        x: 204
+                        y: 4
+                        text: "\""
+                        text_font: mono16
+                    - button:
+                        x: 222
+                        y: 0
+                        width: 56
+                        height: 36
+                        bg_color: 0x1A2547
+                        shadow_width: 0
+                        widgets:
+                          - label:
+                              id: lat_hemi
+                              align: CENTER
+                              text: "N"
+                              text_font: mono16
+                        on_click:
+                          - lambda: sat::settings_toggle_hemi(0);
+              - label:
+                  x: 16
+                  y: 138
+                  text: "Longitude"
+                  text_font: mono16
+              - label:                 # UI-16a: row icon, as on the Celestial tab
+                  x: 128
+                  y: 136
+                  text: "\U000F0F5A"   # longitude
+                  text_font: mdi_card20
+                  text_color: 0x7EE0B0
+              - obj:
+                  id: box_lon_dd
+                  x: 190
+                  y: 130
+                  width: 284
+                  height: 36
+                  bg_opa: TRANSP
+                  text_color: 0xC9D3F2   # obj containers take the theme text colour (dark grey) otherwise
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  clickable: false
+                  hidden: false
+                  widgets:
+                    - textarea:
+                        id: ta_lon
+                        x: 0
+                        y: 0
+                        width: 150
+                        height: 36
+                        one_line: true
+                        max_length: 9
+                        accepted_chars: "-.0123456789"
+                        text_font: mono16
+                        text_color: 0xEEF2FF   # theme default is dark grey
+                        bg_color: 0x0E1836
+                        border_color: 0x3A4E86
+                        border_width: 2
+                        pad_all: 6
+                        on_click:
+                          - lvgl.keyboard.update:
+                              id: settings_kb
+                              textarea: ta_lon
+                          - lvgl.widget.show: settings_kb
+                    - label:
+                        x: 160
+                        y: 10
+                        text: "E +  W -"
+                        text_font: mono12
+                        text_color: 0x7E8BB3
+              - obj:
+                  id: box_lon_dms
+                  x: 190
+                  y: 130
+                  width: 284
+                  height: 36
+                  bg_opa: TRANSP
+                  text_color: 0xC9D3F2   # obj containers take the theme text colour (dark grey) otherwise
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  clickable: false
+                  hidden: true
+                  widgets:
+                    - textarea:
+                        id: ta_lon_d
+                        x: 0
+                        y: 0
+                        width: 52
+                        height: 36
+                        one_line: true
+                        max_length: 3
+                        accepted_chars: "0123456789"
+                        text_font: mono16
+                        text_color: 0xEEF2FF   # theme default is dark grey
+                        bg_color: 0x0E1836
+                        border_color: 0x3A4E86
+                        border_width: 2
+                        pad_all: 6
+                        on_click:
+                          - lvgl.keyboard.update:
+                              id: settings_kb
+                              textarea: ta_lon_d
+                          - lvgl.widget.show: settings_kb
+                    - label:
+                        x: 54
+                        y: 4
+                        text: "°"
+                        text_font: mono16
+                    - textarea:
+                        id: ta_lon_m
+                        x: 66
+                        y: 0
+                        width: 62
+                        height: 36
+                        one_line: true
+                        max_length: 6
+                        accepted_chars: "0123456789."
+                        text_font: mono16
+                        text_color: 0xEEF2FF   # theme default is dark grey
+                        bg_color: 0x0E1836
+                        border_color: 0x3A4E86
+                        border_width: 2
+                        pad_all: 6
+                        on_click:
+                          - lvgl.keyboard.update:
+                              id: settings_kb
+                              textarea: ta_lon_m
+                          - lvgl.widget.show: settings_kb
+                    - label:
+                        x: 130
+                        y: 4
+                        text: "'"
+                        text_font: mono16
+                    - textarea:
+                        id: ta_lon_s
+                        x: 140
+                        y: 0
+                        width: 62
+                        height: 36
+                        one_line: true
+                        max_length: 4
+                        accepted_chars: "0123456789."
+                        text_font: mono16
+                        text_color: 0xEEF2FF   # theme default is dark grey
+                        bg_color: 0x0E1836
+                        border_color: 0x3A4E86
+                        border_width: 2
+                        pad_all: 6
+                        on_click:
+                          - lvgl.keyboard.update:
+                              id: settings_kb
+                              textarea: ta_lon_s
+                          - lvgl.widget.show: settings_kb
+                    - label:
+                        x: 204
+                        y: 4
+                        text: "\""
+                        text_font: mono16
+                    - button:
+                        x: 222
+                        y: 0
+                        width: 56
+                        height: 36
+                        bg_color: 0x1A2547
+                        shadow_width: 0
+                        widgets:
+                          - label:
+                              id: lon_hemi
+                              align: CENTER
+                              text: "E"
+                              text_font: mono16
+                        on_click:
+                          - lambda: sat::settings_toggle_hemi(1);
+              # HW-9a: compass calibration (4.5.16), under the heading and coordinates it steers
+              - label:
+                  x: 16
+                  y: 190
+                  text: "Compass"
+                  text_font: mono16
+              - label:
+                  x: 128
+                  y: 188
+                  text: "\U000F018C"   # compass-outline
+                  text_font: mdi_card20
+                  text_color: 0x9FB2EA
+              - button:
+                  id: btn_cal
+                  x: 190
+                  y: 182
+                  width: 150
+                  height: 36
+                  bg_color: 0x1A2547
+                  shadow_width: 0
+                  widgets:
+                    - label:
+                        id: lbl_cal
+                        align: CENTER
+                        text: "Calibrate"
+                        text_font: mono16
+                  disabled:
+                    bg_color: 0x121A33   # HW-9b: greyed out without a compass
+                  on_click:
+                    - lambda: sat::hw::cal_screen_open(esphome::millis());  // HW-9b guided run
+              - label:
+                  id: lbl_cal_state
+                  x: 350
+                  y: 192
+                  text: ""
+                  text_font: mono12
+                  text_color: 0x7E8BB3
+              - label:
+                  x: 190
+                  y: 224
+                  text: "Opens a guide: turn the display\nslowly all the way round"
+                  text_font: mono12
+                  text_color: 0x7E8BB3
+        - obj:
+            id: pnl_celestial
+            x: 0
+            y: 100
+            width: 480
+            height: 380
+            bg_opa: TRANSP
+            text_color: 0xC9D3F2   # obj containers take the theme text colour (dark grey) otherwise
+            border_width: 0
+            radius: 0
+            pad_all: 0
+            scrollable: false
+            clickable: false
+            hidden: true
+            widgets:
+              - label:                 # UI-39: LEO cone (the Starlink layer: radius from overhead)
+                  x: 16
+                  y: 14
+                  text: "LEO cone"
+                  text_font: mono16
+              - label:                 # UI-40 (its Saturn picture is added from C++)
+                  id: lbl_planets
+                  x: 16
+                  y: 246
+                  text: "Planets"
+                  text_font: mono16
+              - switch:
+                  id: sw_planets
+                  x: 150
+                  y: 240
+                  width: 56
+                  height: 28
+              - label:                 # UI-41a: alert switches (4.5.6), right column
+                  x: 246
+                  y: 246
+                  text: "Aurora alert"
+                  text_font: mono16
+              - label:
+                  x: 372
+                  y: 244
+                  text: "\U000F1BB9"   # aurora
+                  text_font: mdi_card20
+                  text_color: 0x7EE0B0
+              - switch:
+                  id: sw_aur_alerts
+                  x: 400
+                  y: 240
+                  width: 56
+                  height: 28
+              - label:                 # UI-47..51 sky event alerts (4.5.15), left column
+                  x: 16
+                  y: 290
+                  text: "Sky events"
+                  text_font: mono16
+              - label:
+                  x: 122
+                  y: 288
+                  text: "\U000F0594"   # weather-night
+                  text_font: mdi_card20
+                  text_color: 0xA8D8FF
+              - switch:
+                  id: sw_sky_alerts
+                  x: 150
+                  y: 284
+                  width: 56
+                  height: 28
+              - label:                 # its alignment picture is added from C++
+                  x: 246
+                  y: 290
+                  text: "Planet alert"
+                  text_font: mono16
+              - switch:
+                  id: sw_pl_alerts
+                  x: 400
+                  y: 284
+                  width: 56
+                  height: 28
+              - label:                 # UI-64 Milky Way (left) | UI-63 Comets (right), 4.5.24
+                  x: 16
+                  y: 334
+                  text: "Milky Way"
+                  text_font: mono16
+              - label:
+                  x: 122
+                  y: 332
+                  text: "\U000F00B8"   # blur-radial
+                  text_font: mdi_card20
+                  text_color: 0xB4C4F0
+              - switch:
+                  id: sw_milky_way
+                  x: 150
+                  y: 328
+                  width: 56
+                  height: 28
+              - label:
+                  x: 246
+                  y: 334
+                  text: "Comets"
+                  text_font: mono16
+              - label:
+                  x: 372
+                  y: 332
+                  text: "\U000F0629"   # meteor
+                  text_font: mdi_card20
+                  text_color: 0xA8F0E0
+              - switch:
+                  id: sw_comets
+                  x: 400
+                  y: 328
+                  width: 56
+                  height: 28
+              - slider:
+                  id: sl_cone
+                  x: 150
+                  y: 18
+                  width: 230
+                  height: 14
+                  min_value: 15
+                  max_value: 90
+                  on_value:
+                    - lambda: sat::cone_label(id(lbl_cone), x);
+              - label:
+                  id: lbl_cone
+                  x: 404
+                  y: 14
+                  text: "80°"
+                  text_font: mono16
+              - label:
+                  x: 150
+                  y: 36
+                  text: "degrees from overhead"
+                  text_font: mono12
+                  text_color: 0x7E8BB3
+              # UI-21/22/35 layer switches (applied on Save), rows 36 px apart:
+              #   LEO | Starlink, MEO | GEO, Debris | Sat Trails, Stars | After dusk, Miles
+              # UI-33: icons beside the layer switches (not Sat Trails, Miles, Stars, After dusk)
+              - label:
+                  id: ico_leo
+                  x: 122
+                  y: 68
+                  text: "\U000F0471"   # satellite-variant
+                  text_font: mdi_card20
+                  text_color: 0xF1F4FF
+              - label:
+                  id: ico_starlink
+                  x: 372
+                  y: 68
+                  text: "\U000F0909"   # satellite-uplink
+                  text_font: mdi_card20
+                  text_color: 0x8FA8F0
+                  disabled:
+                    text_color: 0x3A4566   # dimmed while LEO is off
+              - label:
+                  id: ico_meo
+                  x: 122
+                  y: 112
+                  text: "\U000F01A4"   # crosshairs-gps
+                  text_font: mdi_card20
+                  text_color: 0x4FD1C5
+              - label:
+                  id: ico_geo
+                  x: 372
+                  y: 112
+                  text: "\U000F01E7"   # earth
+                  text_font: mdi_card20
+                  text_color: 0xF6B93B
+              - label:
+                  id: ico_debris
+                  x: 122
+                  y: 156
+                  text: "\U000F0A79"   # trash-can
+                  text_font: mdi_card20
+                  text_color: 0xB39B7D
+              - label:                 # UI-33: Sat Trails, Stars, After dusk icons (4.5.0)
+                  id: ico_trails
+                  x: 372
+                  y: 156
+                  text: "\U000F1741"   # star-shooting
+                  text_font: mdi_card20
+                  text_color: 0x9FB2EA
+              - label:
+                  id: ico_stars
+                  x: 122
+                  y: 200
+                  text: "\U000F0AE2"   # star-four-points
+                  text_font: mdi_card20
+                  text_color: 0xFFF1B8
+              - label:
+                  id: ico_dusk
+                  x: 372
+                  y: 200
+                  text: "\U000F059B"   # weather-sunset-down
+                  text_font: mdi_card20
+                  text_color: 0xF2A65A
+              - label:
+                  x: 16
+                  y: 70
+                  text: "LEO"
+                  text_font: mono16
+              - switch:
+                  id: sw_sats
+                  x: 150
+                  y: 64
+                  width: 56
+                  height: 28
+                  on_value:            # Starlink editable only while LEO is on
+                    - lambda: |-
+                        if (x) {
+                          lv_obj_remove_state(id(sw_starlink), LV_STATE_DISABLED);
+                          lv_obj_remove_state(id(lbl_starlink), LV_STATE_DISABLED);
+                          lv_obj_remove_state(id(ico_starlink), LV_STATE_DISABLED);
+                        } else {
+                          lv_obj_add_state(id(sw_starlink), LV_STATE_DISABLED);
+                          lv_obj_add_state(id(lbl_starlink), LV_STATE_DISABLED);
+                          lv_obj_add_state(id(ico_starlink), LV_STATE_DISABLED);
+                        }
+              - label:
+                  id: lbl_starlink
+                  x: 250
+                  y: 70
+                  text: "Starlink"
+                  text_font: mono16
+                  disabled:
+                    text_color: 0x5A6687   # dimmed while LEO is off
+              - switch:
+                  id: sw_starlink
+                  x: 400
+                  y: 64
+                  width: 56
+                  height: 28
+              - label:
+                  x: 16
+                  y: 114
+                  text: "MEO"
+                  text_font: mono16
+              - switch:
+                  id: sw_meo
+                  x: 150
+                  y: 108
+                  width: 56
+                  height: 28
+              - label:
+                  x: 250
+                  y: 114
+                  text: "GEO"
+                  text_font: mono16
+              - switch:
+                  id: sw_geo
+                  x: 400
+                  y: 108
+                  width: 56
+                  height: 28
+              - label:                 # UI-35: rocket bodies and debris
+                  x: 16
+                  y: 158
+                  text: "Debris"
+                  text_font: mono16
+              - switch:
+                  id: sw_debris
+                  x: 150
+                  y: 152
+                  width: 56
+                  height: 28
+              - label:                 # UI-26
+                  x: 250
+                  y: 158
+                  text: "Sat Trails"
+                  text_font: mono16
+              - switch:
+                  id: sw_trails
+                  x: 400
+                  y: 152
+                  width: 56
+                  height: 28
+              - label:
+                  x: 16
+                  y: 202
+                  text: "Stars"
+                  text_font: mono16
+              - switch:
+                  id: sw_stars
+                  x: 150
+                  y: 196
+                  width: 56
+                  height: 28
+              - label:
+                  x: 250
+                  y: 202
+                  text: "After dusk"
+                  text_font: mono16
+              - switch:
+                  id: sw_dusk
+                  x: 400
+                  y: 196
+                  width: 56
+                  height: 28
+        - button:                # UI-67: About (version, device, credits), lower right
+            id: btn_about
+            x: 362
+            y: 440
+            width: 110
+            height: 34
+            bg_color: 0x1A2547
+            shadow_width: 0
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "About"
+                  text_font: mono16
+            on_click:
+              - lvgl.widget.hide: settings_kb
+              - lvgl.page.show: about_page
+        - button:                # UI-68: check for a newer release now
+            id: btn_updates
+            x: 246
+            y: 440
+            width: 110
+            height: 34
+            bg_color: 0x1A2547
+            shadow_width: 0
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Updates"
+                  text_font: mono16
+            on_click:
+              - lvgl.widget.hide: settings_kb
+              - lambda: sat::upd::check_now();
+        - label:
+            id: settings_status
+            x: 16                # under the panels, clear of the Updates and About buttons; wraps
+            y: 446
+            width: 222
+            text: ""
+            text_font: mono12
+            text_color: 0xFF5A5A
+        - keyboard:
+            id: settings_kb
+            mode: NUMBER
+            textarea: ta_heading
+            align: BOTTOM_MID    # LVGL keyboards align to the bottom themselves; x/y would offset from there
+            width: 480
+            height: 164
+            hidden: true         # appears when a text field is tapped, over the switches
+            on_ready:
+              - lvgl.widget.hide: settings_kb
+            on_cancel:
+              - lvgl.widget.hide: settings_kb
+            bg_color: 0x0E1836
+            items:
+              bg_color: 0x1A2547
+              text_color: 0xC9D3F2
+              border_width: 0
+              checked:           # the keyboard/OK control keys
+                bg_color: 0x2A3A66
+                text_color: 0xC9D3F2
