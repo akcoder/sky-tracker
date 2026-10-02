@@ -1,7 +1,7 @@
 #pragma once
 // UI-68 internet updates. The firmware is built by GitHub Actions on every release and
 // published with a manifest on GitHub Pages; ESPHome's http_request update entity reads the
-// manifest (every hour, and when Settings > Updates is tapped). This shows the result:
+// manifest (every hour, and when Settings > Upgrade Check is tapped). This shows the result:
 // "Checking for updates", then "Up to date" / "Update available" (Not now, Update), then the
 // download's progress; ESPHome's http_request OTA installs it and restarts. An update found by
 // the hourly check does not open anything: an update icon appears beside the gear on the map
@@ -18,7 +18,7 @@ class UpdateEntity;
 namespace sat {
 namespace upd {
 void init(esphome::update::UpdateEntity *e, const lv_font_t *title, const lv_font_t *body, const lv_font_t *small);
-void check_now();  // Settings > Updates
+void check_now();  // Settings > Upgrade Check
 void set_button(lv_obj_t *b);  // the map page's update icon, beside the gear
 void offer_now();              // that icon tapped
 }  // namespace upd
