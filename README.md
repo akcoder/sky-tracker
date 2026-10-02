@@ -24,7 +24,8 @@ orbital elements a couple of times a day.
 - **Pictures.** Today's Sun (GOES-19 SUVI), the Moon as it looks this hour (NASA
   Dial-A-Moon), the whole Earth and your region from GOES, and built-in photos
   of the planets. Swipe back through earlier frames with the < button.
-- **Launches.** The next rocket launch, from The Space Devs' Launch Library.
+- **Launches.** The next rocket launch, from The Space Devs' Launch Library, with
+  RocketLaunch.Live as a backup. At lift-off a cartoon rocket flies across the screen.
 - **Home Assistant.** ISS overhead, next pass, aurora chance, solar wind and
   more show up as entities. Location, heading and layers can be set from HA,
   the touch screen, or the built-in web page.
@@ -114,7 +115,7 @@ attaches it to the release and updates the manifest the devices read.
 | Sun, Earth pictures | NOAA GOES-19 SUVI and GOES-18/19 GeoColor |
 | Moon | [NASA SVS Dial-A-Moon](https://svs.gsfc.nasa.gov/help/#apis-dialamoon) |
 | Comets | [JPL Small-Body Database](https://ssd.jpl.nasa.gov) |
-| Launches | [The Space Devs](https://thespacedevs.com) |
+| Launches | [The Space Devs](https://thespacedevs.com), [RocketLaunch.Live](https://www.rocketlaunch.live) as a backup |
 | Planet photos | NASA, ESA (Mars: ESA Rosetta OSIRIS, CC BY-SA 3.0 IGO), via Wikimedia Commons |
 | Stars, constellations, Milky Way | [d3-celestial](https://github.com/ofrohn/d3-celestial) (Hipparcos positions, BSD-3-Clause) |
 

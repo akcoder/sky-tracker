@@ -1,6 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.5 (installed): all mbedTLS memory from PSRAM (CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC). 4.6.4's malloc route still left the update check failing with -0x7F00 (UI-68).
+- 4.6.4 (installed): mbedTLS through malloc (CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC), meant to let the update check's TLS buffers come from PSRAM; it still failed (fixed in 4.6.5). Launch animation at T-0 (UI-69, Launch Animation switch, Play Launch Animation button). The launch list is kept in flash so reboots don't empty it or use up Launch Library's free calls (UI-54a); RocketLaunch.Live fills in when Launch Library refuses (UI-54b). The public build's improv_serial id is improv_usb ("improv" clashed with a C++ namespace and failed the GitHub build).
 - 4.6.3 (installed): the microSD card is checked once at boot, before the panel is set up, instead of every 5 s (UI-66): the checks were being read by the panel's init interface (same two pins) and turned the screen red. The first internet update check waits 3 min after boot (UI-68): at boot it ran out of memory for a second TLS connection.
 - 4.6.2 (installed, test): microSD checks switched off; the screen stays normal, which confirmed the cause.
 - 4.6.1 (installed): held the panel CS (39) high during card checks; the screen still turned red.
@@ -665,6 +667,19 @@ UI-54  Launches: Launch Library 2 (ll.thespacedevs.com 2.3.0, upcoming, 8, every
        ("Falcon 9 launches in 40 min - Cape Canaveral SFS"); flown ones are skipped. The
        list shows the next two in 48 h (rocket, bearing to the site, T-countdown). HA text
        sensor Next Launch.
+UI-54a The launch list is kept in flash (skydata, one sector at 0x0F1000: magic, count,
+       CRC, save time, up to 8 records) after every good download, and loaded when the net
+       task starts: a reboot shows the launches at once, and the next download waits until
+       the saved list is 3 h old. A night of reboots had used up the free tier ("launches:
+       HTTP 429") and left the list empty while NROL-97 was 23 minutes out.
+UI-54b Backup source: when Launch Library fails (HTTP 429, or no answer), RocketLaunch.Live's
+       free feed (fdo.rocketlaunch.live/json/launches/next/5, no key). Names become
+       "<vehicle> | <mission>"; time from t0, else win_open (both "2026-10-05T08:17Z"), else
+       sort_date (status TBD); result 1/0/2+ = Success/Failure/Partial F, otherwise Go when
+       the time is set. The feed has no pad coordinates, so known sites are looked up by
+       location name (Cape Canaveral, Kennedy, Vandenberg, Starbase, Wallops, Pacific
+       Spaceport/Kodiak, Mahia, Baikonur, Jiuquan, ...) for the nearby alert and bearing.
+       Credited on the About page and in the README.
 UI-55  Solar wind: NOAA SWPC json/rtsw rtsw_mag_1m and rtsw_wind_1m (newest first, a day
        each): the first 15 samples from the active spacecraft are read and the download
        is cut short; 15-minute means of Bz (GSM), Bt, speed, density, every 10 min. Early
@@ -868,6 +883,24 @@ UI-67  About page (Settings > About, a button lower right in place of the versio
        and signal, MAC, uptime as "3h 12m", refreshed each second while shown); DATA FROM
        (CelesTrak, NOAA SWPC, NOAA GOES-19/18, NASA SVS, NASA JPL, The Space Devs, NASA
        via Wikimedia); a footer naming the microSD update file.
+UI-68  Internet updates (sky_update.h): ESPHome's http_request update entity reads
+       manifest.json from GitHub Pages (built by the Firmware workflow for each release);
+       first check 3 min after boot, then hourly. Settings > Updates checks now: "Checking",
+       "Up to date" / "Update available" (Not now, Update), download progress, or "Couldn't
+       check". A version found by the hourly check is offered once (Not now holds until the
+       next restart). http_request OTA installs it. All mbedTLS memory comes from PSRAM
+       (CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC): from internal RAM the check's TLS session never
+       fit beside sat_net's kept one (4.6.4 tried malloc, which was not enough).
+UI-69  Launch animation (sky_rocket.h): at a launch's T-0 (status not flown/scrubbed, within
+       2 min after NET) a cartoon rocket lifts off at 140,400 with a pad cloud, climbs on
+       x = 140 + 380 u^1.6, y = 400 - 470 u + 110 u^2 (u 0..1 over 4.5 s, rotated along the
+       path, flame flickering), leaves a trail of up to 48 fading smoke puffs and exits past
+       the upper right. Banner 360x46 at 60,424 (0x0E1836, 2 px 0x2D5BD0 border, radius 10)
+       with the mission ("Falcon 9 · Starlink Group 12-7", mono18, white), text centred
+       both ways (dropped a third of the descent so caps sit in the middle). Once per launch
+       (name + NET); waits while a full-screen view or prompt is open; a tap skips it. On
+       lv_layer_top, deleted when done. Launch Animation switch (on by default) and Play
+       Launch Animation button in HA and the web page.
 UI-41a Switches Aurora Alerts (mdi:aurora), Planet Alerts (mdi:orbit) and Sky Event Alerts
        (mdi:weather-night; UI-41b, UI-47..51, 4.5.15), default on,
        in the Celestial settings tab (with the aurora glyph and alignment picture)

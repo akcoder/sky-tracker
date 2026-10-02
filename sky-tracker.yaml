@@ -4,7 +4,7 @@
 # (SGP4/SDP4), sky_stars.h (star catalogue). Orbits come from CelesTrak: no API key.
 
 substitutions:
-  fw_version: "4.6.3"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.5"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -126,6 +126,8 @@ esphome:
                             id(mono12)->get_lv_font());  // UI-66
             sat::upd::init(id(fw_update), id(setup_title)->get_lv_font(), id(mono16)->get_lv_font(),
                            id(mono12)->get_lv_font());  // UI-68
+            sat::rocket::init(id(mono18)->get_lv_font());  // UI-69
+            sat::rocket::set_enabled(id(launch_anim).state);
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -165,6 +167,10 @@ esp32:
       CONFIG_LWIP_TCP_WND_DEFAULT: "16384"
       CONFIG_LWIP_TCP_RECVMBOX_SIZE: "16"
       CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP: y
+      # UI-68: all mbedTLS memory from PSRAM. From internal RAM, the update check's second TLS
+      # session (sat_net keeps one open) failed every time: "mbedtls_ssl_setup returned
+      # -0x7F00" (out of memory). Going through malloc (4.6.4) was not enough.
+      CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: y
 
 # BUILD-7: the C++ (headers, sky_extra.cpp, build flags) is the sky_tracker external component
 external_components:
@@ -374,7 +380,7 @@ font:
     id: mono12
     size: 12
     bpp: 4                       # anti-aliased (ESPHome default is 1: jagged edges)
-    glyphs: &glyphs " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_abcdefghijklmnopqrstuvwxyz|°"
+    glyphs: &glyphs " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_abcdefghijklmnopqrstuvwxyz|°·"
   - file: "gfonts://Roboto Mono"
     id: mono16
     size: 16
@@ -1253,6 +1259,19 @@ switch:
       - lambda: sat::set_night(true);
     on_turn_off:
       - lambda: sat::set_night(false);
+  - platform: template           # UI-69: rocket across the screen at a launch's T-0
+    id: launch_anim
+    name: Launch Animation
+    web_server:
+      sorting_group_id: grp_display
+      sorting_weight: 6
+    icon: mdi:rocket-launch
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::rocket::set_enabled(true);
+    on_turn_off:
+      - lambda: sat::rocket::set_enabled(false);
   - platform: template           # UI-21
     id: show_stars
     name: Show Stars & Constellations
@@ -1309,6 +1328,15 @@ button:
             return;
           }
           sat::hw::cal_screen_open(esphome::millis());  // HW-9b: the same guide on the display
+  - platform: template           # UI-69: show the launch animation now
+    id: btn_play_launch
+    name: Play Launch Animation
+    web_server:
+      sorting_group_id: grp_display
+      sorting_weight: 7
+    icon: mdi:rocket-launch
+    on_press:
+      - lambda: sat::rocket::play_now();
   - platform: restart            # diagnostic reboot, in HA and the web UI
     id: btn_reboot
     name: Reboot
@@ -1906,7 +1934,7 @@ lvgl:
             x: 8
             y: 308
             width: 464
-            text: "Orbits: CelesTrak\nSpace weather, aurora: NOAA SWPC\nSun, Earth: NOAA GOES-19 / GOES-18\nMoon: NASA SVS   Comets: NASA JPL\nLaunches: The Space Devs\nPlanet photos: NASA, via Wikimedia"
+            text: "Orbits: CelesTrak\nSpace weather, aurora: NOAA SWPC\nSun, Earth: NOAA GOES-19 / GOES-18\nMoon: NASA SVS   Comets: NASA JPL\nLaunches: The Space Devs, RocketLaunch.Live\nPlanet photos: NASA, via Wikimedia"
             text_font: mono14
             text_color: 0xC9D3F2
             text_line_space: 1
