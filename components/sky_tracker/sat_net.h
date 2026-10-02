@@ -441,6 +441,7 @@ inline HttpResult http_stream(const char *url, const char *what, const std::func
   const int64_t t0 = net_us();
   int64_t sink_us = 0, t_hdr = 0;
   bool reused = false;
+  ESP_LOGD(TAG, "%s: GET %s", what, url);  // NET-13: every request's URL, at DEBUG
   for (int attempt = 0; attempt < 3; attempt++) {
     reused = kept.h != nullptr && strcmp(kept.host, host) == 0;
     if (kept.h && !reused)
@@ -457,7 +458,7 @@ inline HttpResult http_stream(const char *url, const char *what, const std::func
       c.user_agent = "SkyTracker/4.5 (ESPHome display)";  // Wikimedia asks for a descriptive agent
       kept.h = esp_http_client_init(&c);
       if (kept.h == nullptr) {
-        ESP_LOGW(TAG, "%s: client init failed", what);
+        ESP_LOGW(TAG, "%s: client init failed (%s)", what, url);
         return res;
       }
       snprintf(kept.host, sizeof(kept.host), "%s", host);
@@ -474,11 +475,11 @@ inline HttpResult http_stream(const char *url, const char *what, const std::func
       if (reused)
         continue;  // the server had closed the kept connection: a new one at once
       if (attempt < 2) {  // NET-11: a lost DNS answer or a refused connect: again after a second
-        ESP_LOGW(TAG, "%s: connect failed (%s); retrying", what, esp_err_to_name(err));
+        ESP_LOGW(TAG, "%s: connect failed (%s); retrying (%s)", what, esp_err_to_name(err), url);
         vTaskDelay(pdMS_TO_TICKS(1000));
         continue;
       }
-      ESP_LOGW(TAG, "%s: connect failed (%s)", what, esp_err_to_name(err));
+      ESP_LOGW(TAG, "%s: connect failed (%s) (%s)", what, esp_err_to_name(err), url);
       return res;
     }
     t_hdr = net_us();
@@ -488,7 +489,7 @@ inline HttpResult http_stream(const char *url, const char *what, const std::func
     }
     if (res.status != 200) {
       if (res.status != 404)
-        ESP_LOGW(TAG, "%s: HTTP %d", what, res.status);
+        ESP_LOGW(TAG, "%s: HTTP %d (%s)", what, res.status, url);
       // 4.5.31: never reuse after an error reply: flushing its body left the next reply
       // misread on the kept connection (the Earth's 404 steps gave "not a readable JPEG")
       kept_drop();
@@ -519,7 +520,7 @@ inline HttpResult http_stream(const char *url, const char *what, const std::func
       break;
     }
     if (failed || !esp_http_client_is_complete_data_received(kept.h)) {
-      ESP_LOGW(TAG, "%s: read failed after %ld bytes", what, res.bytes);
+      ESP_LOGW(TAG, "%s: read failed after %ld bytes (%s)", what, res.bytes, url);
       kept_drop();
       break;
     }
