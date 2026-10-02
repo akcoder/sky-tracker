@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.9 (installed): smoother launch animation (UI-69a): positions are set at the start of every display refresh (16 ms) instead of on a 33 ms timer that beat against it, and the smoke puffs grow and fade in 0.18 s steps so only a few change per frame (host test: 6% of the screen redrawn per frame, was 36% with whole-screen frames when the 32 dirty-area limit overflowed).
 - 4.6.8 (installed): every HTTP request is logged with its URL at DEBUG ("launches: GET https://ll.thespacedevs.com/..."), and the URL is added to each failure line (NET-13).
 - 4.6.7 (installed): releases carry the manifest and the .ota/.factory .bin files with checksums, no longer the 33 MB .elf (also left off GitHub Pages); the .elf stays in the build's artifact for 90 days, for decoding crashes. The Settings button Updates is now Upgrade Check (206,440 150x34; the error line beside it is 182 wide). Time zone picker at the top of Settings > Display, also a Time Zone select in HA and the web page (UI-70). Launch alerts from 3 days ahead, the next three (UI-54; was: a nearby launch from 24 h, any launch in its last hour). Space event alerts: dockings, undockings, spacecraft releases, EVAs from Launch Library 2's events, within 3 days, exact times only, up to two (UI-54c).
 - From 4.6.6 on, Dan's unit is updated only through GitHub releases: a change is committed, a release is published, the Firmware workflow builds the public sky-tracker.yaml, and the unit installs it from the manifest (the update icon, or HA's update entity). The unit then runs the public build: Wi-Fi from flash (saved by the dev build), no API encryption (HA's ESPHome entry is confirmed once without a key), name sky-tracker-9cad68 (MAC suffix), time zone from Home Assistant (2026.3+; UTC until HA connects). The ESPHome Builder is no longer used to install.
@@ -928,6 +929,11 @@ UI-69  Launch animation (sky_rocket.h): at a launch's T-0 (status not flown/scru
        (name + NET); waits while a full-screen view or prompt is open; a tap skips it. On
        lv_layer_top, deleted when done. Launch Animation switch (on by default) and Play
        Launch Animation button in HA and the web page.
+UI-69a Launch animation smoothness: frame() runs on the display's LV_EVENT_REFR_START (the
+       moved objects re-arm the next refresh; a 40 ms timer only covers a gap with no
+       refresh). Each puff and the pad cloud change only when their age crosses a 0.04 DUR
+       step, so the number of dirty areas per frame stays well under LVGL's 32 (past that
+       a frame redraws the whole screen).
 UI-41a Switches Aurora Alerts (mdi:aurora), Planet Alerts (mdi:orbit) and Sky Event Alerts
        (mdi:weather-night; UI-41b, UI-47..51, 4.5.15), default on,
        in the Celestial settings tab (with the aurora glyph and alignment picture)
