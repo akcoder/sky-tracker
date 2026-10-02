@@ -33,7 +33,10 @@ constexpr float DUR_S = 4.5f;        // pad to off screen
 constexpr float S = 22.0f;           // rocket scale (body half-width is 0.32 S)
 constexpr int IW = 32, IH = 84;      // image buffer
 constexpr int PX = 16, PY = 30;      // pivot (body centre) in the buffer
-constexpr int PUFFS = 48, PADS = 12;
+constexpr int PUFFS = 32, PADS = 6;
+// UI-69a: smoke is drawn from soft round images made at init (radius PR_MIN + i * PR_STEP), so a
+// puff is a plain image blend instead of an anti-aliased rounded-rectangle mask
+constexpr int PR_MIN = 4, PR_STEP = 3, PR_N = 12;
 constexpr int FLAMES = 5;
 // UI-69c: flame shapes (length and width scale, sideways lean of the tip, in body widths)
 struct Flame {
@@ -54,18 +57,17 @@ struct PadBillow {
   uint32_t col;
 };
 constexpr PadBillow PAD_BILLOWS[] = {
-    {0, -6, 20, 170, 0xF2D9BE},    {-26, -2, 19, 160, 0xE6D6C8}, {26, -2, 19, 160, 0xE6D6C8},
-    {-52, 2, 17, 150, 0xDCDCE1},   {52, 2, 17, 150, 0xDCDCE1},   {-78, 4, 15, 140, 0xD2D4DC},
-    {78, 4, 15, 140, 0xD2D4DC},    {-102, 6, 12, 125, 0xC8CBD4}, {102, 6, 12, 125, 0xC8CBD4},
-    {-38, -16, 15, 130, 0xE1DDDA}, {38, -16, 15, 130, 0xE1DDDA}, {0, -24, 14, 120, 0xE8DCD0},
+    {0, -6, 22, 170, 0xF2D9BE},   {-34, 0, 19, 155, 0xE6D6C8}, {34, 0, 19, 155, 0xE6D6C8},
+    {-68, 4, 15, 135, 0xD2D4DC},  {68, 4, 15, 135, 0xD2D4DC},  {0, -26, 15, 120, 0xE8DCD0},
 };
-constexpr float PAD_STEP = 0.02f, PAD_PHASE = 0.0017f, PAD_END = 0.75f;
+constexpr float PAD_STEP = 0.025f, PAD_PHASE = 0.004f, PAD_END = 0.7f;
 constexpr double LATE_S = 120;       // a launch is "now" for 2 min after T-0 (refresh lag)
 
 struct St {
   bool enabled = true;
   const lv_font_t *font = nullptr;
   lv_draw_buf_t *img_buf[FLAMES] = {};
+  lv_draw_buf_t *smoke[PR_N] = {};
   int flame_i = 0;
   uint32_t flame_at = 0;
   lv_obj_t *catcher = nullptr, *img = nullptr, *banner = nullptr, *label = nullptr;
@@ -78,6 +80,7 @@ struct St {
   uint32_t t0 = 0;
   lv_timer_t *anim = nullptr;  // fallback driver; frames normally come from the display refresh
   uint32_t last_frame = 0;
+  uint32_t frames = 0, max_gap = 0, last_refr = 0;  // UI-69a: logged when it ends
   uint32_t played_key = 0;  // the last launch shown (name + T-0)
 };
 inline St st;
@@ -172,19 +175,59 @@ inline void path(float u, float &x, float &y, float &deg) {
   deg = std::atan2(dx, -dy) * 180.0f / (float) M_PI;  // clockwise from straight up
 }
 
-inline lv_obj_t *blob(uint32_t col) {
-  lv_obj_t *o = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(o);
-  lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_bg_color(o, lv_color_hex(col), 0);
-  lv_obj_set_style_bg_opa(o, LV_OPA_TRANSP, 0);
+// a soft round puff: opaque core fading to nothing at the rim (smoothstep over the outer half)
+inline lv_draw_buf_t *draw_smoke(int r) {
+  const int d = 2 * r;
+  lv_draw_buf_t *db = lv_draw_buf_create(d, d, LV_COLOR_FORMAT_ARGB8888, 0);
+  if (db == nullptr)
+    return nullptr;
+  for (int py = 0; py < d; py++) {
+    uint8_t *row = (uint8_t *) db->data + (size_t) py * db->header.stride;
+    for (int px = 0; px < d; px++) {
+      const float dx = px + 0.5f - r, dy = py + 0.5f - r;
+      float t = (r - std::sqrt(dx * dx + dy * dy)) / (0.5f * r);
+      t = std::min(1.0f, std::max(0.0f, t));
+      row[px * 4 + 0] = 0xD7;  // B, G, R of 0xC8CDD7
+      row[px * 4 + 1] = 0xCD;
+      row[px * 4 + 2] = 0xC8;
+      row[px * 4 + 3] = (uint8_t) (255.0f * t * t * (3 - 2 * t));
+    }
+  }
+  return db;
+}
+// the smoke image nearest radius r; returns the radius it has
+inline int smoke_pick(int r, lv_draw_buf_t *&img) {
+  const int i = std::min(PR_N - 1, std::max(0, (r - PR_MIN + PR_STEP / 2) / PR_STEP));
+  img = st.smoke[i];
+  return PR_MIN + i * PR_STEP;
+}
+inline lv_obj_t *blob(uint32_t warm) {
+  lv_obj_t *o = lv_image_create(lv_layer_top());
+  if (warm) {  // the billows nearest the flame: tinted
+    lv_obj_set_style_image_recolor(o, lv_color_hex(warm), 0);
+    lv_obj_set_style_image_recolor_opa(o, LV_OPA_20, 0);
+  }
   lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
   return o;
 }
+inline void smoke_at(lv_obj_t *o, int x, int y, int r, int opa) {
+  lv_draw_buf_t *img = nullptr;
+  r = smoke_pick(r, img);
+  if (img == nullptr)
+    return;
+  lv_image_set_src(o, img);
+  lv_obj_set_pos(o, x - r, y - r);
+  lv_obj_set_style_image_opa(o, (lv_opa_t) std::min(255, std::max(0, opa)), 0);
+  lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
 
 inline void on_refr(lv_event_t *);
 inline void stop() {
+  if (st.anim && st.frames > 1)
+    ESP_LOGI("rocket", "animation: %u frames in %u ms (%.1f fps), longest gap %u ms", (unsigned) st.frames,
+             (unsigned) (st.last_refr - st.t0), st.frames * 1000.0f / std::max<uint32_t>(1, st.last_refr - st.t0),
+             (unsigned) st.max_gap);
   if (st.anim) {
     lv_timer_delete(st.anim);
     st.anim = nullptr;
@@ -254,11 +297,7 @@ inline void frame() {
       lv_obj_add_flag(st.puff[i], LV_OBJ_FLAG_HIDDEN);
       continue;
     }
-    const int r = (int) (6 + 24 * age);
-    lv_obj_set_size(st.puff[i], 2 * r, 2 * r);
-    lv_obj_set_pos(st.puff[i], (int32_t) st.puff_x[i] - r, (int32_t) st.puff_y[i] - r);
-    lv_obj_set_style_bg_opa(st.puff[i], (lv_opa_t) a, 0);
-    lv_obj_remove_flag(st.puff[i], LV_OBJ_FLAG_HIDDEN);
+    smoke_at(st.puff[i], (int) st.puff_x[i], (int) st.puff_y[i], (int) (10 + 28 * age), a + 40);
   }
   // The ground cloud: round billows that roll out sideways from the pad along the ground
   // (exhaust deflected by the flame trench), the inner ones bigger and lit warm by the flame,
@@ -283,16 +322,18 @@ inline void frame() {
     const int x = (int) (PAD_X + b.dx * g + (b.dx > 0 ? drift : b.dx < 0 ? -drift : 0));
     const int y = (int) (PAD_Y + 8 + b.dy * g - drift * 0.15f);
     const int a = (int) (b.a * (1.0f - std::max(0.0f, uq - 0.25f) / (PAD_END - 0.25f)));
-    lv_obj_set_size(st.pad[k], 2 * r, 2 * r);
-    lv_obj_set_pos(st.pad[k], x - r, y - r);
-    lv_obj_set_style_bg_opa(st.pad[k], (lv_opa_t) std::max(0, a), 0);
-    lv_obj_remove_flag(st.pad[k], LV_OBJ_FLAG_HIDDEN);
+    smoke_at(st.pad[k], x, y, (int) (r * 1.2f), a + 50);
   }
 }
 
 inline void on_refr(lv_event_t *) {
-  if (playing())
-    frame();
+  if (!playing())
+    return;
+  const uint32_t t = now_ms();
+  if (st.frames++ > 0)
+    st.max_gap = std::max(st.max_gap, t - st.last_refr);
+  st.last_refr = t;
+  frame();
 }
 
 // "Falcon 9 | Starlink Group 12-5" -> "Falcon 9 · Starlink Group 12-5"
@@ -320,9 +361,9 @@ inline void play(const char *name) {
   lv_obj_add_flag(st.catcher, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(st.catcher, [](lv_event_t *) { stop(); }, LV_EVENT_CLICKED, nullptr);
   for (int k = 0; k < PADS; k++)
-    st.pad[k] = blob(PAD_BILLOWS[k].col);
+    st.pad[k] = blob(k < 3 ? 0xFFB070 : 0);
   for (auto &o : st.puff)
-    o = blob(0xC8CDD7);
+    o = blob(0);
   st.img = lv_image_create(lv_layer_top());
   lv_image_set_src(st.img, st.img_buf[0]);
   lv_image_set_pivot(st.img, PX, PY);
@@ -354,6 +395,7 @@ inline void play(const char *name) {
   lv_obj_align(st.label, LV_ALIGN_CENTER, 0, drop);
   st.t0 = now_ms();
   st.puff_next = 0;
+  st.frames = st.max_gap = 0;
   st.last_emit = -1;
   for (auto &p : st.pad_step)
     p = -1;
@@ -396,6 +438,8 @@ void init(const lv_font_t *banner) {
   st.font = banner;
   for (int i = 0; i < FLAMES; i++)
     st.img_buf[i] = draw_rocket(FLAME[i]);
+  for (int i = 0; i < PR_N; i++)
+    st.smoke[i] = draw_smoke(PR_MIN + i * PR_STEP);
   lv_timer_create([](lv_timer_t *) { check(); }, 1000, nullptr);
 }
 void set_enabled(bool on) {
