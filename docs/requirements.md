@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.10 (queued): the launch's ground cloud is 12 round billows rolling out sideways from the pad, the inner ones warm-lit, then drifting and thinning (UI-69; was three widening rounded bars). Upgrade Check button in the web UI and HA (UI-68b). Satellite and sky updates pause while the launch animation plays (UI-69b). The rocket's flame flickers through five shapes (length, width, lean) with a white-hot core (UI-69c; was two lengths swapped every 80 ms). README animation re-recorded at 30 fps.
 - 4.6.9 (installed): smoother launch animation (UI-69a): positions are set at the start of every display refresh (16 ms) instead of on a 33 ms timer that beat against it, and the smoke puffs grow and fade in 0.18 s steps so only a few change per frame (host test: 6% of the screen redrawn per frame, was 36% with whole-screen frames when the 32 dirty-area limit overflowed).
 - 4.6.8 (installed): every HTTP request is logged with its URL at DEBUG ("launches: GET https://ll.thespacedevs.com/..."), and the URL is added to each failure line (NET-13).
 - 4.6.7 (installed): releases carry the manifest and the .ota/.factory .bin files with checksums, no longer the 33 MB .elf (also left off GitHub Pages); the .elf stays in the build's artifact for 90 days, for decoding crashes. The Settings button Updates is now Upgrade Check (206,440 150x34; the error line beside it is 182 wide). Time zone picker at the top of Settings > Display, also a Time Zone select in HA and the web page (UI-70). Launch alerts from 3 days ahead, the next three (UI-54; was: a nearby launch from 24 h, any launch in its last hour). Space event alerts: dockings, undockings, spacecraft releases, EVAs from Launch Library 2's events, within 3 days, exact times only, up to two (UI-54c).
@@ -919,10 +920,15 @@ UI-68a The hourly check never opens anything by itself. While a newer version is
        the update is installed. Settings > Upgrade Check still checks and shows the result. http_request OTA installs it. All mbedTLS memory comes from PSRAM
        (CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC): from internal RAM the check's TLS session never
        fit beside sat_net's kept one (4.6.4 tried malloc, which was not enough).
+UI-68b Upgrade Check button (web UI System group, weight 2, and HA, config category): runs the
+       Firmware update entity's check quietly (no prompt on the display); the result shows on
+       the web Firmware row and as the update icon beside the gear (UI-68a).
 UI-69  Launch animation (sky_rocket.h): at a launch's T-0 (status not flown/scrubbed, within
        2 min after NET) a cartoon rocket lifts off at 140,400 with a pad cloud, climbs on
        x = 140 + 380 u^1.6, y = 400 - 470 u + 110 u^2 (u 0..1 over 4.5 s, rotated along the
-       path, flame flickering), leaves a trail of up to 48 fading smoke puffs and exits past
+       path, flame flickering), leaves a trail of up to 48 fading smoke puffs (the ground cloud: 12 round billows,
+       PAD_BILLOWS, bursting out sideways from the pad, easing out, drifting outward and
+       thinning by u = 0.75) and exits past
        the upper right. Banner 360x46 at 60,424 (0x0E1836, 2 px 0x2D5BD0 border, radius 10)
        with the mission ("Falcon 9 · Starlink Group 12-7", mono18, white), text centred
        both ways (dropped a third of the descent so caps sit in the middle). Once per launch
@@ -934,6 +940,12 @@ UI-69a Launch animation smoothness: frame() runs on the display's LV_EVENT_REFR_
        refresh). Each puff and the pad cloud change only when their age crosses a 0.04 DUR
        step, so the number of dirty areas per frame stays well under LVGL's 32 (past that
        a frame redraws the whole screen).
+UI-69b While the launch animation plays, sat::tick() returns at once (no propagation, marker
+       moves, sky layers or data drain); the first tick after it ends redraws for the
+       current time.
+UI-69c Flame flicker: FLAMES = 5 pre-drawn flames (length 0.8..1.3, width 0.92..1.10, tip
+       lean -0.06..+0.05 body widths; outer orange, inner yellow, white core), shown in the
+       irregular FLAME_SEQ order, one every 45 ms.
 UI-41a Switches Aurora Alerts (mdi:aurora), Planet Alerts (mdi:orbit) and Sky Event Alerts
        (mdi:weather-night; UI-41b, UI-47..51, 4.5.15), default on,
        in the Celestial settings tab (with the aurora glyph and alignment picture)
