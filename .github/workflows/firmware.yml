@@ -1,0 +1,65 @@
+name: Firmware
+
+# Builds sky-tracker.yaml for every published release, attaches the binaries to the
+# release and publishes them with their manifest on GitHub Pages, where the devices'
+# update check (and Home Assistant) find them. Tag releases with the fw_version in the
+# YAML, e.g. 4.6.0.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firmware
+  cancel-in-progress: false
+
+jobs:
+  build:
+    uses: esphome/workflows/.github/workflows/build.yml@main
+    with:
+      files: sky-tracker.yaml
+      esphome-version: 2026.9.0
+      release-summary: ${{ github.event.release.body }}
+      release-url: ${{ github.event.release.html_url }}
+      release-version: ${{ github.event.release.tag_name }}
+
+  release-assets:
+    if: github.event_name == 'release'
+    needs: build
+    uses: esphome/workflows/.github/workflows/upload-to-gh-release.yml@main
+    permissions:
+      contents: write
+    with:
+      version: ${{ github.event.release.tag_name }}
+
+  pages:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: files
+          merge-multiple: true
+      - name: Put the newest build at the site root
+        run: |
+          manifest=$(find files -name manifest.json | head -n 1)
+          test -n "$manifest"
+          mkdir -p site
+          cp -r "$(dirname "$manifest")"/* site/
+          ls -la site
+          cat site/manifest.json
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
