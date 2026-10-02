@@ -4,7 +4,7 @@
 # (SGP4/SDP4), sky_stars.h (star catalogue). Orbits come from CelesTrak: no API key.
 
 substitutions:
-  fw_version: "4.6.8"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.9"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
