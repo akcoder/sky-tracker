@@ -6,21 +6,21 @@
 // (the MOSI line), DAT0 41 (the MISO line). DAT3 (the CS line) is never driven by the
 // chip: the GPS keeps it, and a card only looks at DAT3 when told to enter SPI mode (high
 // at power-up = SD mode, which the GPS's idle-high TX and the card's own pull-up give).
-// 47/48 also reach the panel's 3-wire init interface. Its CS (39) floats once ESPHome has
-// run the init, so mount() drives it high before the first probe (see hold_panel_cs).
-//
-// The net task probes every 5 s (JOB_SD). A card is mounted, its root searched for
+// 47/48 are also the panel's 3-wire init interface, and card traffic on them once the panel
+// is running turns the whole screen red (4.6.0/4.6.1). So the card is looked at once, at boot,
+// before the panel's software reset and init (on_boot priority 1100): its root searched for
 // sky_tracker_firmware_<anything>.bin (the newest by version order when there are several),
 // the image header checked (ESP32-S3, this project, not the build already running), and the
-// card unmounted again. The loop then asks "Firmware update" Update / Not now. Not now (or
-// leaving it) is remembered for that file until the card is taken out. Update runs JOB_SDFLASH:
+// card unmounted again. Once the screen is up it asks "Firmware update" Update / Not now.
+// Not now (or leaving it) is not asked again until the next boot. Update runs JOB_SDFLASH:
 // the file streamed into the other OTA slot (esp_ota_*: the image is checked on the way),
-// that slot set to boot, and the device restarted.
+// that slot set to boot, and the device restarted (which also re-inits the panel after the
+// card traffic of the copy).
 #ifndef SKY_IMPL  // compiled in sky_extra.cpp (see sky_about.h)
 namespace sat {
 namespace sdfw {
 void init(const char *version, const lv_font_t *title, const lv_font_t *body, const lv_font_t *small);
-void tick(uint32_t uptime_ms);
+void boot_probe();
 }  // namespace sdfw
 }  // namespace sat
 #else
@@ -38,7 +38,6 @@ void tick(uint32_t uptime_ms);
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "driver/sdmmc_host.h"
-#include "driver/gpio.h"
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
 #include "esp_image_format.h"
@@ -110,20 +109,7 @@ inline const char *mount_dir() { return host_dir.c_str(); }
 #else
 inline const char *MOUNT = "/sd";
 inline sdmmc_card_t *card = nullptr;
-// The panel's 3-wire init interface shares CLK 48 / MOSI 47 with the card. ESPHome lets go
-// of its CS (39) after the init, so it floats and the panel takes the card's CMD0/ACMD41
-// traffic as register writes (seen as the whole screen turning red). Hold CS high first.
-inline void hold_panel_cs() {
-  static bool done = false;
-  if (done)
-    return;
-  done = true;
-  gpio_set_level(GPIO_NUM_39, 1);
-  gpio_set_direction(GPIO_NUM_39, GPIO_MODE_OUTPUT);
-  gpio_set_level(GPIO_NUM_39, 1);
-}
 inline bool mount() {
-  hold_panel_cs();
   sdmmc_host_t host = SDMMC_HOST_DEFAULT();
   host.flags = SDMMC_HOST_FLAG_1BIT;
   host.max_freq_khz = SDMMC_FREQ_DEFAULT;
@@ -139,7 +125,7 @@ inline bool mount() {
   mc.format_if_mount_failed = false;
   mc.max_files = 2;
   mc.allocation_unit_size = 0;
-  esp_log_level_set("sdmmc_common", ESP_LOG_NONE);  // "no card" every 5 s is not news
+  esp_log_level_set("sdmmc_common", ESP_LOG_NONE);  // "no card" is not news
   esp_log_level_set("sdmmc_req", ESP_LOG_NONE);
   esp_log_level_set("vfs_fat_sdmmc", ESP_LOG_NONE);
   return esp_vfs_fat_sdmmc_mount(MOUNT, &host, &slot, &mc, &card) == ESP_OK;
@@ -184,7 +170,7 @@ inline const char *check_image(const char *path, char *built, size_t bn) {
 #endif
 }
 
-// JOB_SD (net task): is there a card, and on it an image to offer?
+// at boot (boot_probe): is there a card, and on it an image to offer?
 inline void probe() {
   const uint8_t st = state.load();
   if (st == S_FLASHING || st == S_DONE)
@@ -508,9 +494,7 @@ inline void ui_update() {
   }
 }
 inline void job(uint8_t j) {
-  if (j == JOB_SD)
-    probe();
-  else if (j == JOB_SDFLASH)
+  if (j == JOB_SDFLASH)
     flash();
 }
 // on_boot: fonts, the job hook and the prompt's timer
@@ -522,12 +506,8 @@ void init(const char *version, const lv_font_t *title, const lv_font_t *body, co
   extra_job = job;
   lv_timer_create([](lv_timer_t *) { ui_update(); }, 500, nullptr);
 }
-// every 5 s from the YAML, after boot has settled: look for a card
-void tick(uint32_t uptime_ms) {
-  const uint8_t st = state.load();
-  if (uptime_ms > 20000 && st != S_FLASHING && st != S_DONE)
-    enqueue(JOB_SD);
-}
+// on_boot priority 1100, before the panel is touched: look for a card once
+void boot_probe() { probe(); }
 }  // namespace sdfw
 }  // namespace sat
 #endif  // SKY_IMPL

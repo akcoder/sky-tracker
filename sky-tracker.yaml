@@ -4,7 +4,7 @@
 # (SGP4/SDP4), sky_stars.h (star catalogue). Orbits come from CelesTrak: no API key.
 
 substitutions:
-  fw_version: "4.6.1"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.3"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -39,6 +39,7 @@ esphome:
     - priority: 1100               # HW-7: before the SPI bus (1000) and the panel init
       then:
         - lambda: |-
+            sat::sdfw::boot_probe();             // UI-66: the only look at the card (shares 47/48)
             sat::panel_soft_reset(39, 48, 47);   // CS, SCK, MOSI of GUITION-4848S040
             // NET-2: fallback AP named "Sky Tracker - XXXX" (last 4 hex digits of the MAC).
             // Set before Wi-Fi starts (setup priority 250); ESPHome's ssid: must be a literal.
@@ -49,6 +50,10 @@ esphome:
             auto ap = id(wifi_comp).get_ap();
             ap.set_ssid(ssid);
             id(wifi_comp).set_ap(ap);
+    - priority: -200               # UI-68: first update check once the boot downloads are done
+      then:                        # (at boot it ran out of memory for a second TLS connection)
+        - delay: 3min
+        - component.update: fw_update
     - priority: 600                # NET-10: sun tab icon; before web_server's setup (249)
       then:
         - lambda: |-
@@ -505,10 +510,6 @@ interval:
           call.set_brightness(want);
           call.set_transition_length(3000);
           call.perform();
-  - interval: 5s                 # UI-66: look for a microSD card with firmware on it
-    id: interval_3
-    then:
-      - lambda: sat::sdfw::tick(esphome::millis());
   - interval: 1s                 # UI-27: debug pages, only while one is showing
     id: interval_4
     then:

@@ -1,7 +1,11 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.5.38 (queued, not installed; builds clean): a detailed logo, 200 px, with "Sky Tracker" on the boot page (UI-65, NET-2b). About page from Settings: version, "by Dan Morphis", build date, device details and data credits (UI-67). Firmware updates from a microSD card: put sky_tracker_firmware_<version>.bin on the card; the device asks Update / Not now and installs it (UI-66). The card runs in SD 1-bit mode so the GPS keeps GPIO42. Icons on every row of the Display and Location settings tabs, as on Celestial (UI-16a). New code lives in sky_extra.cpp and C++ is built with -mtext-section-literals (BUILD-7): main.cpp had outgrown l32r's reach to its literal pool.
+- 4.6.3 (installed): the microSD card is checked once at boot, before the panel is set up, instead of every 5 s (UI-66): the checks were being read by the panel's init interface (same two pins) and turned the screen red. The first internet update check waits 3 min after boot (UI-68): at boot it ran out of memory for a second TLS connection.
+- 4.6.2 (installed, test): microSD checks switched off; the screen stays normal, which confirmed the cause.
+- 4.6.1 (installed): held the panel CS (39) high during card checks; the screen still turned red.
+- 4.6.0 (installed): the C++ is the sky_tracker external component (repo github.com/akcoder/sky-tracker); internet updates (update entity on GitHub Pages, http_request OTA, Settings > Updates, an offer when the hourly check finds a release, UI-68); Made for ESPHome (ids everywhere, project name/version, improv, dashboard_import in the public build); includes the 4.5.38 changes below.
+- 4.5.38 (installed as part of 4.6.0): a detailed logo, 200 px, with "Sky Tracker" on the boot page (UI-65, NET-2b). About page from Settings: version, "by Dan Morphis", build date, device details and data credits (UI-67). Firmware updates from a microSD card: put sky_tracker_firmware_<version>.bin on the card; the device asks Update / Not now and installs it (UI-66). The card runs in SD 1-bit mode so the GPS keeps GPIO42. Icons on every row of the Display and Location settings tabs, as on Celestial (UI-16a). New code lives in sky_extra.cpp and C++ is built with -mtext-section-literals (BUILD-7): main.cpp had outgrown l32r's reach to its literal pool.
 - 4.5.37 (installed): the Sun picture is GOES-19 SUVI 30.4 nm again (chosen from a side-by-side of SUVI's six bands, SOHO EIT's four, SDO and LASCO): NOAA's frame list, the 1280 px PNG box-filtered to 360 px, a new frame every 4 minutes. Dark frames (GOES in Earth's shadow around the equinoxes) are skipped by size or darkness and the last good frame stays, captioned "GOES in Earth's shadow"; < steps back through the list's last hour (UI-59).
 - 4.5.36 (installed): Wi-Fi and lwIP buffers back in PSRAM (4.5.35 had moved them to internal RAM, which left ~20 KB free and the Earth download failed with "Failed to allocate memory"); the TCP window stays 16 KB (was 32 KB), halving the download bursts on the PSRAM bus (PERF-12).
 - 4.5.35 (installed): display glitching. Wi-Fi and lwIP buffers moved to internal RAM and the TCP window cut to 16 KB, on the theory that downloads through PSRAM starve the panel's refills. Removed two heap walks added in 4.5.2x (picture buffers at boot, and on out of memory) that broke FAIL-9.
@@ -840,20 +844,23 @@ UI-65  Logo (sky_logo.svg, a detailed redraw of the web page's header logo, NET-
        200 px on the boot page and 112 px on About.
 UI-66  Firmware from a microSD card (sky_sdfw.h). The TF slot is wired for SPI with CS on
        GPIO42, which carries the GPS (HW-8), so the card runs in SD 1-bit mode: CLK 48,
-       CMD 47, DAT0 41; DAT3 (= GPIO42) is never driven, so the GPS keeps working. The net
-       task probes every 5 s after the first 20 s (JOB_SD): mount FAT (fatfs, sdmmc,
+       CMD 47, DAT0 41; DAT3 (= GPIO42) is never driven, so the GPS keeps working. CLK 48
+       and CMD 47 are also the panel's 3-wire init lines: card traffic while the panel runs
+       turns the whole screen red (4.6.0/4.6.1, which probed every 5 s; holding the panel CS
+       high did not stop it). So the card is looked at once per boot, in on_boot priority
+       1100 before the panel's software reset and init (boot_probe): mount FAT (fatfs, sdmmc,
        esp_driver_sdmmc and wear_levelling re-included in the IDF build, long names on,
        VFS directories on), find sky_tracker_firmware_<anything>.bin in the root (any case;
        the highest <anything> by version order), check the image header (0xE9, ESP32-S3,
        app descriptor of the same project, not the running build's ELF SHA-256), unmount.
        Then a modal over everything (lv_layer_top, screen dimmed): "Firmware update",
        "On the card: <ver>", "Installed: <ver>", the file name; Not now / Update. Not now
-       (or Close after a failure) is remembered for that file (name + size) until the card
-       is taken out (two missed probes). Update (JOB_SDFLASH): esp_ota_begin for the file's
+       (or Close after a failure) holds until the next boot. Update (JOB_SDFLASH): esp_ota_begin for the file's
        size, 4 KB reads written to the other OTA slot, esp_ota_end (checks the image),
        boot slot switched; "Updating firmware" with a bar and "45%  -  1.0 of 2.2 MB",
        "Keep the card in and the power on"; then "Update installed / Restarting with
-       <ver>" and a restart 1.5 s later. Failures say why ("The card could not be read",
+       <ver>" and a restart 1.5 s later (the restart also re-inits the panel after the
+       copy's card traffic, which may tint the progress screen red). Failures say why ("The card could not be read",
        "The file is damaged", ...) and keep the running firmware.
 UI-67  About page (Settings > About, a button lower right in place of the version; Close
        at 376,4 returns to Settings): the logo (112 px), "Sky Tracker", "Version <ver>",
