@@ -6,8 +6,8 @@
 // (the MOSI line), DAT0 41 (the MISO line). DAT3 (the CS line) is never driven by the
 // chip: the GPS keeps it, and a card only looks at DAT3 when told to enter SPI mode (high
 // at power-up = SD mode, which the GPS's idle-high TX and the card's own pull-up give).
-// 47/48 also reach the panel's 3-wire init interface, which ignores them with its CS (39)
-// high; that interface is used only during boot, before the first probe.
+// 47/48 also reach the panel's 3-wire init interface. Its CS (39) floats once ESPHome has
+// run the init, so mount() drives it high before the first probe (see hold_panel_cs).
 //
 // The net task probes every 5 s (JOB_SD). A card is mounted, its root searched for
 // sky_tracker_firmware_<anything>.bin (the newest by version order when there are several),
@@ -38,6 +38,7 @@ void tick(uint32_t uptime_ms);
 #include "esp_vfs_fat.h"
 #include "sdmmc_cmd.h"
 #include "driver/sdmmc_host.h"
+#include "driver/gpio.h"
 #include "esp_ota_ops.h"
 #include "esp_app_format.h"
 #include "esp_image_format.h"
@@ -109,7 +110,20 @@ inline const char *mount_dir() { return host_dir.c_str(); }
 #else
 inline const char *MOUNT = "/sd";
 inline sdmmc_card_t *card = nullptr;
+// The panel's 3-wire init interface shares CLK 48 / MOSI 47 with the card. ESPHome lets go
+// of its CS (39) after the init, so it floats and the panel takes the card's CMD0/ACMD41
+// traffic as register writes (seen as the whole screen turning red). Hold CS high first.
+inline void hold_panel_cs() {
+  static bool done = false;
+  if (done)
+    return;
+  done = true;
+  gpio_set_level(GPIO_NUM_39, 1);
+  gpio_set_direction(GPIO_NUM_39, GPIO_MODE_OUTPUT);
+  gpio_set_level(GPIO_NUM_39, 1);
+}
 inline bool mount() {
+  hold_panel_cs();
   sdmmc_host_t host = SDMMC_HOST_DEFAULT();
   host.flags = SDMMC_HOST_FLAG_1BIT;
   host.max_freq_khz = SDMMC_FREQ_DEFAULT;
