@@ -4,7 +4,7 @@
 # (SGP4/SDP4), sky_stars.h (star catalogue). Orbits come from CelesTrak: no API key.
 
 substitutions:
-  fw_version: "4.6.6"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.7"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -129,6 +129,7 @@ esphome:
             sat::upd::set_button(id(upd_btn));  // UI-68a
             sat::rocket::init(id(mono18)->get_lv_font());  // UI-69
             sat::rocket::set_enabled(id(launch_anim).state);
+            sat::tz::init();  // UI-70
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -929,6 +930,41 @@ sensor:
     web_server:
       sorting_group_id: grp_system
       sorting_weight: 8
+
+select:
+  - platform: template           # UI-70: the clock's time zone (Auto = Home Assistant's)
+    id: time_zone
+    name: Time Zone
+    web_server:
+      sorting_group_id: grp_display
+      sorting_weight: 1
+    icon: mdi:earth
+    optimistic: true
+    restore_value: true
+    initial_option: "Auto (from HA)"
+    options:
+      - "Auto (from HA)"
+      - "Hawaii"
+      - "Alaska"
+      - "Pacific"
+      - "Mountain"
+      - "Arizona"
+      - "Central"
+      - "Eastern"
+      - "Atlantic"
+      - "Newfoundland"
+      - "UTC"
+      - "London"
+      - "Central Europe"
+      - "Eastern Europe"
+      - "Moscow"
+      - "India"
+      - "China"
+      - "Japan"
+      - "Sydney"
+      - "Auckland"
+    on_value:
+      - lambda: sat::tz::set(i);
 
 number:
   - platform: template           # UI-39: LEO cone, degrees from overhead (the Starlink layer)
@@ -2008,6 +2044,7 @@ lvgl:
             // UI-39: cone slider from the entity; UI-16a: open on General
             lv_slider_set_value(id(sl_cone), (int) id(leo_cone).state, LV_ANIM_OFF);
             sat::cone_label(id(lbl_cone), (int) id(leo_cone).state);
+            if (auto ix = id(time_zone).active_index()) lv_dropdown_set_selected(id(dd_tz)->obj, *ix);  // UI-70
             sat::settings_tab(0, id(pnl_display), id(pnl_location), id(pnl_celestial), id(tab_display), id(tab_location), id(tab_celestial));
             // Starlink is part of LEO: editable only while LEO is on
             if (id(show_satellites).state) lv_obj_remove_state(id(sw_starlink), LV_STATE_DISABLED);
@@ -2067,6 +2104,7 @@ lvgl:
                           id(obs_lon).make_call().set_value(v.lon).perform();
                         }
                         if (v.h24) id(clock_24h).turn_on(); else id(clock_24h).turn_off();
+                        id(time_zone).make_call().set_index(lv_dropdown_get_selected(id(dd_tz)->obj)).perform();  // UI-70
                         auto sw = [](lv_obj_t *o, switch_::Switch *e) {  // UI-21/22
                           if (lv_obj_has_state(o, LV_STATE_CHECKED)) e->turn_on(); else e->turn_off();
                         };
@@ -2213,48 +2251,101 @@ lvgl:
             scrollable: false
             clickable: false
             widgets:
-              - label:
+              - label:                 # UI-70
                   x: 16
                   y: 16
-                  text: "Time format"
+                  text: "Time zone"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
                   x: 128
                   y: 14
+                  text: "\U000F01E7"   # earth
+                  text_font: mdi_card20
+                  text_color: 0x7EE0B0
+              - dropdown:
+                  id: dd_tz
+                  x: 190
+                  y: 8
+                  width: 260
+                  height: 36
+                  options:
+                    - "Auto (from HA)"
+                    - "Hawaii"
+                    - "Alaska"
+                    - "Pacific"
+                    - "Mountain"
+                    - "Arizona"
+                    - "Central"
+                    - "Eastern"
+                    - "Atlantic"
+                    - "Newfoundland"
+                    - "UTC"
+                    - "London"
+                    - "Central Europe"
+                    - "Eastern Europe"
+                    - "Moscow"
+                    - "India"
+                    - "China"
+                    - "Japan"
+                    - "Sydney"
+                    - "Auckland"
+                  text_font: mono16
+                  text_color: 0xEEF2FF
+                  bg_color: 0x0E1836
+                  border_color: 0x3A4E86
+                  border_width: 2
+                  pad_all: 6
+                  dropdown_list:
+                    text_font: mono16
+                    text_color: 0xEEF2FF
+                    bg_color: 0x0E1836
+                    border_color: 0x3A4E86
+                    max_height: 300
+                  indicator:           # the arrow is drawn in this part's font; mono16 has no symbols
+                    text_font: montserrat_14
+                    text_color: 0x7E8BB3
+              - label:
+                  x: 16
+                  y: 58
+                  text: "Time format"
+                  text_font: mono16
+              - label:                 # UI-16a: row icon, as on the Celestial tab
+                  x: 128
+                  y: 56
                   text: "\U000F0150"   # clock-outline
                   text_font: mdi_card20
                   text_color: 0xA8D8FF
               - label:
                   x: 190
-                  y: 16
+                  y: 58
                   text: "12h"
                   text_font: mono16
               - switch:
                   id: sw_24h
                   x: 232
-                  y: 10
+                  y: 52
                   width: 56
                   height: 28
               - label:
                   x: 298
-                  y: 16
+                  y: 58
                   text: "24h"
                   text_font: mono16
               - label:
                   x: 16
-                  y: 58
+                  y: 100
                   text: "Brightness"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
                   x: 128
-                  y: 56
+                  y: 98
                   text: "\U000F00DF"   # brightness-6
                   text_font: mdi_card20
                   text_color: 0xFFD54A
               - slider:                # HW-6: 1..100 maps onto backlight_min..100% duty
                   id: sl_bright
                   x: 200
-                  y: 62
+                  y: 104
                   width: 250
                   height: 14
                   min_value: 1
@@ -2273,64 +2364,64 @@ lvgl:
                         call.perform();
               - label:                 # UI-29
                   x: 16
-                  y: 142
+                  y: 184
                   text: "Miles"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
                   x: 128
-                  y: 140
+                  y: 182
                   text: "\U000F08F0"   # map-marker-distance
                   text_font: mdi_card20
                   text_color: 0xA8D8FF
               - switch:
                   id: sw_miles
                   x: 232
-                  y: 136
+                  y: 178
                   width: 56
                   height: 28
               - label:                 # UI-44
                   x: 16
-                  y: 100
+                  y: 142
                   text: "Auto bright"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
                   x: 128
-                  y: 98
+                  y: 140
                   text: "\U000F00E1"   # brightness-auto
                   text_font: mdi_card20
                   text_color: 0xFFD54A
               - switch:
                   id: sw_autob
                   x: 232
-                  y: 94
+                  y: 136
                   width: 56
                   height: 28
               - label:
                   x: 298
-                  y: 102
+                  y: 144
                   text: "dims after sunset"
                   text_font: mono12
                   text_color: 0x7E8BB3
               - label:                 # UI-45
                   x: 16
-                  y: 184
+                  y: 226
                   text: "Night mode"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
                   x: 128
-                  y: 182
+                  y: 224
                   text: "\U000F0594"   # weather-night
                   text_font: mdi_card20
                   text_color: 0xFF6B6B
               - switch:
                   id: sw_night
                   x: 232
-                  y: 178
+                  y: 220
                   width: 56
                   height: 28
               - label:
                   x: 298
-                  y: 186
+                  y: 228
                   text: "red after dusk"
                   text_font: mono12
                   text_color: 0x7E8BB3
@@ -3084,25 +3175,25 @@ lvgl:
               - lvgl.page.show: about_page
         - button:                # UI-68: check for a newer release now
             id: btn_updates
-            x: 246
+            x: 206
             y: 440
-            width: 110
+            width: 150
             height: 34
             bg_color: 0x1A2547
             shadow_width: 0
             widgets:
               - label:
                   align: CENTER
-                  text: "Updates"
+                  text: "Upgrade Check"
                   text_font: mono16
             on_click:
               - lvgl.widget.hide: settings_kb
               - lambda: sat::upd::check_now();
         - label:
             id: settings_status
-            x: 16                # under the panels, clear of the Updates and About buttons; wraps
+            x: 16                # under the panels, clear of the Upgrade Check and About buttons; wraps
             y: 446
-            width: 222
+            width: 182
             text: ""
             text_font: mono12
             text_color: 0xFF5A5A

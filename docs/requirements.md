@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.7 (installed): releases carry the manifest and the .ota/.factory .bin files with checksums, no longer the 33 MB .elf (also left off GitHub Pages); the .elf stays in the build's artifact for 90 days, for decoding crashes. The Settings button Updates is now Upgrade Check (206,440 150x34; the error line beside it is 182 wide). Time zone picker at the top of Settings > Display, also a Time Zone select in HA and the web page (UI-70). Launch alerts from 3 days ahead, the next three (UI-54; was: a nearby launch from 24 h, any launch in its last hour). Space event alerts: dockings, undockings, spacecraft releases, EVAs from Launch Library 2's events, within 3 days, exact times only, up to two (UI-54c).
 - From 4.6.6 on, Dan's unit is updated only through GitHub releases: a change is committed, a release is published, the Firmware workflow builds the public sky-tracker.yaml, and the unit installs it from the manifest (the update icon, or HA's update entity). The unit then runs the public build: Wi-Fi from flash (saved by the dev build), no API encryption (HA's ESPHome entry is confirmed once without a key), name sky-tracker-9cad68 (MAC suffix), time zone from Home Assistant (2026.3+; UTC until HA connects). The ESPHome Builder is no longer used to install.
 - 4.6.6 (installed): the update progress screen says just "Keep the power on" ("it restarts by itself" removed). An older release is never offered (UI-68). A newer one no longer opens a prompt over the screen: an amber download icon appears beside the gear, and tapping it shows the prompt (UI-68a). ESPHome's update entity calls any version difference "available", so 4.6.5 offered the GitHub 4.6.3, it was accepted, and the public build (no Wi-Fi, no API key) replaced the dev build.
 - 4.6.5 (installed): all mbedTLS memory from PSRAM (CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC). 4.6.4's malloc route still left the update check failing with -0x7F00 (UI-68).
@@ -668,7 +669,10 @@ UI-54  Launches: Launch Library 2 (ll.thespacedevs.com 2.3.0, upcoming, 8, every
        Pacific Spaceport Complex in 5h 00m - look SSW"), any launch in its last hour
        ("Falcon 9 launches in 40 min - Cape Canaveral SFS"); flown ones are skipped. The
        list shows the next two in 48 h (rocket, bearing to the site, T-countdown). HA text
-       sensor Next Launch.
+       sensor Next Launch. From 4.6.7 the alerts cover the next three launches within 3 days
+       (Sky event switch): a launch within 1,500 km says which way to look ("Minotaur IV from
+       Pacific Spaceport Complex in 2d 5h - look SSW"), others "Falcon 9 launches in 1d 3h -
+       Vandenberg SFB".
 UI-54a The launch list is kept in flash (skydata, one sector at 0x0F1000: magic, count,
        CRC, save time, up to 8 records) after every good download, and loaded when the net
        task starts: a reboot shows the launches at once, and the next download waits until
@@ -682,6 +686,21 @@ UI-54b Backup source: when Launch Library fails (HTTP 429, or no answer), Rocket
        location name (Cape Canaveral, Kennedy, Vandenberg, Starbase, Wallops, Pacific
        Spaceport/Kodiak, Mahia, Baikonur, Jiuquan, ...) for the nearby alert and bearing.
        Credited on the About page and in the README.
+UI-54c Space events: Launch Library 2 events/upcoming (limit 10, list mode) every 6 h, kept in
+       flash (skydata sector 0x0F2000, as UI-54a): name, type, date, date precision. Alerts
+       (Sky event switch, space-station icon, 0x8FD3FF) for events with a time known to the
+       hour or better within 3 days, up to two: "SpaceX Crew-12 Crew Dragon Undocking in
+       2d 1h", "... now" for 10 min after.
+UI-70  Time zone: Settings > Display, first row (above Time format; the other rows moved down
+       42 px): "Time zone", earth icon, a dropdown (190,8 260x36, mono16, list up to 300 px).
+       Choices: Auto (from HA), Hawaii, Alaska, Pacific, Mountain, Arizona, Central, Eastern,
+       Atlantic, Newfoundland, UTC, London, Central Europe, Eastern Europe, Moscow, India,
+       China, Japan, Sydney, Auckland. Saved with Save (Cancel leaves it). The template select
+       Time Zone (restored across reboots) holds the choice and is in HA and the web page.
+       sky_tz.h keeps pre-parsed POSIX rules for each (US: M3.2.0 / M11.1.0; EU: last Sunday
+       of March / October; Sydney, Auckland: southern dates) and sets ESPHome's global zone.
+       Auto leaves Home Assistant's zone (sent with every time sync, HA 2026.3+); a chosen
+       zone is put back within 0.5 s after each sync, and going back to Auto restores HA's.
 UI-55  Solar wind: NOAA SWPC json/rtsw rtsw_mag_1m and rtsw_wind_1m (newest first, a day
        each): the first 15 samples from the active spacecraft are read and the download
        is cut short; 15-minute means of Bz (GSM), Bt, speed, density, every 10 min. Early
@@ -887,7 +906,7 @@ UI-67  About page (Settings > About, a button lower right in place of the versio
        via Wikimedia); a footer naming the microSD update file.
 UI-68  Internet updates (sky_update.h): ESPHome's http_request update entity reads
        manifest.json from GitHub Pages (built by the Firmware workflow for each release);
-       first check 3 min after boot, then hourly. Settings > Updates checks now: "Checking",
+       first check 3 min after boot, then hourly. Settings > Upgrade Check checks now: "Checking",
        "Up to date" / "Update available" (Not now, Update), download progress, or "Couldn't
        check". A version found by the hourly check shows the update icon (UI-68a). Only a NEWER version counts (numeric compare, "4.6.10" > "4.6.9"):
        ESPHome reports any difference as available, an older release included.
@@ -895,7 +914,7 @@ UI-68a The hourly check never opens anything by itself. While a newer version is
        (and nothing is installing), an update icon (LV_SYMBOL_DOWNLOAD, montserrat_28,
        0xFFB547) shows on the map page beside the gear (BOTTOM_RIGHT -50,-2, 46x46); tapping
        it opens the Update available prompt. Not now closes the prompt; the icon stays until
-       the update is installed. Settings > Updates still checks and shows the result. http_request OTA installs it. All mbedTLS memory comes from PSRAM
+       the update is installed. Settings > Upgrade Check still checks and shows the result. http_request OTA installs it. All mbedTLS memory comes from PSRAM
        (CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC): from internal RAM the check's TLS session never
        fit beside sat_net's kept one (4.6.4 tried malloc, which was not enough).
 UI-69  Launch animation (sky_rocket.h): at a launch's T-0 (status not flown/scrubbed, within

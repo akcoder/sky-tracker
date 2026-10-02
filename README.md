@@ -76,7 +76,7 @@ config (and set your own API key), adopt it in the ESPHome Builder; the
 ## Updates
 
 The device checks this repo's releases every hour and asks before installing
-anything. You can also check by hand from **Settings > Updates**. Home Assistant
+anything. You can also check by hand from **Settings > Upgrade Check**. Home Assistant
 shows the same update as a normal firmware update.
 
 No network? Copy the release's `.ota.bin` to a microSD card as
