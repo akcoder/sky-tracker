@@ -32,6 +32,7 @@ constexpr float S = 22.0f;           // rocket scale (body half-width is 0.32 S)
 constexpr int IW = 32, IH = 84;      // image buffer
 constexpr int PX = 16, PY = 30;      // pivot (body centre) in the buffer
 constexpr int PUFFS = 48, PADS = 3;
+constexpr float AGE_STEP = 0.04f;  // puff growth/fade step, in fractions of DUR_S (0.18 s)
 constexpr float PAD_X = 140, PAD_Y = 400;
 constexpr double LATE_S = 120;       // a launch is "now" for 2 min after T-0 (refresh lag)
 
@@ -42,10 +43,13 @@ struct St {
   lv_obj_t *catcher = nullptr, *img = nullptr, *banner = nullptr, *label = nullptr;
   lv_obj_t *puff[PUFFS] = {}, *pad[PADS] = {};
   float puff_x[PUFFS] = {}, puff_y[PUFFS] = {}, puff_t[PUFFS] = {};
+  int8_t puff_step[PUFFS] = {};  // the age step last drawn (-1 hidden): a puff only changes on a new step
+  int8_t pad_step = -1;
   int puff_next = 0;
   float last_emit = -1;
   uint32_t t0 = 0;
-  lv_timer_t *anim = nullptr;
+  lv_timer_t *anim = nullptr;  // fallback driver; frames normally come from the display refresh
+  uint32_t last_frame = 0;
   uint32_t played_key = 0;  // the last launch shown (name + T-0)
 };
 inline St st;
@@ -147,10 +151,13 @@ inline lv_obj_t *blob(uint32_t col) {
   return o;
 }
 
+inline void on_refr(lv_event_t *);
 inline void stop() {
   if (st.anim) {
     lv_timer_delete(st.anim);
     st.anim = nullptr;
+    if (lv_display_t *d = lv_display_get_default())
+      lv_display_remove_event_cb_with_user_data(d, on_refr, nullptr);
   }
   lv_obj_t **all[] = {&st.catcher, &st.img, &st.banner};
   for (auto **o : all)
@@ -173,6 +180,7 @@ inline void stop() {
 inline bool playing() { return st.anim != nullptr; }
 
 inline void frame() {
+  st.last_frame = now_ms();
   const float ts = (now_ms() - st.t0) / 1000.0f, u = ts / DUR_S;
   if (u > 1.25f) {  // the smoke has faded out
     stop();
@@ -194,9 +202,17 @@ inline void frame() {
     st.puff_x[i] = x - std::sin(r) * 1.1f * S;  // behind the nozzle
     st.puff_y[i] = y + std::cos(r) * 1.1f * S;
     st.puff_t[i] = ts;
+    st.puff_step[i] = -1;
   }
+  // A puff grows and fades in steps of AGE_STEP rather than every frame: each changed object
+  // makes LVGL redraw the sky under it, and past 32 dirty areas a frame redraws the whole
+  // screen. Puffs are born at different times, so only a few step on any one frame.
   for (int i = 0; i < PUFFS && i < st.puff_next; i++) {
-    const float age = (ts - st.puff_t[i]) / DUR_S;
+    const int step = (int) ((ts - st.puff_t[i]) / DUR_S / AGE_STEP);
+    if (step == st.puff_step[i])
+      continue;
+    st.puff_step[i] = (int8_t) std::min(step, 127);
+    const float age = step * AGE_STEP;
     const int a = (int) (150 - 260 * age);
     if (a <= 0) {
       lv_obj_add_flag(st.puff[i], LV_OBJ_FLAG_HIDDEN);
@@ -208,20 +224,30 @@ inline void frame() {
     lv_obj_set_style_bg_opa(st.puff[i], (lv_opa_t) a, 0);
     lv_obj_remove_flag(st.puff[i], LV_OBJ_FLAG_HIDDEN);
   }
-  // the cloud at the pad, spreading for the first moment
-  for (int k = 0; k < PADS; k++) {
-    if (u > 0.35f) {
-      lv_obj_add_flag(st.pad[k], LV_OBJ_FLAG_HIDDEN);
-      continue;
+  // the cloud at the pad, spreading for the first moment (also in steps)
+  const int ps = u > 0.35f ? 99 : (int) (u / 0.025f);
+  if (ps != st.pad_step) {
+    st.pad_step = (int8_t) ps;
+    const float uq = ps * 0.025f;
+    for (int k = 0; k < PADS; k++) {
+      if (ps == 99) {
+        lv_obj_add_flag(st.pad[k], LV_OBJ_FLAG_HIDDEN);
+        continue;
+      }
+      const float g = std::min(uq, 0.15f) / 0.15f;
+      const int w = (int) (40 + (90 + 50 * k) * g), h = (int) (16 + (14 + 6 * k) * g);
+      const int a = (int) (120 * (1.0f - std::max(0.0f, uq - 0.15f) / 0.2f));
+      lv_obj_set_size(st.pad[k], w, h);
+      lv_obj_set_pos(st.pad[k], (int32_t) PAD_X - w / 2, (int32_t) PAD_Y + 6 - h / 2 - 4 * k);
+      lv_obj_set_style_bg_opa(st.pad[k], (lv_opa_t) std::max(0, a), 0);
+      lv_obj_remove_flag(st.pad[k], LV_OBJ_FLAG_HIDDEN);
     }
-    const float g = std::min(u, 0.15f) / 0.15f;
-    const int w = (int) (40 + (90 + 50 * k) * g), h = (int) (16 + (14 + 6 * k) * g);
-    const int a = (int) (120 * (1.0f - std::max(0.0f, u - 0.15f) / 0.2f));
-    lv_obj_set_size(st.pad[k], w, h);
-    lv_obj_set_pos(st.pad[k], (int32_t) PAD_X - w / 2, (int32_t) PAD_Y + 6 - h / 2 - 4 * k);
-    lv_obj_set_style_bg_opa(st.pad[k], (lv_opa_t) std::max(0, a), 0);
-    lv_obj_remove_flag(st.pad[k], LV_OBJ_FLAG_HIDDEN);
   }
+}
+
+inline void on_refr(lv_event_t *) {
+  if (playing())
+    frame();
 }
 
 // "Falcon 9 | Starlink Group 12-5" -> "Falcon 9 · Starlink Group 12-5"
@@ -284,7 +310,19 @@ inline void play(const char *name) {
   st.t0 = now_ms();
   st.puff_next = 0;
   st.last_emit = -1;
-  st.anim = lv_timer_create([](lv_timer_t *) { frame(); }, 33, nullptr);
+  st.pad_step = -1;
+  // Move everything at the start of each display refresh, from the clock at that moment, so
+  // every frame drawn shows a fresh position (a separate 33 ms timer beat against the 16 ms
+  // refresh and dropped or doubled steps). The objects it moves re-arm the next refresh. The
+  // timer only covers a stretch where nothing moved and no refresh came.
+  if (lv_display_t *d = lv_display_get_default())
+    lv_display_add_event_cb(d, on_refr, LV_EVENT_REFR_START, nullptr);
+  st.anim = lv_timer_create(
+      [](lv_timer_t *) {
+        if (now_ms() - st.last_frame >= 40)
+          frame();
+      },
+      40, nullptr);
   frame();
   ESP_LOGI("rocket", "launch animation: %s", b);
 }
