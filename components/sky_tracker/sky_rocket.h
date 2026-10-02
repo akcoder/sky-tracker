@@ -5,7 +5,8 @@
 // A banner at the bottom names the mission. Once per launch, a tap anywhere skips it. Off with
 // the Launch Animation switch; the Play Launch Animation button shows it on demand.
 // Everything sits on lv_layer_top and is deleted when it ends. The rocket is drawn once at
-// init into two small ARGB8888 buffers (two flame lengths, swapped for the flicker) and shown
+// init into FLAMES small ARGB8888 buffers (flames of different length, width and lean, swapped
+// in an irregular order for the flicker, UI-69c) and shown
 // with an lv_image rotated along the path; the smoke is a ring of round lv_objs.
 // Compiled in sky_extra.cpp (SKY_IMPL), as sky_about.h.
 #include <cstdint>
@@ -16,6 +17,7 @@ namespace rocket {
 void init(const lv_font_t *banner);
 void set_enabled(bool on);
 void play_now();  // the button: the next launch's name (or a generic one)
+bool active();    // playing now (sat::tick pauses, UI-69b)
 }  // namespace rocket
 }  // namespace sat
 #else
@@ -31,20 +33,46 @@ constexpr float DUR_S = 4.5f;        // pad to off screen
 constexpr float S = 22.0f;           // rocket scale (body half-width is 0.32 S)
 constexpr int IW = 32, IH = 84;      // image buffer
 constexpr int PX = 16, PY = 30;      // pivot (body centre) in the buffer
-constexpr int PUFFS = 48, PADS = 3;
+constexpr int PUFFS = 48, PADS = 12;
+constexpr int FLAMES = 5;
+// UI-69c: flame shapes (length and width scale, sideways lean of the tip, in body widths)
+struct Flame {
+  float len, wid, lean;
+};
+constexpr Flame FLAME[FLAMES] = {
+    {1.00f, 1.00f, 0.00f}, {1.30f, 0.92f, 0.05f}, {0.80f, 1.10f, -0.03f}, {1.18f, 1.04f, -0.06f}, {0.92f, 0.96f, 0.04f},
+};
+// the order they show in, one every FLAME_MS: irregular so it reads as flicker, not a blink
+constexpr uint8_t FLAME_SEQ[] = {0, 1, 3, 2, 4, 1, 0, 3, 2, 1, 4, 3, 0, 2, 1, 4};
+constexpr uint32_t FLAME_MS = 45;
 constexpr float AGE_STEP = 0.04f;  // puff growth/fade step, in fractions of DUR_S (0.18 s)
 constexpr float PAD_X = 140, PAD_Y = 400;
+// ground cloud billows: final offset from the pad (dx, dy), radius, peak alpha, colour
+struct PadBillow {
+  float dx, dy, r;
+  int a;
+  uint32_t col;
+};
+constexpr PadBillow PAD_BILLOWS[] = {
+    {0, -6, 20, 170, 0xF2D9BE},    {-26, -2, 19, 160, 0xE6D6C8}, {26, -2, 19, 160, 0xE6D6C8},
+    {-52, 2, 17, 150, 0xDCDCE1},   {52, 2, 17, 150, 0xDCDCE1},   {-78, 4, 15, 140, 0xD2D4DC},
+    {78, 4, 15, 140, 0xD2D4DC},    {-102, 6, 12, 125, 0xC8CBD4}, {102, 6, 12, 125, 0xC8CBD4},
+    {-38, -16, 15, 130, 0xE1DDDA}, {38, -16, 15, 130, 0xE1DDDA}, {0, -24, 14, 120, 0xE8DCD0},
+};
+constexpr float PAD_STEP = 0.02f, PAD_PHASE = 0.0017f, PAD_END = 0.75f;
 constexpr double LATE_S = 120;       // a launch is "now" for 2 min after T-0 (refresh lag)
 
 struct St {
   bool enabled = true;
   const lv_font_t *font = nullptr;
-  lv_draw_buf_t *img_buf[2] = {};
+  lv_draw_buf_t *img_buf[FLAMES] = {};
+  int flame_i = 0;
+  uint32_t flame_at = 0;
   lv_obj_t *catcher = nullptr, *img = nullptr, *banner = nullptr, *label = nullptr;
   lv_obj_t *puff[PUFFS] = {}, *pad[PADS] = {};
   float puff_x[PUFFS] = {}, puff_y[PUFFS] = {}, puff_t[PUFFS] = {};
   int8_t puff_step[PUFFS] = {};  // the age step last drawn (-1 hidden): a puff only changes on a new step
-  int8_t pad_step = -1;
+  int8_t pad_step[PADS] = {};
   int puff_next = 0;
   float last_emit = -1;
   uint32_t t0 = 0;
@@ -79,13 +107,15 @@ inline bool in_poly(const Pt *p, int n, float x, float y) {
   return in;
 }
 // colour of one sample, 0 = transparent
-inline uint32_t sample(float x, float y, float flame) {
+inline uint32_t sample(float x, float y, const Flame &f) {
   const Pt nose[3] = {{-0.32f, -0.5f}, {0, -1.25f}, {0.32f, -0.5f}};
   const Pt body[4] = {{-0.32f, -0.5f}, {0.32f, -0.5f}, {0.32f, 0.95f}, {-0.32f, 0.95f}};
   const Pt finl[3] = {{-0.32f, 0.35f}, {-0.62f, 1.0f}, {-0.32f, 0.85f}};
   const Pt finr[3] = {{0.32f, 0.35f}, {0.62f, 1.0f}, {0.32f, 0.85f}};
-  const Pt fo[3] = {{-0.28f, 0.95f}, {0, 0.95f + 1.1f * flame}, {0.28f, 0.95f}};
-  const Pt fi[3] = {{-0.15f, 0.95f}, {0, 0.95f + 0.6f * flame}, {0.15f, 0.95f}};
+  const float w = f.wid;
+  const Pt fo[3] = {{-0.28f * w, 0.95f}, {f.lean, 0.95f + 1.1f * f.len}, {0.28f * w, 0.95f}};
+  const Pt fi[3] = {{-0.15f * w, 0.95f}, {f.lean * 0.6f, 0.95f + 0.6f * f.len}, {0.15f * w, 0.95f}};
+  const Pt fc[3] = {{-0.07f * w, 0.95f}, {f.lean * 0.3f, 0.95f + 0.28f * f.len}, {0.07f * w, 0.95f}};
   const float wr = 0.16f, wd = std::sqrt(x * x + (y + 0.1f) * (y + 0.1f));
   if (wd <= wr)
     return wd > wr - 0.05f ? 0xFF283250 : 0xFF3C78DC;  // window, dark rim
@@ -95,13 +125,15 @@ inline uint32_t sample(float x, float y, float flame) {
     return 0xFFEBEEF5;
   if (in_poly(finl, 3, x, y) || in_poly(finr, 3, x, y))
     return 0xFFD63C3C;
+  if (in_poly(fc, 3, x, y))
+    return 0xFFFFFDF0;  // white-hot core
   if (in_poly(fi, 3, x, y))
     return 0xFFFFEB78;
   if (in_poly(fo, 3, x, y))
     return 0xFFFF8C1E;
   return 0;
 }
-inline lv_draw_buf_t *draw_rocket(float flame) {
+inline lv_draw_buf_t *draw_rocket(const Flame &flame) {
   lv_draw_buf_t *db = lv_draw_buf_create(IW, IH, LV_COLOR_FORMAT_ARGB8888, 0);
   if (db == nullptr)
     return nullptr;
@@ -178,6 +210,7 @@ inline void stop() {
   st.label = nullptr;
 }
 inline bool playing() { return st.anim != nullptr; }
+bool active() { return playing(); }
 
 inline void frame() {
   st.last_frame = now_ms();
@@ -188,10 +221,13 @@ inline void frame() {
   }
   float x, y, deg;
   path(std::min(u, 1.1f), x, y, deg);
-  // rocket: pivot on the body centre, flame flickers between the two drawings
-  const int fl = ((now_ms() / 80) & 1);
-  if (st.img_buf[fl])
-    lv_image_set_src(st.img, st.img_buf[fl]);
+  // rocket: pivot on the body centre; the flame steps through FLAME_SEQ (UI-69c)
+  if (now_ms() - st.flame_at >= FLAME_MS) {
+    st.flame_at = now_ms();
+    st.flame_i = (st.flame_i + 1) % (int) sizeof(FLAME_SEQ);
+    if (lv_draw_buf_t *b = st.img_buf[FLAME_SEQ[st.flame_i]])
+      lv_image_set_src(st.img, b);
+  }
   lv_image_set_rotation(st.img, (int32_t) (deg * 10.0f));
   lv_obj_set_pos(st.img, (int32_t) std::lround(x) - PX, (int32_t) std::lround(y) - PY);
   // smoke: a new puff at the tail every DUR/PUFFS while climbing
@@ -224,24 +260,33 @@ inline void frame() {
     lv_obj_set_style_bg_opa(st.puff[i], (lv_opa_t) a, 0);
     lv_obj_remove_flag(st.puff[i], LV_OBJ_FLAG_HIDDEN);
   }
-  // the cloud at the pad, spreading for the first moment (also in steps)
-  const int ps = u > 0.35f ? 99 : (int) (u / 0.025f);
-  if (ps != st.pad_step) {
-    st.pad_step = (int8_t) ps;
-    const float uq = ps * 0.025f;
-    for (int k = 0; k < PADS; k++) {
-      if (ps == 99) {
-        lv_obj_add_flag(st.pad[k], LV_OBJ_FLAG_HIDDEN);
-        continue;
-      }
-      const float g = std::min(uq, 0.15f) / 0.15f;
-      const int w = (int) (40 + (90 + 50 * k) * g), h = (int) (16 + (14 + 6 * k) * g);
-      const int a = (int) (120 * (1.0f - std::max(0.0f, uq - 0.15f) / 0.2f));
-      lv_obj_set_size(st.pad[k], w, h);
-      lv_obj_set_pos(st.pad[k], (int32_t) PAD_X - w / 2, (int32_t) PAD_Y + 6 - h / 2 - 4 * k);
-      lv_obj_set_style_bg_opa(st.pad[k], (lv_opa_t) std::max(0, a), 0);
-      lv_obj_remove_flag(st.pad[k], LV_OBJ_FLAG_HIDDEN);
+  // The ground cloud: round billows that roll out sideways from the pad along the ground
+  // (exhaust deflected by the flame trench), the inner ones bigger and lit warm by the flame,
+  // then hang and thin out. Each billow steps on its own phase so they don't all change on
+  // the same frame.
+  for (int k = 0; k < PADS; k++) {
+    const float uk = u - k * PAD_PHASE;
+    const int ps = uk < 0 ? -1 : uk > PAD_END ? 99 : (int) (uk / PAD_STEP);
+    if (ps == st.pad_step[k])
+      continue;
+    st.pad_step[k] = (int8_t) ps;
+    if (ps < 0 || ps == 99) {
+      lv_obj_add_flag(st.pad[k], LV_OBJ_FLAG_HIDDEN);
+      continue;
     }
+    const PadBillow &b = PAD_BILLOWS[k];
+    const float uq = ps * PAD_STEP + k * PAD_PHASE;
+    float g = std::min(uq / 0.22f, 1.0f);
+    g = 1.0f - (1.0f - g) * (1.0f - g);  // ease out: fast burst, then slow drift
+    const float drift = std::max(0.0f, uq - 0.22f) * 40.0f;  // keeps rolling outward a little
+    const int r = (int) (b.r * (0.35f + 0.65f * g) + drift * 0.3f);
+    const int x = (int) (PAD_X + b.dx * g + (b.dx > 0 ? drift : b.dx < 0 ? -drift : 0));
+    const int y = (int) (PAD_Y + 8 + b.dy * g - drift * 0.15f);
+    const int a = (int) (b.a * (1.0f - std::max(0.0f, uq - 0.25f) / (PAD_END - 0.25f)));
+    lv_obj_set_size(st.pad[k], 2 * r, 2 * r);
+    lv_obj_set_pos(st.pad[k], x - r, y - r);
+    lv_obj_set_style_bg_opa(st.pad[k], (lv_opa_t) std::max(0, a), 0);
+    lv_obj_remove_flag(st.pad[k], LV_OBJ_FLAG_HIDDEN);
   }
 }
 
@@ -274,8 +319,8 @@ inline void play(const char *name) {
   lv_obj_set_size(st.catcher, 480, 480);
   lv_obj_add_flag(st.catcher, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(st.catcher, [](lv_event_t *) { stop(); }, LV_EVENT_CLICKED, nullptr);
-  for (auto &o : st.pad)
-    o = blob(0xDCDCE1);
+  for (int k = 0; k < PADS; k++)
+    st.pad[k] = blob(PAD_BILLOWS[k].col);
   for (auto &o : st.puff)
     o = blob(0xC8CDD7);
   st.img = lv_image_create(lv_layer_top());
@@ -310,7 +355,8 @@ inline void play(const char *name) {
   st.t0 = now_ms();
   st.puff_next = 0;
   st.last_emit = -1;
-  st.pad_step = -1;
+  for (auto &p : st.pad_step)
+    p = -1;
   // Move everything at the start of each display refresh, from the clock at that moment, so
   // every frame drawn shows a fresh position (a separate 33 ms timer beat against the 16 ms
   // refresh and dropped or doubled steps). The objects it moves re-arm the next refresh. The
@@ -348,8 +394,8 @@ inline void check() {
 
 void init(const lv_font_t *banner) {
   st.font = banner;
-  st.img_buf[0] = draw_rocket(1.0f);
-  st.img_buf[1] = draw_rocket(1.25f);
+  for (int i = 0; i < FLAMES; i++)
+    st.img_buf[i] = draw_rocket(FLAME[i]);
   lv_timer_create([](lv_timer_t *) { check(); }, 1000, nullptr);
 }
 void set_enabled(bool on) {
