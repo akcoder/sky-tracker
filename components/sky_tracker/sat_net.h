@@ -219,6 +219,13 @@ struct LaunchRec {
   double net = 0;         // UTC seconds
   float lat = NAN, lon = NAN;
 };
+// UI-54c: an upcoming space event (Launch Library 2 events: dockings, undockings, EVAs...)
+struct EventRec {
+  char name[72] = "";     // "SpaceX Crew-12 Crew Dragon Undocking"
+  char type[28] = "";     // "Spacecraft Undocking"
+  double t = 0;           // UTC seconds
+  bool exact = false;     // time known to the hour or better
+};
 // UI-58: NOAA OVATION aurora nowcast at the observer (percent chance of visible aurora)
 struct AuroraChance {
   double obs = 0, fc = 0;  // UTC seconds: model input time, the time it forecasts (0 = none)
@@ -326,6 +333,7 @@ struct Pending {
   pvector<Pass> css_passes;
   SolarWind wind;                 // UI-55
   pvector<LaunchRec> launches;    // UI-54
+  pvector<EventRec> events;       // UI-54c
   pvector<comets::El> comet_list;     // UI-63 (empty: nothing new)
   bool comets_new = false;
   AuroraChance ovation;           // UI-58
@@ -1879,6 +1887,106 @@ inline void do_launches(double now) {
   launches_publish(out, now, "Launch Library");
 }
 
+// ------------------------------------------------------------------ UI-54c space events
+// Launch Library 2's upcoming events (dockings, undockings, spacecraft releases, EVAs,
+// landings...), every 6 h, kept in flash like the launches so a reboot spends no call.
+constexpr double EVENT_EVERY_S = 6 * 3600.0, EVENT_RETRY_S = 3600.0;
+constexpr int EVENT_KEEP = 10;
+constexpr uint32_t CACHE_EVENT_OFF = 0x0F2000;
+constexpr uint32_t EVENT_MAGIC = 0x534B5945;  // "SKYE"
+inline double event_next = 0;
+struct EventCache {
+  uint32_t magic, n, rec_size, crc;
+  double saved;
+  EventRec rec[EVENT_KEEP];
+};
+inline uint32_t event_crc(const EventCache &c) {
+  return esp_rom_crc32_le(0, (const uint8_t *) &c.saved, sizeof(c.saved) + sizeof(c.rec));
+}
+inline void events_publish(pvector<EventRec> &out) {
+  xSemaphoreTake(mutex, portMAX_DELAY);
+  std::swap(pending.events, out);
+  pending.fresh |= L_EXTRA;
+  xSemaphoreGive(mutex);
+}
+inline void event_cache_save(const pvector<EventRec> &v, double now) {
+  if (cache_part == nullptr)
+    return;
+  auto *c = (EventCache *) heap_caps_malloc(sizeof(EventCache), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (c == nullptr)
+    return;
+  memset((void *) c, 0, sizeof(*c));
+  c->magic = EVENT_MAGIC;
+  c->rec_size = sizeof(EventRec);
+  c->n = (uint32_t) std::min<size_t>(v.size(), EVENT_KEEP);
+  c->saved = now;
+  for (uint32_t i = 0; i < c->n; i++)
+    c->rec[i] = v[i];
+  c->crc = event_crc(*c);
+  if (esp_partition_erase_range(cache_part, CACHE_EVENT_OFF, 0x1000) != ESP_OK ||
+      esp_partition_write(cache_part, CACHE_EVENT_OFF, c, sizeof(*c)) != ESP_OK)
+    ESP_LOGW(TAG, "cache: events not saved");
+  heap_caps_free(c);
+}
+inline void event_cache_load() {
+  if (cache_part == nullptr)
+    return;
+  auto *c = (EventCache *) heap_caps_malloc(sizeof(EventCache), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (c == nullptr)
+    return;
+  memset((void *) c, 0, sizeof(*c));
+  if (esp_partition_read(cache_part, CACHE_EVENT_OFF, c, sizeof(*c)) == ESP_OK && c->magic == EVENT_MAGIC &&
+      c->rec_size == sizeof(EventRec) && c->n <= (uint32_t) EVENT_KEEP && c->crc == event_crc(*c)) {
+    pvector<EventRec> out(c->rec, c->rec + c->n);
+    event_next = c->saved + EVENT_EVERY_S;
+    ESP_LOGI(TAG, "cache: loaded %u events", (unsigned) out.size());
+    events_publish(out);
+  }
+  heap_caps_free(c);
+}
+inline void do_events(double now) {
+  if (now < event_next)
+    return;
+  event_next = now + EVENT_RETRY_S;
+  static char *buf = nullptr;
+  if (buf == nullptr)
+    buf = (char *) heap_caps_malloc(LAUNCH_BUF, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (buf == nullptr)
+    return;
+  const int len = http_get("https://ll.thespacedevs.com/2.3.0/events/upcoming/?limit=10&mode=list", buf, LAUNCH_BUF,
+                           "events");
+  if (len <= 0)
+    return;
+  JsonDocument filter;
+  JsonObject f = filter["results"][0].to<JsonObject>();
+  f["name"] = true;
+  f["date"] = true;
+  f["type"]["name"] = true;
+  f["date_precision"]["abbrev"] = true;
+  JsonDocument doc(&psram_alloc);
+  if (const DeserializationError de = deserializeJson(doc, buf, (size_t) len, DeserializationOption::Filter(filter),
+                                                     DeserializationOption::NestingLimit(24))) {
+    ESP_LOGW(TAG, "events: unreadable reply (%d bytes, %s)", len, de.c_str());
+    return;
+  }
+  pvector<EventRec> out;
+  for (JsonObject r : doc["results"].as<JsonArray>()) {
+    EventRec e;
+    copy_cstr(e.name, sizeof(e.name), r["name"] | "");
+    copy_cstr(e.type, sizeof(e.type), r["type"]["name"] | "");
+    if (!parse_epoch_min(r["date"] | "", e.t))
+      continue;
+    const char *pr = r["date_precision"]["abbrev"] | "";
+    e.exact = !strcmp(pr, "SEC") || !strcmp(pr, "MIN") || !strcmp(pr, "HR") || !*pr;
+    out.push_back(e);
+  }
+  std::sort(out.begin(), out.end(), [](const EventRec &a, const EventRec &b) { return a.t < b.t; });
+  event_next = now + EVENT_EVERY_S;
+  ESP_LOGI(TAG, "events: %u upcoming", (unsigned) out.size());
+  event_cache_save(out, now);
+  events_publish(out);
+}
+
 // ------------------------------------------------------------------ UI-63 comets
 // JPL SBDB query API: comets with a perihelion within 4 AU between 300 days ago and 500
 // days ahead that have total-magnitude parameters (~40 rows, ~4 KB). Once a day; the loop
@@ -2595,6 +2703,7 @@ inline void do_elements() {
   do_kp(now);  // UI-37: NOAA, not CelesTrak: its own schedule, never held by a CelesTrak 403
   do_wind(now);      // UI-55: NOAA too
   do_launches(now);  // UI-54: Launch Library 2
+  do_events(now);    // UI-54c: Launch Library 2 events
   do_comets(now);    // UI-63: JPL small bodies
   do_ovation(now);   // UI-58: NOAA OVATION
   // DATA-10: a layer just switched on is drawn from flash first; a stale list is refreshed
@@ -3117,6 +3226,7 @@ inline std::atomic<uint32_t> queued{0};
 inline void task_main(void *) {
   cache_load();         // DATA-10
   launch_cache_load();  // UI-54a
+  event_cache_load();   // UI-54c
   // the two big picture buffers (768 KB JPEG, 777 KB sums) are taken first, while PSRAM is
   // still in one piece, and kept: taken later they can fail on a fragmented heap
   if (img_jpg() == nullptr || fit_acc() == nullptr)
@@ -3243,6 +3353,7 @@ struct Live {
   net::ImageInfo back;               // UI-59d: the last older-frame fetch (seq moves when one finishes)
   int back_kind = -1;
   pvector<net::LaunchRec> launches;  // UI-54
+  pvector<net::EventRec> events;     // UI-54c
   pvector<comets::El> comet_list;        // UI-63
   double comets_at = 0;              // when that list arrived (0: never)
   DataStatus status;
@@ -3321,6 +3432,10 @@ inline uint8_t drain() {
     if (!p.launches.empty()) {
       std::swap(live.launches, p.launches);
       p.launches.clear();
+    }
+    if (!p.events.empty()) {  // UI-54c
+      std::swap(live.events, p.events);
+      p.events.clear();
     }
     if (p.back.seq != live.back.seq) {  // UI-59d: an older frame: it becomes "the one before"
       const int k = p.back_kind;

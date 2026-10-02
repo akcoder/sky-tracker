@@ -89,6 +89,7 @@ constexpr uint32_t C_CSS = 0xFF5C6C;     // UI-52 Tiangong
 constexpr uint32_t C_METEOR = 0xA8D8FF;  // UI-47 meteor showers
 constexpr uint32_t C_ECLIPSE = 0xFFB070; // UI-51 eclipses
 constexpr uint32_t C_LAUNCH = 0xFFC46B;  // UI-54 rocket launches
+constexpr uint32_t C_EVENT = 0x8FD3FF;   // UI-54c dockings, undockings, EVAs
 constexpr uint32_t C_DSO = 0xC3B2F5;     // UI-56 deep-sky objects
 constexpr uint32_t C_COMET = 0xA8F0E0;   // UI-63 comets: pale cyan-green (a gas coma)
 constexpr uint32_t C_MW = 0xB4C4F0;      // UI-64 Milky Way, mixed faintly over SKY_BG
@@ -2114,6 +2115,7 @@ inline void list_build() {
 // ================================================================== UI-54 rocket launches
 constexpr float LAUNCH_NEAR_KM = 1500.0f;     // close enough that the rocket may be seen
 constexpr double LAUNCH_SOON_S = 3600.0;      // any launch: alert in its last hour
+constexpr double LAUNCH_AHEAD_S = 3 * 86400.0;  // UI-54/54c: alerts from 3 days ahead
 inline float launch_km(const net::LaunchRec &l, float *bearing = nullptr) {
   if (std::isnan(l.lat) || std::isnan(l.lon))
     return 1e9f;
@@ -3171,17 +3173,16 @@ inline int collect_alerts(double t, Alert *out, int max) {
     if (Alert *a = add(C_AURORA, "\xF3\xB1\xAE\xB9", nullptr))
       snprintf(a->text, sizeof(a->text), "Solar wind: Bz %+.0f nT, %.0f km/s - aurora may flare up", live.wind.bz,
                std::isnan(live.wind.speed) ? 0.0f : live.wind.speed);
-  // UI-54 launches: a nearby one from a day ahead, any in its last hour
+  // UI-54 launches: the next three within 3 days (a nearby one says which way to look);
+  // UI-54c then space events (dockings, undockings, releases, EVAs) within 3 days
   if (ui.sky_alerts) {
     int shown = 0;
     for (const auto &l : live.launches) {
-      if (shown >= 2 || !launch_pending(l) || l.net < t - 900)
+      if (shown >= 3 || !launch_pending(l) || l.net < t - 900 || l.net - t > LAUNCH_AHEAD_S)
         continue;
       float brg;
       const float km = launch_km(l, &brg);
-      const bool near = km < LAUNCH_NEAR_KM && l.net - t < 86400.0;
-      if (!near && l.net - t > LAUNCH_SOON_S)
-        continue;
+      const bool near = km < LAUNCH_NEAR_KM;
       if (Alert *a = add(C_LAUNCH, "\xF3\xB1\x93\x9E", nullptr)) {  // rocket-launch
         char cd[24];
         countdown(l.net - t, cd, sizeof(cd));
@@ -3191,6 +3192,21 @@ inline int collect_alerts(double t, Alert *out, int max) {
         else
           snprintf(a->text, sizeof(a->text), "%s launches in %s - %s", l.rocket[0] ? l.rocket : "Rocket", cd,
                    short_site(l.where));
+        shown++;
+      }
+    }
+    shown = 0;
+    for (const auto &e : live.events) {
+      if (shown >= 2 || !e.exact || e.t < t - 600 || e.t - t > LAUNCH_AHEAD_S)
+        continue;
+      if (Alert *a = add(C_EVENT, "\xF3\xB1\x8E\x83", nullptr)) {  // space-station
+        char cd[24];
+        if (e.t > t) {
+          countdown(e.t - t, cd, sizeof(cd));
+          snprintf(a->text, sizeof(a->text), "%s in %s", e.name, cd);
+        } else {
+          snprintf(a->text, sizeof(a->text), "%s now", e.name);
+        }
         shown++;
       }
     }
