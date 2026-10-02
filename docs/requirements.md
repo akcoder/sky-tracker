@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.6 (installed): the update progress screen says just "Keep the power on" ("it restarts by itself" removed). An older release is never offered (UI-68). A newer one no longer opens a prompt over the screen: an amber download icon appears beside the gear, and tapping it shows the prompt (UI-68a). ESPHome's update entity calls any version difference "available", so 4.6.5 offered the GitHub 4.6.3, it was accepted, and the public build (no Wi-Fi, no API key) replaced the dev build.
 - 4.6.5 (installed): all mbedTLS memory from PSRAM (CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC). 4.6.4's malloc route still left the update check failing with -0x7F00 (UI-68).
 - 4.6.4 (installed): mbedTLS through malloc (CONFIG_MBEDTLS_DEFAULT_MEM_ALLOC), meant to let the update check's TLS buffers come from PSRAM; it still failed (fixed in 4.6.5). Launch animation at T-0 (UI-69, Launch Animation switch, Play Launch Animation button). The launch list is kept in flash so reboots don't empty it or use up Launch Library's free calls (UI-54a); RocketLaunch.Live fills in when Launch Library refuses (UI-54b). The public build's improv_serial id is improv_usb ("improv" clashed with a C++ namespace and failed the GitHub build).
 - 4.6.3 (installed): the microSD card is checked once at boot, before the panel is set up, instead of every 5 s (UI-66): the checks were being read by the panel's init interface (same two pins) and turned the screen red. The first internet update check waits 3 min after boot (UI-68): at boot it ran out of memory for a second TLS connection.
@@ -887,8 +888,13 @@ UI-68  Internet updates (sky_update.h): ESPHome's http_request update entity rea
        manifest.json from GitHub Pages (built by the Firmware workflow for each release);
        first check 3 min after boot, then hourly. Settings > Updates checks now: "Checking",
        "Up to date" / "Update available" (Not now, Update), download progress, or "Couldn't
-       check". A version found by the hourly check is offered once (Not now holds until the
-       next restart). http_request OTA installs it. All mbedTLS memory comes from PSRAM
+       check". A version found by the hourly check shows the update icon (UI-68a). Only a NEWER version counts (numeric compare, "4.6.10" > "4.6.9"):
+       ESPHome reports any difference as available, an older release included.
+UI-68a The hourly check never opens anything by itself. While a newer version is waiting
+       (and nothing is installing), an update icon (LV_SYMBOL_DOWNLOAD, montserrat_28,
+       0xFFB547) shows on the map page beside the gear (BOTTOM_RIGHT -50,-2, 46x46); tapping
+       it opens the Update available prompt. Not now closes the prompt; the icon stays until
+       the update is installed. Settings > Updates still checks and shows the result. http_request OTA installs it. All mbedTLS memory comes from PSRAM
        (CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC): from internal RAM the check's TLS session never
        fit beside sat_net's kept one (4.6.4 tried malloc, which was not enough).
 UI-69  Launch animation (sky_rocket.h): at a launch's T-0 (status not flown/scrubbed, within

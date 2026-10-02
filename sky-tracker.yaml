@@ -4,7 +4,7 @@
 # (SGP4/SDP4), sky_stars.h (star catalogue). Orbits come from CelesTrak: no API key.
 
 substitutions:
-  fw_version: "4.6.5"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.6"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -126,6 +126,7 @@ esphome:
                             id(mono12)->get_lv_font());  // UI-66
             sat::upd::init(id(fw_update), id(setup_title)->get_lv_font(), id(mono16)->get_lv_font(),
                            id(mono12)->get_lv_font());  // UI-68
+            sat::upd::set_button(id(upd_btn));  // UI-68a
             sat::rocket::init(id(mono18)->get_lv_font());  // UI-69
             sat::rocket::set_enabled(id(launch_anim).state);
 
@@ -1693,6 +1694,25 @@ lvgl:
                     - lvgl.page.show: settings_page
             on_long_press:           # UI-27: hold the gear for the debug page
               - lvgl.page.show: debug_page
+        - button:                # UI-68a: a newer firmware is waiting; tap for the prompt
+            id: upd_btn
+            align: BOTTOM_RIGHT
+            x: -50
+            y: -2
+            width: 46
+            height: 46
+            hidden: true
+            bg_opa: TRANSP
+            shadow_width: 0
+            border_width: 0
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "\uF019"   # LV_SYMBOL_DOWNLOAD
+                  text_font: montserrat_28
+                  text_color: 0xFFB547
+            on_short_click:
+              - lambda: sat::upd::offer_now();
     - id: debug_page             # UI-27 page 1: system, orbital data, last crash (4.5.18). Close sits top right on both pages; < Prev bottom left, Next > bottom right
       skip: true
       bg_color: 0x000000
