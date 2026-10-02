@@ -1678,6 +1678,155 @@ inline void do_wind(double now) {
 constexpr double LAUNCH_EVERY_S = 3 * 3600.0, LAUNCH_RETRY_S = 1800.0;
 constexpr size_t LAUNCH_BUF = 400 * 1024;
 inline double launch_next = 0;
+// UI-54a: the last list is kept in flash, one sector in the gap after region A, so a reboot
+// shows the launches at once and does not spend one of Launch Library's 15 free calls an
+// hour (a night of reboots got "HTTP 429" and an empty launch list).
+constexpr uint32_t CACHE_LAUNCH_OFF = 0x0F1000;
+constexpr uint32_t LAUNCH_MAGIC = 0x534B594C;  // "SKYL"
+constexpr int LAUNCH_KEEP = 8;
+struct LaunchCache {
+  uint32_t magic, n, rec_size, crc;
+  double saved;  // UTC
+  LaunchRec rec[LAUNCH_KEEP];
+};
+inline uint32_t launch_crc(const LaunchCache &c) {
+  return esp_rom_crc32_le(0, (const uint8_t *) &c.saved, sizeof(c.saved) + sizeof(c.rec));
+}
+inline void launch_cache_save(const pvector<LaunchRec> &v, double now) {
+  if (cache_part == nullptr)
+    return;
+  auto *c = (LaunchCache *) heap_caps_malloc(sizeof(LaunchCache), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (c == nullptr)
+    return;
+  memset((void *) c, 0, sizeof(*c));
+  c->magic = LAUNCH_MAGIC;
+  c->rec_size = sizeof(LaunchRec);
+  c->n = (uint32_t) std::min<size_t>(v.size(), LAUNCH_KEEP);
+  c->saved = now;
+  for (uint32_t i = 0; i < c->n; i++)
+    c->rec[i] = v[i];
+  c->crc = launch_crc(*c);
+  if (esp_partition_erase_range(cache_part, CACHE_LAUNCH_OFF, 0x1000) != ESP_OK ||
+      esp_partition_write(cache_part, CACHE_LAUNCH_OFF, c, sizeof(*c)) != ESP_OK)
+    ESP_LOGW(TAG, "cache: launches not saved");
+  heap_caps_free(c);
+}
+// at task start: the saved list, and no download until it is LAUNCH_EVERY_S old
+inline void launch_cache_load() {
+  if (cache_part == nullptr)
+    return;
+  auto *c = (LaunchCache *) heap_caps_malloc(sizeof(LaunchCache), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (c == nullptr)
+    return;
+  memset((void *) c, 0, sizeof(*c));
+  if (esp_partition_read(cache_part, CACHE_LAUNCH_OFF, c, sizeof(*c)) == ESP_OK && c->magic == LAUNCH_MAGIC &&
+      c->rec_size == sizeof(LaunchRec) && c->n <= (uint32_t) LAUNCH_KEEP && c->crc == launch_crc(*c)) {
+    pvector<LaunchRec> out(c->rec, c->rec + c->n);
+    launch_next = c->saved + LAUNCH_EVERY_S;
+    ESP_LOGI(TAG, "cache: loaded %u launches", (unsigned) out.size());
+    xSemaphoreTake(mutex, portMAX_DELAY);
+    std::swap(pending.launches, out);
+    pending.fresh |= L_EXTRA;
+    xSemaphoreGive(mutex);
+  }
+  heap_caps_free(c);
+}
+inline void launches_publish(pvector<LaunchRec> &out, double now, const char *src) {
+  std::sort(out.begin(), out.end(), [](const LaunchRec &a, const LaunchRec &b) { return a.net < b.net; });
+  launch_next = now + LAUNCH_EVERY_S;
+  ESP_LOGI(TAG, "launches: %u upcoming (%s)", (unsigned) out.size(), src);
+  launch_cache_save(out, now);
+  xSemaphoreTake(mutex, portMAX_DELAY);
+  std::swap(pending.launches, out);
+  pending.fresh |= L_EXTRA;
+  xSemaphoreGive(mutex);
+}
+// UI-54b: pads RocketLaunch.Live names without coordinates (its free feed has none), for the
+// "launch near you" alert and the bearing. Matched on the start of the location name.
+struct PadPos {
+  const char *name;
+  float lat, lon;
+};
+constexpr PadPos RLL_PADS[] = {
+    {"Cape Canaveral", 28.49f, -80.58f}, {"Kennedy", 28.57f, -80.65f},     {"Vandenberg", 34.73f, -120.57f},
+    {"Starbase", 25.99f, -97.16f},       {"Wallops", 37.84f, -75.48f},     {"Pacific Spaceport", 57.43f, -152.34f},
+    {"Kodiak", 57.43f, -152.34f},        {"Rocket Lab Launch Complex", -39.26f, 177.86f},
+    {"Mahia", -39.26f, 177.86f},         {"Baikonur", 45.96f, 63.31f},     {"Plesetsk", 62.93f, 40.58f},
+    {"Vostochny", 51.88f, 128.33f},      {"Jiuquan", 40.96f, 100.29f},     {"Xichang", 28.25f, 102.03f},
+    {"Taiyuan", 38.85f, 111.61f},        {"Wenchang", 19.61f, 110.95f},    {"Satish Dhawan", 13.72f, 80.23f},
+    {"Sriharikota", 13.72f, 80.23f},     {"Tanegashima", 30.40f, 130.97f}, {"Uchinoura", 31.25f, 131.08f},
+    {"Kourou", 5.24f, -52.77f},          {"Guiana", 5.24f, -52.77f},       {"Naro", 34.43f, 127.54f},
+    {"Andøya", 69.29f, 16.02f},          {"SaxaVord", 60.82f, -0.77f},
+};
+inline void rll_pad(const char *loc, float &lat, float &lon) {
+  for (const auto &p : RLL_PADS)
+    if (strncmp(loc, p.name, strlen(p.name)) == 0) {
+      lat = p.lat;
+      lon = p.lon;
+      return;
+    }
+}
+// "2026-10-05T08:17Z" (no seconds) as well as the ISO form parse_epoch takes
+inline bool parse_epoch_min(const char *s, double &out) {
+  if (parse_epoch(s, out))
+    return true;
+  int y, mo, d, h, mi;
+  if (sscanf(s, "%d-%d-%dT%d:%d", &y, &mo, &d, &h, &mi) != 5)
+    return false;
+  out = (double) days_from_civil(y, mo, d) * 86400.0 + h * 3600.0 + mi * 60.0;
+  return true;
+}
+// UI-54b backup: RocketLaunch.Live's free feed (next 5, no key). Name and status are mapped
+// to Launch Library's form ("Falcon 9 | NROL-97", "Go"/"TBD"/"Success"/"Failure").
+inline void launches_rll(char *buf, double now) {
+  const int len = http_get("https://fdo.rocketlaunch.live/json/launches/next/5", buf, LAUNCH_BUF, "launches (backup)");
+  if (len <= 0)
+    return;
+  JsonDocument filter;
+  JsonObject f = filter["result"][0].to<JsonObject>();
+  f["name"] = true;
+  f["t0"] = true;
+  f["win_open"] = true;
+  f["sort_date"] = true;
+  f["result"] = true;
+  f["vehicle"]["name"] = true;
+  f["pad"]["location"]["name"] = true;
+  f["pad"]["location"]["state"] = true;
+  f["pad"]["location"]["country"] = true;
+  JsonDocument doc(&psram_alloc);
+  if (const DeserializationError de = deserializeJson(doc, buf, (size_t) len, DeserializationOption::Filter(filter))) {
+    ESP_LOGW(TAG, "launches (backup): unreadable reply (%d bytes, %s)", len, de.c_str());
+    return;
+  }
+  pvector<LaunchRec> out;
+  for (JsonObject r : doc["result"].as<JsonArray>()) {
+    LaunchRec l;
+    const char *veh = r["vehicle"]["name"] | "";
+    snprintf(l.name, sizeof(l.name), "%s%s%s", veh, *veh ? " | " : "", r["name"] | "");
+    copy_cstr(l.rocket, sizeof(l.rocket), veh);
+    const char *loc = r["pad"]["location"]["name"] | "";
+    const char *st = r["pad"]["location"]["state"] | "";
+    snprintf(l.where, sizeof(l.where), "%s%s%s", loc, *st ? ", " : "", st);
+    bool exact = parse_epoch_min(r["t0"] | "", l.net);
+    if (!exact && !parse_epoch_min(r["win_open"] | "", l.net)) {
+      JsonVariant sd = r["sort_date"];  // a rough date only ("NET October"), as text or a number
+      l.net = sd.is<const char *>() ? atof(sd.as<const char *>()) : sd.as<double>();
+      if (l.net <= 0)
+        continue;
+    }
+    exact = exact || !(r["win_open"].isNull());
+    const int res = r["result"] | -1;
+    copy_cstr(l.status, sizeof(l.status), res == 1   ? "Success"
+                                          : res == 0 ? "Failure"
+                                          : res >= 2 ? "Partial F"
+                                          : exact    ? "Go"
+                                                     : "TBD");
+    rll_pad(loc, l.lat, l.lon);
+    out.push_back(l);
+  }
+  if (!out.empty())
+    launches_publish(out, now, "RocketLaunch.Live");
+}
 inline void do_launches(double now) {
   if (now < launch_next)
     return;
@@ -1689,8 +1838,10 @@ inline void do_launches(double now) {
     return;
   const int len = http_get("https://ll.thespacedevs.com/2.3.0/launches/upcoming/?limit=8&mode=normal", buf, LAUNCH_BUF,
                            "launches");
-  if (len <= 0)
+  if (len <= 0) {  // UI-54b: refused (HTTP 429: free tier used up) or unreachable
+    launches_rll(buf, now);
     return;
+  }
   JsonDocument filter;
   JsonObject f = filter["results"][0].to<JsonObject>();
   f["name"] = true;
@@ -1725,13 +1876,7 @@ inline void do_launches(double now) {
     l.lon = num(r["pad"]["longitude"]);
     out.push_back(l);
   }
-  std::sort(out.begin(), out.end(), [](const LaunchRec &a, const LaunchRec &b) { return a.net < b.net; });
-  launch_next = now + LAUNCH_EVERY_S;
-  ESP_LOGI(TAG, "launches: %u upcoming", (unsigned) out.size());
-  xSemaphoreTake(mutex, portMAX_DELAY);
-  std::swap(pending.launches, out);
-  pending.fresh |= L_EXTRA;
-  xSemaphoreGive(mutex);
+  launches_publish(out, now, "Launch Library");
 }
 
 // ------------------------------------------------------------------ UI-63 comets
@@ -2970,7 +3115,8 @@ inline void run_job(uint8_t job) {
 inline std::atomic<uint32_t> queued{0};
 
 inline void task_main(void *) {
-  cache_load();  // DATA-10
+  cache_load();         // DATA-10
+  launch_cache_load();  // UI-54a
   // the two big picture buffers (768 KB JPEG, 777 KB sums) are taken first, while PSRAM is
   // still in one piece, and kept: taken later they can fail on a fragmented heap
   if (img_jpg() == nullptr || fit_acc() == nullptr)
