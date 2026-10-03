@@ -1898,6 +1898,33 @@ constexpr int MAX_ALERTS = 12;
 constexpr int ALERT_DY = 3;  // UI-41: alerts sit this much lower than the status line (4.5.4)
 constexpr double ALERT_ROTATE_S = 6;
 inline int collect_alerts(double t, Alert *out, int max);
+// UI-41c where an alert's icon sits against its text: 1 its top on the text's cap height,
+// 2 centred on the text (one or two lines), 3 centred on the first line; 0 the old fixed spot
+inline int alert_icon_align = 3;
+inline const Alert *alert_override = nullptr;  // host tests: show this alert
+// the first code point of a UTF-8 string
+inline uint32_t utf8_first(const char *s) {
+  const uint8_t *u = (const uint8_t *) s;
+  if (u[0] < 0x80)
+    return u[0];
+  if ((u[0] & 0xE0) == 0xC0)
+    return (uint32_t) (u[0] & 0x1F) << 6 | (u[1] & 0x3F);
+  if ((u[0] & 0xF0) == 0xE0)
+    return (uint32_t) (u[0] & 0x0F) << 12 | (uint32_t) (u[1] & 0x3F) << 6 | (u[2] & 0x3F);
+  return (uint32_t) (u[0] & 0x07) << 18 | (uint32_t) (u[1] & 0x3F) << 12 | (uint32_t) (u[2] & 0x3F) << 6 | (u[3] & 0x3F);
+}
+// ink of a glyph inside its label box: top offset and height (font metrics, not the box)
+inline void glyph_ink(const lv_font_t *f, uint32_t cp, int32_t &top, int32_t &h) {
+  lv_font_glyph_dsc_t g;
+  const int32_t asc = lv_font_get_line_height(f) - f->base_line;
+  if (lv_font_get_glyph_dsc(f, &g, cp, 0)) {
+    top = asc - (g.box_h + g.ofs_y);
+    h = g.box_h;
+  } else {
+    top = 0;
+    h = lv_font_get_line_height(f);
+  }
+}
 
 inline void draw_hud(double t) {
   char b[160];
@@ -1921,6 +1948,8 @@ inline void draw_hud(double t) {
   Alert alerts[MAX_ALERTS];
   const int n_alerts = (col == C_OK && !(notice_text[0] && t < notice_until)) ? collect_alerts(t, alerts, MAX_ALERTS) : 0;
   const Alert *al = n_alerts ? &alerts[(int64_t) (t / ALERT_ROTATE_S) % n_alerts] : nullptr;
+  if (alert_override)
+    al = alert_override, col = C_OK;
   if (al) {
     snprintf(b, sizeof(b), "%s", al->text);
     col = al->col;
@@ -1978,6 +2007,30 @@ inline void draw_hud(double t) {
     }
   }
   set_text_if(ui.w.status, b);
+  // UI-41c: the icon against the text as it now stands (one or two lines)
+  if (al && ui.w.status && alert_icon_align) {
+    lv_obj_t *icon = al->img ? ui.alert_img : ui.aurora_icon;
+    const lv_font_t *tf = lv_obj_get_style_text_font(ui.w.status, LV_PART_MAIN);
+    if (icon && tf) {
+      lv_obj_update_layout(ui.w.status);
+      const int32_t lh = lv_font_get_line_height(tf), ty = lv_obj_get_y(ui.w.status);
+      const int32_t lines = std::max<int32_t>(1, (lv_obj_get_height(ui.w.status) + lh / 2) / lh);
+      int32_t cap_off, cap_h;
+      glyph_ink(tf, 'H', cap_off, cap_h);
+      const int32_t cap_top = ty + cap_off, last_base = ty + (lines - 1) * lh + cap_off + cap_h;
+      int32_t ink_off = 0, ink_h = 20;
+      if (al->img)
+        ink_h = al->img->header.h;
+      else if (ui.w.card_icon_font)
+        glyph_ink(ui.w.card_icon_font, utf8_first(al->glyph), ink_off, ink_h);
+      const int32_t first_base = cap_top + cap_h;
+      const int32_t y = alert_icon_align == 2   ? (cap_top + last_base) / 2 - ink_h / 2 - ink_off
+                        : alert_icon_align == 3 ? (cap_top + first_base) / 2 - ink_h / 2 - ink_off
+                                                : cap_top - ink_off;
+      if (lv_obj_get_y(icon) != y)
+        lv_obj_set_y(icon, y);
+    }
+  }
   if (col != status_col && ui.w.status) {
     status_col = col;
     lv_obj_set_style_text_color(ui.w.status, lv_color_hex(col), 0);
@@ -4734,6 +4787,7 @@ struct ImgView {
   lv_obj_t *tab[4] = {}, *mlab[4] = {}, *east = nullptr, *west = nullptr;
   lv_obj_t *seg[2] = {};  // UI-62a: Globe / region, under the Earth picture
   lv_obj_t *credit = nullptr;  // UI-61b: the planet photo's credit, top left of the picture
+  lv_obj_t *phase_mark = nullptr;  // UI-61g: the "Tonight's phase" switch
   lv_obj_t *flip[2] = {};  // UI-59c: < the picture before, > the latest (bottom corners of the picture)
   bool show_prev = false;
   int kind = net::IMG_SUN;
@@ -4748,7 +4802,8 @@ inline ImgView sv;
 inline bool earth_regional = false;  // UI-62a: the Earth tab opens on the globe (4.5.31); the region is one tap away
 inline const net::Region *my_region() { return net::region_for(config().lat, config().lon); }
 inline int earth_kind() { return earth_regional && my_region() ? net::IMG_REGION : net::IMG_EARTH; }
-inline bool planet_drawn = false;      // UI-61b: Photo | Drawn under a planet (kept between opens)
+inline bool planet_drawn = false;      // UI-61g: the drawn planet is only a fallback now (no photo)
+inline bool planet_phase = true;       // UI-61g: "Tonight's phase" shading on the photo (kept between opens)
 inline uint16_t *planet_px = nullptr;  // UI-61: the planet shown (photo with tonight's phase, or drawn)
 inline int planet_px_of = -1;          // UI-61a: which planet's photo live.img_px[IMG_PLANET] holds
 inline int planet_req_of = -1;         // the planet last asked for
@@ -4783,6 +4838,7 @@ inline void img_view_close() {
   lv_obj_t *const none[4] = {};
   sv.root = sv.img = sv.msg = sv.bar = sv.cap1 = sv.cap2 = sv.east = sv.west = sv.credit = nullptr;
   sv.seg[0] = sv.seg[1] = nullptr;
+  sv.phase_mark = nullptr;
   sv.flip[0] = sv.flip[1] = nullptr;
   memcpy(sv.tab, none, sizeof(none));
   memcpy(sv.mlab, none, sizeof(none));
@@ -4945,7 +5001,7 @@ inline void planet_view_update(double t) {
     pview::Marks mk;
     if (photo) {
       memcpy(planet_px, planet_src, net::IMG_PX * net::IMG_PX * 2);
-      pview::shade_photo(v, planet_px, net::IMG_PX, net::IMG_PX, p <= planets::MARS);  // phase: inner planets, Mars
+      pview::shade_photo(v, planet_px, net::IMG_PX, net::IMG_PX, planet_phase && p <= planets::MARS);  // phase: inner planets, Mars
       if (p == planets::JUPITER)
         pview::draw_strip(v, planet_px, net::IMG_PX, net::IMG_PX, mk, 0.80f * net::IMG_PX);
     } else {
@@ -5162,9 +5218,11 @@ inline void img_seg_cb(lv_event_t *e) {  // UI-62a: Globe / region
   if (kind != sv.kind)
     img_view_open_now(kind, sv.planet);
 }
-inline void img_pseg_cb(lv_event_t *e) {  // UI-61b: Photo / Drawn
-  planet_drawn = (int) (intptr_t) lv_event_get_user_data(e) == 1;
-  img_view_open_now(sv.kind, sv.planet);
+inline void img_view_update(double t);
+inline void img_phase_cb(lv_event_t *e) {  // UI-61g: "Tonight's phase" on / off
+  planet_phase = lv_obj_has_state((lv_obj_t *) lv_event_get_target(e), LV_STATE_CHECKED);
+  sv.drawn_at = 0;  // redraw the photo now
+  img_view_update(clock_now());
 }
 inline void img_tab_cb(lv_event_t *e) {
   const int kind = (int) (intptr_t) lv_event_get_user_data(e);
@@ -5285,15 +5343,32 @@ inline void img_view_open_now(int kind, int planet) {
     lv_label_set_text(sv.credit, "");
     lv_obj_set_pos(sv.credit, 64, 52);
   }
-  if (pl || ((kind == net::IMG_EARTH || kind == net::IMG_REGION) && my_region())) {  // UI-62a Globe | region, UI-61b Photo | Drawn
-    const char *names[2] = {pl ? "Photo" : "Globe", pl ? "Drawn" : my_region()->name};
+  if (pl && kind - VIEW_PLANET <= planets::MARS) {  // UI-61g: "Tonight's phase" switch, lower right
+    lv_obj_t *sw = lv_switch_create(root);  // as the settings switches (theme look)
+    lv_obj_set_size(sw, 56, 28);
+    lv_obj_set_pos(sw, 408, 442);  // lower right
+    if (planet_phase)
+      lv_obj_add_state(sw, LV_STATE_CHECKED);
+    lv_obj_add_event_cb(sw, img_phase_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+    sv.phase_mark = sw;
+    lv_obj_t *l = lv_label_create(root);
+    if (w.label_font)
+      lv_obj_set_style_text_font(l, w.label_font, 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(0xC9D3F2), 0);
+    lv_label_set_text(l, "Tonight's phase");
+    lv_obj_align_to(l, sw, LV_ALIGN_OUT_LEFT_MID, -10, 0);
+  }
+  if (pl)
+    lv_obj_add_flag(sv.cap2, LV_OBJ_FLAG_HIDDEN);  // the caption is one line; the credit sits on the photo
+  if (!pl && (kind == net::IMG_EARTH || kind == net::IMG_REGION) && my_region()) {  // UI-62a Globe | region
+    const char *names[2] = {"Globe", my_region()->name};
     for (int i = 0; i < 2; i++) {
-      const int want = pl ? i : i == 0 ? net::IMG_EARTH : net::IMG_REGION;
+      const int want = i == 0 ? net::IMG_EARTH : net::IMG_REGION;
       lv_obj_t *sb = lv_button_create(root);
       sv.seg[i] = sb;
       lv_obj_set_size(sb, 128, 32);
       lv_obj_set_pos(sb, i == 0 ? 108 : 244, 442);
-      const bool on = pl ? (i == 1) == planet_drawn : kind == want;
+      const bool on = kind == want;
       lv_obj_set_style_bg_color(sb, lv_color_hex(on ? 0x24356A : 0x121A36), 0);
       lv_obj_set_style_shadow_width(sb, 0, 0);
       lv_obj_set_style_pad_all(sb, 0, 0);
@@ -5303,7 +5378,7 @@ inline void img_view_open_now(int kind, int planet) {
       lv_obj_set_style_text_color(l, lv_color_hex(on ? 0xFF8A1F : 0xC9D3F2), 0);
       lv_label_set_text(l, names[i]);
       lv_obj_center(l);
-      lv_obj_add_event_cb(sb, pl ? img_pseg_cb : img_seg_cb, LV_EVENT_CLICKED, (void *) (intptr_t) want);
+      lv_obj_add_event_cb(sb, img_seg_cb, LV_EVENT_CLICKED, (void *) (intptr_t) want);
     }
     lv_obj_add_flag(sv.cap2, LV_OBJ_FLAG_HIDDEN);
   }
