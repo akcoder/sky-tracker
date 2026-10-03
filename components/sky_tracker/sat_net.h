@@ -225,6 +225,7 @@ struct EventRec {
   char type[28] = "";     // "Spacecraft Undocking"
   double t = 0;           // UTC seconds
   bool exact = false;     // time known to the hour or better
+  bool iss = false;       // UI-69f: at the International Space Station (its "location")
 };
 // UI-58: NOAA OVATION aurora nowcast at the observer (percent chance of visible aurora)
 struct AuroraChance {
@@ -1964,6 +1965,7 @@ inline void do_events(double now) {
   f["date"] = true;
   f["type"]["name"] = true;
   f["date_precision"]["abbrev"] = true;
+  f["location"] = true;  // a plain string in list mode: "International Space Station"
   JsonDocument doc(&psram_alloc);
   if (const DeserializationError de = deserializeJson(doc, buf, (size_t) len, DeserializationOption::Filter(filter),
                                                      DeserializationOption::NestingLimit(24))) {
@@ -1975,6 +1977,7 @@ inline void do_events(double now) {
     EventRec e;
     copy_cstr(e.name, sizeof(e.name), r["name"] | "");
     copy_cstr(e.type, sizeof(e.type), r["type"]["name"] | "");
+    e.iss = strstr(r["location"] | "", "International Space Station") != nullptr;
     if (!parse_epoch_min(r["date"] | "", e.t))
       continue;
     const char *pr = r["date_precision"]["abbrev"] | "";
