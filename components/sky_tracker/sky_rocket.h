@@ -69,7 +69,9 @@ constexpr PadBillow PAD_BILLOWS[] = {
     {0, -6, 22, 170, 0xF2D9BE},   {-34, 0, 19, 155, 0xE6D6C8}, {34, 0, 19, 155, 0xE6D6C8},
     {-68, 4, 15, 135, 0xD2D4DC},  {68, 4, 15, 135, 0xD2D4DC},  {0, -26, 15, 120, 0xE8DCD0},
 };
-constexpr float PAD_STEP = 0.025f, PAD_PHASE = 0.004f, PAD_END = 0.7f;
+// UI-69j the ground cloud is gone by 35% of the climb (1.6 s), fading from 15%: fewer discs
+// to redraw while the trail builds (it ran to 70% and the animation bogged down early)
+constexpr float PAD_STEP = 0.025f, PAD_PHASE = 0.004f, PAD_FADE = 0.15f, PAD_END = 0.35f;
 // UI-69f the ISS, seen from above (opaque rectangles, x y w h colour, border colour or 0)
 struct Part {
   int16_t x, y, w, h;
@@ -452,7 +454,7 @@ inline void frame_launch() {
     const int r = (int) (b.r * (0.35f + 0.65f * g) + drift * 0.3f);
     const int x = (int) (PAD_X + b.dx * g + (b.dx > 0 ? drift : b.dx < 0 ? -drift : 0));
     const int y = (int) (PAD_Y + 8 + b.dy * g - drift * 0.15f);
-    const int a = (int) (b.a * (1.0f - std::max(0.0f, uq - 0.25f) / (PAD_END - 0.25f)));
+    const int a = (int) (b.a * (1.0f - std::max(0.0f, uq - PAD_FADE) / (PAD_END - PAD_FADE)));
     smoke_at(k, x, y, r, a, b.col);
   }
   pf.t_pad += now_us() - t_a;
