@@ -118,6 +118,7 @@ struct St {
     uint32_t anim = 0, render = 0, flush = 0, idle = 0;          // sums
     uint32_t anim_max = 0, render_max = 0, flush_max = 0, idle_max = 0;
     uint32_t flush_now = 0, chunks = 0, px = 0, px_max = 0, px_now = 0, n = 0;
+    uint32_t t_img = 0, t_puff = 0, t_pad = 0, calls = 0, fallback = 0;  // inside frame()
   } prof;
   uint32_t played_key = 0;  // the last launch shown (name + T-0)
   // UI-69f
@@ -225,12 +226,20 @@ inline lv_obj_t *blob() {
   lv_obj_remove_style_all(o);
   lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+  lv_obj_set_size(o, 0, 0);  // not LVGL's default 100 dpi square at 0,0 (that got redrawn when hidden)
+  lv_obj_set_pos(o, -64, -64);
   lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
   return o;
 }
+// hiding an already hidden object still invalidates its area: skip it
+inline void hide(lv_obj_t *o) {
+  if (!lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN))
+    lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
 // a disc of colour col at strength a (0..255) over whatever background is under (x, y)
 inline void smoke_at(lv_obj_t *o, int x, int y, int r, int a, uint32_t col) {
+  st.prof.calls++;
   const int dx = x - MAP_CX, dy = y - MAP_CY;
   const uint32_t bg = dx * dx + dy * dy <= MAP_R * MAP_R ? SKY_BG : PAGE_BG;
   lv_obj_set_size(o, 2 * r, 2 * r);
@@ -254,6 +263,9 @@ inline void stop() {
              p.render / 1000.0f / n, p.render_max / 1000.0f, p.flush / 1000.0f / n, p.flush_max / 1000.0f,
              (float) p.chunks / n, p.idle / 1000.0f / n, p.idle_max / 1000.0f, p.anim / 1000.0f / n,
              p.anim_max / 1000.0f, (unsigned) (p.px / n), (unsigned) p.px_max);
+    ESP_LOGI("rocket", "frame() parts (total ms): rocket image %.1f, puffs %.1f, ground cloud %.1f; %u smoke updates, "
+             "%u fallback frames", p.t_img / 1000.0f, p.t_puff / 1000.0f, p.t_pad / 1000.0f, (unsigned) p.calls,
+             (unsigned) p.fallback);
   }
   if (st.anim) {
     if (lv_display_t *d = lv_display_get_default())
@@ -298,6 +310,8 @@ inline void frame_launch() {
   }
   float x, y, deg;
   path(std::min(u, 1.1f), x, y, deg);
+  auto &pf = st.prof;
+  uint32_t t_a = now_us();
   // rocket: pivot on the body centre; the flame steps through FLAME_SEQ (UI-69c)
   if (now_ms() - st.flame_at >= FLAME_MS) {
     st.flame_at = now_ms();
@@ -307,6 +321,8 @@ inline void frame_launch() {
   }
   lv_image_set_rotation(st.img, (int32_t) (deg * 10.0f));
   lv_obj_set_pos(st.img, (int32_t) std::lround(x) - PX, (int32_t) std::lround(y) - PY);
+  uint32_t t_b = now_us();
+  pf.t_img += t_b - t_a;
   // smoke: a new puff at the tail every DUR/PUFFS while climbing
   if (u <= 1.0f && (st.last_emit < 0 || ts - st.last_emit >= DUR_S / PUFFS)) {
     st.last_emit = ts;
@@ -328,11 +344,13 @@ inline void frame_launch() {
     const float age = step * AGE_STEP;
     const int a = (int) (150 - 260 * age);
     if (a <= 0) {
-      lv_obj_add_flag(st.puff[i], LV_OBJ_FLAG_HIDDEN);
+      hide(st.puff[i]);
       continue;
     }
     smoke_at(st.puff[i], (int) st.puff_x[i], (int) st.puff_y[i], (int) (7 + 22 * age), a, 0xC8CDD7);
   }
+  t_a = now_us();
+  pf.t_puff += t_a - t_b;
   // The ground cloud: round billows that roll out sideways from the pad along the ground
   // (exhaust deflected by the flame trench), the inner ones bigger and lit warm by the flame,
   // then hang and thin out. Each billow steps on its own phase so they don't all change on
@@ -344,7 +362,7 @@ inline void frame_launch() {
       continue;
     st.pad_step[k] = (int8_t) ps;
     if (ps < 0 || ps == 99) {
-      lv_obj_add_flag(st.pad[k], LV_OBJ_FLAG_HIDDEN);
+      hide(st.pad[k]);
       continue;
     }
     const PadBillow &b = PAD_BILLOWS[k];
@@ -358,6 +376,7 @@ inline void frame_launch() {
     const int a = (int) (b.a * (1.0f - std::max(0.0f, uq - 0.25f) / (PAD_END - 0.25f)));
     smoke_at(st.pad[k], x, y, r, a, b.col);
   }
+  pf.t_pad += now_us() - t_a;
 }
 
 // UI-69f the capsule, nose down (toward the station): trunk with solar cells, heat shield,
@@ -438,7 +457,7 @@ inline void frame_undock() {
     const float age = step * 0.06f;
     const int a = (int) (220 - 340 * age);
     if (a <= 60) {  // gone before it reads as a dark blot (opaque: it fades toward the sky colour)
-      lv_obj_add_flag(st.puff[i], LV_OBJ_FLAG_HIDDEN);
+      hide(st.puff[i]);
       continue;
     }
     smoke_at(st.puff[i], (int) st.puff_x[i], (int) st.puff_y[i], (int) (3 + 9 * age), a, 0xF4F6FA);
@@ -610,8 +629,10 @@ inline void play_scene(bool undock, const char *name) {
   }
   st.anim = lv_timer_create(
       [](lv_timer_t *) {
-        if (now_ms() - st.last_frame >= 40)
+        if (now_ms() - st.last_frame >= 150) {
+          st.prof.fallback++;
           frame();
+        }
       },
       40, nullptr);
   frame();
