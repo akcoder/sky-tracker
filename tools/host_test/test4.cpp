@@ -2063,6 +2063,44 @@ int main() {
         save_ppm(fn);
       }
     }
+    if (getenv("BOOT_GIF")) {  // UI-69k: the launch over a mock of the boot screen (wifi_page)
+      lv_obj_t *old = lv_screen_active();
+      lv_obj_t *scr = lv_obj_create(nullptr);
+      lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), 0);
+      lv_screen_load(scr);
+      lv_obj_t *box = lv_obj_create(scr);
+      lv_obj_remove_style_all(box);
+      lv_obj_set_size(box, 200, 200);
+      lv_obj_align(box, LV_ALIGN_TOP_MID, 0, 46);
+      sat::logo_show(box, 200);
+      auto lbl = [&](const char *t, const lv_font_t *f, uint32_t c, int y) {
+        lv_obj_t *l = lv_label_create(scr);
+        lv_label_set_text(l, t);
+        lv_obj_set_style_text_font(l, f, 0);
+        lv_obj_set_style_text_color(l, lv_color_hex(c), 0);
+        lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_width(l, 380);
+        lv_obj_align(l, LV_ALIGN_TOP_MID, 0, y);
+      };
+      lbl("Sky Tracker", &mono18, 0xFFFFFF, 266);  // (the harness mono24 has caps only)
+      lbl("Connecting to Wi-Fi", &mono18, 0xFFFFFF, 306);
+      lbl("Home Network", &mono16, 0x9AA6C8, 334);
+      lbl("GPS: connected, searching\nCompass: connected (QMC5883L)", &mono16, 0x7E8BB3, 372);
+      system("rm -rf " OUT_DIR "/bgif && mkdir -p " OUT_DIR "/bgif");
+      rk::play_boot();
+      CHECK(rk::playing() && rk::st.banner == nullptr, "boot launch: plays, no banner");
+      for (int f = 0; rk::playing(); f++) {
+        sat_host_now += 0.033;
+        lv_refr_now(disp);
+        if (!rk::playing())
+          break;
+        char fn[80];
+        snprintf(fn, sizeof(fn), OUT_DIR "/bgif/f%03d.ppm", f);
+        save_ppm(fn);
+      }
+      lv_screen_load(old);
+      lv_obj_delete(scr);
+    }
     {  // the banner keeps a long name on one line inside its border
       rk::play("Falcon 9 Block 5 | SDA Tranche 1 Transport Layer A");
       lv_refr_now(disp);
