@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.20 (queued): alert icons centred on the whole text, one or two lines (UI-41c mode 2). The internet update screen's bar and percentage move during the download (UI-68b); installs started from the web page or HA show that screen too.
+- 4.6.20 (queued): a tap on an alert opens its details (UI-41d): the card of its object (ISS or Tiangong overhead, planet, comet, meteor shower, Moon), or a details card for launches, space events, passes to come, aurora, solar wind, alignments, eclipses and seasons. Alert icons centred on the whole text, one or two lines (UI-41c mode 2). The internet update screen's bar and percentage move during the download (UI-68b); installs started from the web page or HA show that screen too.
 - 4.6.19 (installed): the ground cloud fades from 15% of the climb and is gone by 35% (was 25% / 70%), so the animation doesn't bog down early (UI-69j).
 - 4.6.18: fixes a boot loop. The rocket and capsule pictures are drawn at boot (~5 s, 4x4 supersampled, code from PSRAM) without feeding the task watchdog; the device reset 13 s into every boot, so 4.6.17 never got past setup (display dark, safe mode). The drawing loops now feed it each row (FAIL-11).
 - 4.6.17 (boot loop, withdrawn): the launch and undocking smoke is one full-screen object that draws its discs itself (UI-69i), instead of ~40 objects resized and moved each frame. 4.6.16's log: 4.6 fps, ~4.7 ms per lv_obj_set_size and ~4.8 ms per set_pos even with the 32 KB cache; a changed disc now only invalidates its old and new areas.
@@ -631,6 +631,14 @@ UI-41  Status-line alerts, when the status line would be all-is-well or empty
        below the status line's position; icons 2 px above the text. Alignment
        alerts show only within 3 days of the event (ALIGN_ALERT_S); the scan
        still looks 60 days ahead.
+UI-41d A tap on the status line while an alert shows opens that alert's details: its object's
+       card where there is one (the ISS or Tiangong overhead, a planet, comet, meteor shower,
+       the Moon for full Moon and Moon-near alerts), else a details card (K_INFO) built from
+       the live data, in the alert's colour and icon, no Find button: launch (mission, local
+       date and time, countdown, site, status, distance and direction), space event (type,
+       name, time, at the ISS), an ISS/Tiangong pass to come (rise, peak, set; its arc drawn),
+       aurora and solar wind (Kp, NOAA nowcast, Bz), conjunction and parade, eclipse (times,
+       totality, magnitude), season. With no alert the tap goes on to the page.
 UI-41c Alert icon placement: after the text is set, the icon (glyph or picture) is placed so
        its ink is centred on the text, from the first line's cap top to the last line's
        baseline, from the fonts' glyph metrics (lv_font_get_glyph_dsc).

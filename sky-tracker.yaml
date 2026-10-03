@@ -458,7 +458,7 @@ font:
     bpp: 4
     # UI-30 (4.5.5): details-card icons at the Moon picture's size: space-station, satellite-uplink,
     # satellite-variant, earth, crosshairs-gps, trash-can, weather-sunny, star-four-points
-    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F0AE2", "\U000F1741", "\U000F0629"]  # + star-shooting (UI-47 shower card), meteor (UI-63 comet card)
+    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F0AE2", "\U000F1741", "\U000F0629", "\U000F14DE", "\U000F1BB9", "\U000F0F62"]  # + star-shooting (UI-47 shower card), meteor (UI-63 comet card), rocket-launch, aurora, moon-full (UI-41d alert cards)
   - file: "gfonts://Roboto@300"
     id: setup_title
     size: 34

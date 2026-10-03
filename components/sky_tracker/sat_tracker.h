@@ -364,7 +364,7 @@ struct Ui {
   lv_obj_t *scrub_panel = nullptr, *scrub_slider = nullptr, *scrub_label = nullptr;
 };
 inline Ui ui;
-constexpr int K_SUN = 4, K_MOON = 5, K_PLANET = 6, K_CONST = 7, K_STAR = 8, K_SHOWER = 9, K_CSS = 10, K_DSO = 11, K_COMET = 12;  // UI selections beyond the net's Kind values
+constexpr int K_SUN = 4, K_MOON = 5, K_PLANET = 6, K_CONST = 7, K_STAR = 8, K_SHOWER = 9, K_CSS = 10, K_DSO = 11, K_COMET = 12, K_INFO = 13;  // UI selections beyond the net's Kind values
 inline void scrub_build();
 inline bool scrub_swallow_click = false;  // UI-53
 
@@ -1893,7 +1893,20 @@ struct Alert {
   uint32_t col;
   const char *glyph;           // MDI glyph (card icon font), or
   const lv_image_dsc_t *img;   // a picture (planets, alignments)
+  // UI-41d what a tap on it opens: an object's card (kind >= 0, id), or else a details card
+  // (K_INFO) of type info about item idx
+  int8_t kind;
+  int32_t id;
+  uint8_t info;
+  int16_t idx;
 };
+enum AlertInfo : uint8_t { AI_NONE, AI_ISS_PASS, AI_CSS_PASS, AI_AURORA, AI_WIND, AI_LAUNCH, AI_EVENT, AI_CONJ, AI_PARADE,
+                           AI_ECLIPSE, AI_SEASON };
+inline Alert shown_alert;          // UI-41d the alert on the status line now
+inline bool shown_alert_ok = false;
+inline Alert info_alert;           // the one whose details card is open (K_INFO)
+inline lv_obj_t *card_find_btn = nullptr;  // the card's Find button (hidden on K_INFO)
+inline void alert_click_cb(lv_event_t *e);
 constexpr int MAX_ALERTS = 12;
 constexpr int ALERT_DY = 3;  // UI-41: alerts sit this much lower than the status line (4.5.4)
 constexpr double ALERT_ROTATE_S = 6;
@@ -1953,7 +1966,9 @@ inline void draw_hud(double t) {
   if (al) {
     snprintf(b, sizeof(b), "%s", al->text);
     col = al->col;
+    shown_alert = *al;  // UI-41d: what a tap on the status line opens
   }
+  shown_alert_ok = al != nullptr;
   if (ui.w.status) {
     static int base_x = INT_MIN, base_y = INT_MIN;
     static const lv_font_t *status_font = nullptr;
@@ -1961,6 +1976,10 @@ inline void draw_hud(double t) {
       base_x = lv_obj_get_x(ui.w.status);
       base_y = lv_obj_get_y(ui.w.status);
       status_font = lv_obj_get_style_text_font(ui.w.status, LV_PART_MAIN);
+      // UI-41d a tap on an alert opens its details; anything else still reaches the page
+      lv_obj_add_flag(ui.w.status, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE));
+      lv_obj_set_ext_click_area(ui.w.status, 8);
+      lv_obj_add_event_cb(ui.w.status, alert_click_cb, LV_EVENT_CLICKED, nullptr);
     }
     lv_obj_t *parent = lv_obj_get_parent(ui.w.status);
     if (ui.aurora_icon == nullptr && ui.w.card_icon_font) {  // glyph slot (aurora, ISS)
@@ -3190,6 +3209,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
     a->glyph = glyph;
     a->img = img;
     a->text[0] = 0;
+    a->kind = -1, a->id = 0, a->info = AI_NONE, a->idx = -1;
     return a;
   };
   // ISS: a visible pass soon or in progress (UI-9's yellow line, promoted)
@@ -3199,7 +3219,12 @@ inline int collect_alerts(double t, Alert *out, int max) {
         char hm[16];
         local_hm(p->start, hm, sizeof(hm));
         snprintf(a->text, sizeof(a->text), "ISS visible %s - %s to %s, %.0f° up", hm, p->start_dir, p->end_dir, p->max_el);
+        a->info = AI_ISS_PASS;
       } else if (ui.iss_valid && ui.iss_azel.el > 0) {
+        if (ui.iss.id >= 0 && ui.iss.up)
+          a->kind = K_ISS, a->id = ui.iss.id;
+        else
+          a->info = AI_ISS_PASS;
         snprintf(a->text, sizeof(a->text), "ISS passing now - look %s, %.0f° up", compass(ui.iss_azel.az),
                  ui.iss_azel.el);
       } else {
@@ -3210,6 +3235,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
   // UI-38 aurora
   if (aur.show && ui.aurora_alerts)
     if (Alert *a = add(C_AURORA, "\xF3\xB1\xAE\xB9", nullptr)) {  // mdi:aurora
+      a->info = AI_AURORA;
       char hm[16];
       local_hm((int64_t) (aur.dark_now ? aur.k1 : aur.k0), hm, sizeof(hm));
       if (aur.dark_now && ovation_fresh(t)) {  // UI-58: say how likely, right now
@@ -3224,19 +3250,21 @@ inline int collect_alerts(double t, Alert *out, int max) {
   // UI-55 solar wind early warning (dark sky, no aurora notice up yet)
   if (ui.aurora_alerts && !aur.show && wind_warning(t) && ui.sm.sun.el < -12.0f)
     if (Alert *a = add(C_AURORA, "\xF3\xB1\xAE\xB9", nullptr))
-      snprintf(a->text, sizeof(a->text), "Solar wind: Bz %+.0f nT, %.0f km/s - aurora may flare up", live.wind.bz,
+      a->info = AI_WIND, snprintf(a->text, sizeof(a->text), "Solar wind: Bz %+.0f nT, %.0f km/s - aurora may flare up", live.wind.bz,
                std::isnan(live.wind.speed) ? 0.0f : live.wind.speed);
   // UI-54 launches: the next three within 3 days (a nearby one says which way to look);
   // UI-54c then space events (dockings, undockings, releases, EVAs) within 3 days
   if (ui.sky_alerts) {
     int shown = 0;
-    for (const auto &l : live.launches) {
+    for (int li = 0; li < (int) live.launches.size(); li++) {
+      const auto &l = live.launches[li];
       if (shown >= 3 || !launch_pending(l) || l.net < t - 900 || l.net - t > LAUNCH_AHEAD_S)
         continue;
       float brg;
       const float km = launch_km(l, &brg);
       const bool near = km < LAUNCH_NEAR_KM;
       if (Alert *a = add(C_LAUNCH, "\xF3\xB1\x93\x9E", nullptr)) {  // rocket-launch
+        a->info = AI_LAUNCH, a->idx = (int16_t) li;
         char cd[24];
         countdown(l.net - t, cd, sizeof(cd));
         if (near)
@@ -3249,10 +3277,12 @@ inline int collect_alerts(double t, Alert *out, int max) {
       }
     }
     shown = 0;
-    for (const auto &e : live.events) {
+    for (int ei = 0; ei < (int) live.events.size(); ei++) {
+      const auto &e = live.events[ei];
       if (shown >= 2 || !e.exact || e.t < t - 600 || e.t - t > LAUNCH_AHEAD_S)
         continue;
       if (Alert *a = add(C_EVENT, "\xF3\xB1\x8E\x83", nullptr)) {  // space-station
+        a->info = AI_EVENT, a->idx = (int16_t) ei;
         char cd[24];
         if (e.t > t) {
           countdown(e.t - t, cd, sizeof(cd));
@@ -3269,14 +3299,14 @@ inline int collect_alerts(double t, Alert *out, int max) {
     for (int p = 0; p < planets::N_PLANETS; p++)
       if (ui.planet_visible[p])
         if (Alert *a = add(C_PLANET[p], nullptr, planet_dsc(p, true)))
-          snprintf(a->text, sizeof(a->text), "%s visible - %s, %.0f° up", planets::name(p),
+          a->kind = K_PLANET, a->id = p, snprintf(a->text, sizeof(a->text), "%s visible - %s, %.0f° up", planets::name(p),
                    compass(ui.planet_azel[p].az), ui.planet_azel[p].el);
   // UI-63 a comet bright enough to see (Sky Event Alerts)
   if (ui.comets_on && ui.sky_alerts)
     for (int k = 0; k < Ui::MAX_COMETS; k++)
       if (ui.comet_idx[k] >= 0 && ui.comet_visible[k])
         if (Alert *a = add(C_COMET, ICON_COMET, nullptr))
-          snprintf(a->text, sizeof(a->text), "Comet %s visible - mag %.1f, %s %.0f° up",
+          a->kind = K_COMET, a->id = ui.comet_idx[k], snprintf(a->text, sizeof(a->text), "Comet %s visible - mag %.1f, %s %.0f° up",
                    live.comet_list[ui.comet_idx[k]].tag, ui.comet_mag[k], compass(ui.comet_azel[k].az),
                    ui.comet_azel[k].el);
   // upcoming alignments
@@ -3284,23 +3314,30 @@ inline int collect_alerts(double t, Alert *out, int max) {
     char w[32];
     if (conj_ev.valid && conj_ev.t > t - 3 * 3600.0 && conj_ev.t - t <= ALIGN_ALERT_S)
       if (Alert *a = add(C_ALIGN, nullptr, align_dsc())) {
+        a->info = AI_CONJ;
         when_text(t, conj_ev.t, w, sizeof(w));
         snprintf(a->text, sizeof(a->text), "%s & %s %.1f° apart - %s", planets::name(conj_ev.a),
                  planets::name(conj_ev.b), conj_ev.sep, w);
       }
     if (parade_ev.valid && parade_ev.t > t - 3 * 3600.0 && parade_ev.t - t <= ALIGN_ALERT_S)
       if (Alert *a = add(C_ALIGN, nullptr, align_dsc())) {
+        a->info = AI_PARADE;
         when_text(t, parade_ev.t, w, sizeof(w));
         snprintf(a->text, sizeof(a->text), "Planet parade - %d planets %s", parade_ev.count, w);
       }
   }
   // UI-52 Tiangong: a visible pass soon or in progress, like the ISS
   if (ui.css.id >= 0)
-    for (const auto &p : live.css_passes) {
+    for (int pi = 0; pi < (int) live.css_passes.size(); pi++) {
+      const auto &p = live.css_passes[pi];
       if (p.end <= t)
         continue;
       if (p.visible && t >= p.start - ISS_ALERT_S)
         if (Alert *a = add(C_CSS, "\xF3\xB1\x8E\x83", nullptr)) {
+          if (t >= p.start && ui.css.id >= 0 && ui.css.up)
+            a->kind = K_CSS, a->id = ui.css.id;
+          else
+            a->info = AI_CSS_PASS, a->idx = (int16_t) pi;
           char hm[16];
           local_hm(p.start, hm, sizeof(hm));
           if (t < p.start)
@@ -3316,6 +3353,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
     // UI-51 eclipses seen from here
     if (const ev::Eclipse *e = next_eclipse(t); e && e->t0 - t <= SKY_ALERT_S)
       if (Alert *a = add(C_ECLIPSE, ev::is_lunar(e->type) ? "\xF3\xB0\xBD\xA2" : "\xF3\xB0\x96\x99", nullptr)) {
+        a->info = AI_ECLIPSE;
         const bool tot = e->c1 > e->c0 && e->c0 > 0;
         const double s0 = tot ? std::max(e->c0, e->t0) : e->t0, s1 = tot ? std::min(e->c1, e->t1) : e->t1;
         local_hm((int64_t) s0, h0, sizeof(h0));
@@ -3336,6 +3374,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
       if (pk - t > SKY_ALERT_S || t >= local_midnight(pk) + 86400.0)
         continue;
       if (Alert *a = add(C_METEOR, "\xF3\xB1\x9D\x81", nullptr)) {  // star-shooting
+        a->kind = K_SHOWER, a->id = i;
         when_text(t, pk, w, sizeof(w));
         snprintf(a->text, sizeof(a->text), "%s peak %s - up to %d/hr, %s", ev::SHOWERS[i].name, w, ev::SHOWERS[i].zhr,
                  moon_word(pk));
@@ -3344,6 +3383,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
     // UI-48 the full Moon, on its day and the day before
     if (sev.full_t > 0 && sev.full_t - t <= 1.5 * 86400.0 && t < local_midnight(sev.full_t) + 86400.0)
       if (Alert *a = add(C_MOON, "\xF3\xB0\xBD\xA2", nullptr)) {  // moon-full
+        a->kind = K_MOON;
         day_word(t, sev.full_t, w, sizeof(w));
         local_hm((int64_t) sev.full_t, h0, sizeof(h0));
         if (!strcmp(w, "today"))
@@ -3355,6 +3395,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
     // UI-49 the Moon near a planet or bright star
     if (sev.conj_with)
       if (Alert *a = add(C_MOON, "\xF3\xB0\xBD\xA2", nullptr)) {
+        a->kind = K_MOON;
         if (sev.conj_t - t < 1800)
           snprintf(a->text, sizeof(a->text), "Moon %.0f° from %s now", sev.conj_sep, sev.conj_with);
         else {
@@ -3374,6 +3415,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
     const double m_ev = local_midnight(ev.t);
     if (ev.t - t <= SEASON_ALERT_S && t < m_ev + 86400.0)
       if (Alert *a = add(C_SUN, "\xF3\xB0\x96\x99", nullptr)) {  // weather-sunny
+        a->info = AI_SEASON;
         const bool south = config().lat < 0;
         static const char *const NAME[4] = {"Spring equinox", "Summer solstice", "Autumn equinox", "Winter solstice"};
         const int named = south ? (ev.kind + 2) % 4 : ev.kind;  // seasons swap south of the equator
@@ -3858,11 +3900,14 @@ inline void body_info_update(int kind, double t) {
 inline void arc_update(double t) {
   std::vector<lv_point_t> pts;
   std::vector<lv_point_t> ticks;
-  ui.arc_rise_dot = ui.sel_kind == K_ISS || ui.sel_kind == K_CSS;
-  ui.arc_color = ui.sel_kind == K_SUN ? C_SUN : ui.sel_kind == K_MOON ? C_MOON : ui.sel_kind == K_CSS ? C_CSS : C_ISS;
-  if (ui.sel_kind == K_ISS || ui.sel_kind == K_CSS) {
+  // UI-41d an upcoming pass's details card draws that pass's arc too
+  const bool info_iss = ui.sel_kind == K_INFO && info_alert.info == AI_ISS_PASS;
+  const bool info_css = ui.sel_kind == K_INFO && info_alert.info == AI_CSS_PASS;
+  ui.arc_rise_dot = ui.sel_kind == K_ISS || ui.sel_kind == K_CSS || info_iss || info_css;
+  ui.arc_color = ui.sel_kind == K_SUN ? C_SUN : ui.sel_kind == K_MOON ? C_MOON : ui.sel_kind == K_CSS || info_css ? C_CSS : C_ISS;
+  if (ui.sel_kind == K_ISS || ui.sel_kind == K_CSS || info_iss || info_css) {
     const Pass *p = nullptr;
-    if (ui.sel_kind == K_ISS)
+    if (ui.sel_kind == K_ISS || info_iss)
       p = next_pass(t);
     else
       for (const auto &q : live.css_passes)  // UI-52
@@ -3968,9 +4013,196 @@ inline bool launch_text(uint16_t launched, char *buf, size_t n) {
 constexpr uint16_t ISS_LAUNCHED = 15299;  // 20 Nov 1998, Zarya (the first module)
 constexpr uint16_t CSS_LAUNCHED = 23495;  // 29 Apr 2021, Tianhe (UI-52)
 
+// ================================================================== UI-41d alert details
+// A tap on the status line while an alert shows opens that alert's details: the card of its
+// object (ISS or Tiangong overhead, a planet, comet, meteor shower, the Moon), or else this
+// card, built from the same live data, in the alert's colour and icon.
+inline void select_object(int kind, int32_t id);
+inline void info_card_update(double t) {
+  const Alert &al = info_alert;
+  if (t - ui.sel_since > CARD_TIMEOUT_S) {
+    deselect();
+    return;
+  }
+  char title[64], body[640], d0[16], h0[16], h1[16], h2[16], cd[24];
+  snprintf(title, sizeof(title), "Details");
+  snprintf(body, sizeof(body), "%s", al.text);
+  switch (al.info) {
+    case AI_ISS_PASS:
+    case AI_CSS_PASS: {
+      const Pass *p = nullptr;
+      if (al.info == AI_ISS_PASS)
+        p = next_pass(t);
+      else if (al.idx >= 0 && al.idx < (int) live.css_passes.size())
+        p = &live.css_passes[al.idx];
+      snprintf(title, sizeof(title), "%s pass", al.info == AI_ISS_PASS ? "ISS" : "Tiangong");
+      if (p == nullptr || p->end <= t)
+        break;
+      local_hm(p->start, h0, sizeof(h0));
+      local_hm(p->max, h1, sizeof(h1));
+      local_hm(p->end, h2, sizeof(h2));
+      day_word(t, (double) p->start, d0, sizeof(d0));
+      if (t < p->start)
+        countdown(p->start - t, cd, sizeof(cd));
+      snprintf(body, sizeof(body),
+               "%s%s%s\nRises %s in the %s\nHighest %s, %.0f\xC2\xB0 up in the %s\nSets %s in the %s\n"
+               "Sunlit against a dark sky: a bright, steady star moving across.",
+               t < p->start ? "In " : "Passing now", t < p->start ? cd : "", t < p->start ? (std::string(", ") + d0).c_str() : "",
+               h0, p->start_dir, h1, p->max_el, p->max_dir, h2, p->end_dir);
+      break;
+    }
+    case AI_LAUNCH: {
+      if (al.idx < 0 || al.idx >= (int) live.launches.size())
+        break;
+      const auto &l = live.launches[al.idx];
+      snprintf(title, sizeof(title), "%s", l.rocket[0] ? l.rocket : "Rocket launch");
+      const char *bar = strchr(l.name, '|');
+      const char *mission = bar ? bar + 1 : l.name;
+      while (*mission == ' ')
+        mission++;
+      local_hm((int64_t) l.net, h0, sizeof(h0));
+      local_md(l.net, d0, sizeof(d0));
+      if (l.net > t)
+        countdown(l.net - t, cd, sizeof(cd));
+      else
+        snprintf(cd, sizeof(cd), "now");
+      char far[48] = "";
+      float brg;
+      const float km = launch_km(l, &brg);
+      if (!std::isnan(km))
+        snprintf(far, sizeof(far), "\n%.0f km away, to the %s", km, compass(brg));
+      snprintf(body, sizeof(body), "%s\n%s %s (%s%s)\nFrom %s\nStatus: %s%s", mission, d0, h0, l.net > t ? "in " : "",
+               cd, l.where, l.status[0] ? l.status : "unknown", far);
+      break;
+    }
+    case AI_EVENT: {
+      if (al.idx < 0 || al.idx >= (int) live.events.size())
+        break;
+      const auto &e = live.events[al.idx];
+      snprintf(title, sizeof(title), "%s", e.type[0] ? e.type : "Space event");
+      local_hm((int64_t) e.t, h0, sizeof(h0));
+      local_md(e.t, d0, sizeof(d0));
+      if (e.t > t)
+        countdown(e.t - t, cd, sizeof(cd));
+      snprintf(body, sizeof(body), "%s\n%s %s%s%s%s", e.name, d0, h0, e.t > t ? " (in " : " (now", e.t > t ? cd : "", ")");
+      if (e.iss)
+        snprintf(body + strlen(body), sizeof(body) - strlen(body), "\nAt the International Space Station");
+      break;
+    }
+    case AI_AURORA:
+    case AI_WIND: {
+      snprintf(title, sizeof(title), "%s", al.info == AI_AURORA ? "Aurora" : "Solar wind");
+      int n = snprintf(body, sizeof(body), "%s\nKp %.1f: %s", al.text, aur.kp, aurora_word(aur.kp));
+      if (ovation_fresh(t) && n < (int) sizeof(body)) {
+        char oc[40];
+        ovation_text(oc, sizeof(oc));
+        n += snprintf(body + n, sizeof(body) - n, "\nNOAA nowcast: %s", oc);
+      }
+      if (!std::isnan(live.wind.bz) && n < (int) sizeof(body))
+        n += snprintf(body + n, sizeof(body) - n, "\nSolar wind Bz %+.0f nT, %.0f km/s", live.wind.bz,
+                      std::isnan(live.wind.speed) ? 0.0f : live.wind.speed);
+      if (n < (int) sizeof(body))
+        snprintf(body + n, sizeof(body) - n, "\nLook north, away from lights. A southward (negative) Bz lets it "
+                                             "flare up within the hour.");
+      break;
+    }
+    case AI_CONJ:
+    case AI_PARADE: {
+      const AlignEv &v = al.info == AI_CONJ ? conj_ev : parade_ev;
+      if (al.info == AI_CONJ)
+        snprintf(title, sizeof(title), "%s & %s", planets::name(v.a), planets::name(v.b));
+      else
+        snprintf(title, sizeof(title), "Planet parade");
+      local_hm((int64_t) v.t, h0, sizeof(h0));
+      local_md(v.t, d0, sizeof(d0));
+      if (al.info == AI_CONJ)
+        snprintf(body, sizeof(body), "Closest %s %s, %.1f\xC2\xB0 apart (a thumb's width at arm's length is "
+                 "about 2\xC2\xB0).\nThey only look close: they line up as seen from Earth.", d0, h0, v.sep);
+      else
+        snprintf(body, sizeof(body), "%d planets above the horizon together, %s %s.\nThey sit along the ecliptic, "
+                 "the Sun's path across the sky.", v.count, d0, h0);
+      break;
+    }
+    case AI_ECLIPSE: {
+      const ev::Eclipse *e = next_eclipse(t);
+      if (e == nullptr)
+        break;
+      snprintf(title, sizeof(title), "%s", ev::eclipse_name(e->type));
+      local_md(e->t0, d0, sizeof(d0));
+      local_hm((int64_t) e->t0, h0, sizeof(h0));
+      local_hm((int64_t) e->t_max, h1, sizeof(h1));
+      local_hm((int64_t) e->t1, h2, sizeof(h2));
+      int n = snprintf(body, sizeof(body), "%s: seen from here %s to %s\nGreatest %s, %.0f\xC2\xB0 up\n", d0, h0, h2, h1,
+                       e->el);
+      if (e->c1 > e->c0 && e->c0 > 0 && n < (int) sizeof(body)) {
+        char c0[16], c1[16];
+        local_hm((int64_t) e->c0, c0, sizeof(c0));
+        local_hm((int64_t) e->c1, c1, sizeof(c1));
+        n += snprintf(body + n, sizeof(body) - n, "%s %s to %s\n", ev::is_lunar(e->type) ? "Totality" : "Central phase", c0, c1);
+      }
+      if (n < (int) sizeof(body))
+        snprintf(body + n, sizeof(body) - n, ev::is_lunar(e->type)
+                     ? "Magnitude %.2f. Safe to watch with the naked eye."
+                     : "%.0f%% of the Sun covered. Never look at the Sun without eclipse glasses.",
+                 ev::is_lunar(e->type) ? e->mag : e->mag * 100.0f);
+      break;
+    }
+    case AI_SEASON:
+      snprintf(title, sizeof(title), "Season");
+      break;
+    default:
+      break;
+  }
+  set_text_if(ui.card_title, title);
+  set_text_if(ui.card_body, body);
+  if (ui.card_moon)
+    lv_obj_add_flag(ui.card_moon, LV_OBJ_FLAG_HIDDEN);
+  if (ui.card_flag)
+    lv_obj_add_flag(ui.card_flag, LV_OBJ_FLAG_HIDDEN);
+  if (ui.card_icon) {
+    if (al.glyph) {
+      set_text_if(ui.card_icon, al.glyph);
+      lv_obj_remove_flag(ui.card_icon, LV_OBJ_FLAG_HIDDEN);
+      card_align_icon();
+    } else {
+      lv_obj_add_flag(ui.card_icon, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+  lv_obj_add_flag(ui.sel_ring, LV_OBJ_FLAG_HIDDEN);
+  lv_area_t box;
+  lv_obj_get_coords(ui.w.sky, &box);
+  lv_obj_update_layout(ui.card);
+  const int ch = lv_obj_get_height(ui.card), cw = lv_obj_get_width(ui.card);
+  lv_obj_set_pos(ui.card, box.x1 + ui.cx - cw / 2, box.y1 + std::max(0, std::min(ui.size - ch, 16)));
+  arc_update(t);
+}
+inline void alert_click_cb(lv_event_t *e) {
+  if (!shown_alert_ok)
+    return;  // no alert: the tap goes on to the page
+  lv_event_stop_bubbling(e);
+  const Alert &a = shown_alert;
+  if (a.kind >= 0) {
+    select_object(a.kind, a.id);
+  } else {
+    info_alert = a;
+    select_object(K_INFO, 0);
+  }
+}
 inline void card_update(double t) {
   if (ui.sel_kind < 0 || ui.card == nullptr)
     return;
+  if (card_find_btn) {  // UI-41d: an alert's details card has nothing to point at
+    if (ui.sel_kind == K_INFO)
+      lv_obj_add_flag(card_find_btn, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_remove_flag(card_find_btn, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (ui.sel_kind == K_INFO) {
+    if (ui.card_img_btn)
+      lv_obj_add_flag(ui.card_img_btn, LV_OBJ_FLAG_HIDDEN);
+    info_card_update(t);
+    return;
+  }
   if (ui.card_img_btn) {  // UI-59/60: Sun and Moon cards; the picture is fetched as the card opens
     if (ui.sel_kind == K_SUN || ui.sel_kind == K_MOON || ui.sel_kind == K_PLANET) {
       lv_obj_remove_flag(ui.card_img_btn, LV_OBJ_FLAG_HIDDEN);
@@ -5401,7 +5633,7 @@ inline void select_object(int kind, int32_t id) {
   ui.sel_id = id;
   ui.sel_since = clock_now();
   static const uint32_t COL[13] = {C_LEO, 0x8FA8F0, C_ISS, C_GEO, C_SUN, C_MOON, 0, 0, 0xFFF1B8, C_METEOR, C_CSS, C_DSO, C_COMET};
-  const uint32_t col = kind == K_PLANET ? C_PLANET[id] : kind == K_CONST ? C_CONST_TITLE : COL[kind];
+  const uint32_t col = kind == K_PLANET ? C_PLANET[id] : kind == K_CONST ? C_CONST_TITLE : kind == K_INFO ? info_alert.col : COL[kind];
   lv_obj_set_style_text_color(ui.card_title, lv_color_hex(col), 0);
   if (ui.card_icon)
     lv_obj_set_style_text_color(ui.card_icon, lv_color_hex(col), 0);
@@ -5663,6 +5895,7 @@ inline void card_build() {
   // UI-57: "Find" at the bottom right of every card
   lv_obj_set_style_pad_bottom(ui.card, 52, 0);
   lv_obj_t *fb = lv_button_create(ui.card);
+  card_find_btn = fb;
   lv_obj_add_flag(fb, LV_OBJ_FLAG_FLOATING);
   lv_obj_set_size(fb, 104, 36);
   lv_obj_align(fb, LV_ALIGN_BOTTOM_RIGHT, 0, 42);
