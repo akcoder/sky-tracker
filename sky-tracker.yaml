@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.15"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.16"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -164,6 +164,11 @@ esp32:
       CONFIG_SPIRAM_XIP_FROM_PSRAM: y
       # 64-byte cache lines: fewer, larger PSRAM bursts for the bounce-buffer copies.
       CONFIG_ESP32S3_DATA_CACHE_LINE_64B: y
+      # PERF-13: 32 KB instruction cache (default 16 KB). Code runs from PSRAM (PERF-10),
+      # which the panel scanout keeps busy; each miss costs ~1 us, and LVGL's code doesn't
+      # fit in 16 KB (one lv_obj_set_size took ~5 ms in the launch animation). Costs 16 KB of
+      # internal RAM.
+      CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB: y
       # NET-11: a 16 KB TCP receive window (default 5.7 KB): from Alaska the NOAA and NASA
       # servers are ~100 ms away and a download can't run faster than window / round trip.
       # lwIP and Wi-Fi buffers MUST come from PSRAM (PERF-12): in internal RAM (4.5.35) they
