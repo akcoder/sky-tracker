@@ -104,7 +104,16 @@ struct St {
   bool benched = false;
   uint32_t flame_at = 0;
   lv_obj_t *catcher = nullptr, *img = nullptr, *banner = nullptr, *label = nullptr;
-  lv_obj_t *puff[PUFFS] = {}, *pad[PADS] = {};
+  // UI-69i all the smoke is one full-screen object that draws its discs itself: moving ~40
+  // objects a frame cost ~5 ms per lv_obj_set_size/set_pos (LVGL's per-object work, code run
+  // from PSRAM). A changed disc now only invalidates its old and new areas.
+  struct Disc {
+    int16_t x = 0, y = 0, r = 0;
+    uint32_t col = 0;
+    bool on = false;
+  };
+  lv_obj_t *smoke = nullptr;
+  Disc disc[PADS + PUFFS] = {};  // the ground cloud first (drawn under the trail), then the puffs
   float puff_x[PUFFS] = {}, puff_y[PUFFS] = {}, puff_t[PUFFS] = {};
   int8_t puff_step[PUFFS] = {};  // the age step last drawn (-1 hidden): a puff only changes on a new step
   int8_t pad_step[PADS] = {};
@@ -225,38 +234,68 @@ inline void path(float u, float &x, float &y, float &deg) {
   deg = std::atan2(dx, -dy) * 180.0f / (float) M_PI;  // clockwise from straight up
 }
 
-inline lv_obj_t *blob() {
-  lv_obj_t *o = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(o);
-  lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
-  lv_obj_set_size(o, 0, 0);  // not LVGL's default 100 dpi square at 0,0 (that got redrawn when hidden)
-  lv_obj_set_pos(o, -64, -64);
-  lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
-  return o;
+inline void disc_area(const St::Disc &d, lv_area_t &a) {
+  a.x1 = d.x - d.r, a.y1 = d.y - d.r, a.x2 = d.x + d.r - 1, a.y2 = d.y + d.r - 1;
 }
-// hiding an already hidden object still invalidates its area: skip it
-inline void hide(lv_obj_t *o) {
-  if (!lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN))
-    lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+inline void inval_disc(const St::Disc &d) {
+  lv_area_t a;
+  disc_area(d, a);
+  lv_obj_invalidate_area(st.smoke, &a);
+}
+inline void draw_smoke(lv_event_t *e) {
+  lv_layer_t *layer = lv_event_get_layer(e);
+  lv_draw_rect_dsc_t dsc;
+  lv_draw_rect_dsc_init(&dsc);
+  dsc.radius = LV_RADIUS_CIRCLE;
+  dsc.bg_opa = LV_OPA_COVER;
+  dsc.border_width = 0;
+  for (const auto &d : st.disc) {
+    if (!d.on)
+      continue;
+    lv_area_t a;
+    disc_area(d, a);
+    const lv_area_t &c = layer->_clip_area;  // skip discs outside the area being redrawn
+    if (a.x2 < c.x1 || a.x1 > c.x2 || a.y2 < c.y1 || a.y1 > c.y2)
+      continue;
+    dsc.bg_color = lv_color_hex(d.col);
+    lv_draw_rect(layer, &dsc, &a);
+  }
+}
+inline void smoke_create() {
+  st.smoke = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(st.smoke);
+  lv_obj_set_size(st.smoke, 480, 480);
+  lv_obj_remove_flag(st.smoke, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(st.smoke, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(st.smoke, draw_smoke, LV_EVENT_DRAW_MAIN, nullptr);
+  for (auto &d : st.disc)
+    d = St::Disc();
+}
+inline void hide(int k) {
+  St::Disc &d = st.disc[k];
+  if (!d.on)
+    return;
+  inval_disc(d);
+  d.on = false;
 }
 // a disc of colour col at strength a (0..255) over whatever background is under (x, y)
-inline void smoke_at(lv_obj_t *o, int x, int y, int r, int a, uint32_t col) {
-  st.prof.calls++;
+inline void smoke_at(int k, int x, int y, int r, int a, uint32_t col) {
+  auto &p = st.prof;
+  p.calls++;
+  const uint32_t t0 = now_us();
   const int dx = x - MAP_CX, dy = y - MAP_CY;
   const uint32_t bg = dx * dx + dy * dy <= MAP_R * MAP_R ? SKY_BG : PAGE_BG;
-  auto &p = st.prof;
-  uint32_t t0 = now_us();
-  lv_obj_set_size(o, 2 * r, 2 * r);
-  uint32_t t1 = now_us();
-  lv_obj_set_pos(o, x - r, y - r);
-  uint32_t t2 = now_us();
-  lv_obj_set_style_bg_color(o, lv_color_hex(mix(col, bg, (uint32_t) std::min(255, std::max(0, a)))), 0);
-  uint32_t t3 = now_us();
-  if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN))
-    lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
-  p.t_size += t1 - t0, p.t_pos += t2 - t1, p.t_col += t3 - t2, p.t_flag += now_us() - t3;
+  St::Disc n;
+  n.x = (int16_t) x, n.y = (int16_t) y, n.r = (int16_t) r, n.on = true;
+  n.col = mix(col, bg, (uint32_t) std::min(255, std::max(0, a)));
+  St::Disc &d = st.disc[k];
+  if (!(d.on && d.x == n.x && d.y == n.y && d.r == n.r && d.col == n.col)) {
+    if (d.on)
+      inval_disc(d);
+    d = n;
+    inval_disc(d);
+  }
+  p.t_size += now_us() - t0;
 }
 // UI-69h: how much CPU and PSRAM the main loop gets: a fixed integer loop and a 64 KB read of
 // PSRAM, timed (microseconds); run before the animation and once in the middle of it
@@ -300,8 +339,7 @@ inline void stop() {
              "%u fallback frames", p.t_img / 1000.0f, p.t_puff / 1000.0f, p.t_pad / 1000.0f, (unsigned) p.calls,
              (unsigned) p.fallback);
     const float c = p.calls ? 1000.0f * p.calls : 1.0f;
-    ESP_LOGI("rocket", "per smoke update (avg ms): size %.2f, pos %.2f, colour %.2f, show %.2f", p.t_size / c,
-             p.t_pos / c, p.t_col / c, p.t_flag / c);
+    ESP_LOGI("rocket", "per smoke update (avg ms): %.3f", p.t_size / c);
     ESP_LOGI("rocket", "bench before/during (us): cpu loop %u/%u, psram 64 KB read %u/%u", (unsigned) p.bench_cpu[0],
              (unsigned) p.bench_cpu[1], (unsigned) p.bench_ram[0], (unsigned) p.bench_ram[1]);
   }
@@ -319,16 +357,10 @@ inline void stop() {
       lv_obj_delete(*o);
       *o = nullptr;
     }
-  for (auto &o : st.puff)
-    if (o) {
-      lv_obj_delete(o);
-      o = nullptr;
-    }
-  for (auto &o : st.pad)
-    if (o) {
-      lv_obj_delete(o);
-      o = nullptr;
-    }
+  if (st.smoke) {
+    lv_obj_delete(st.smoke);
+    st.smoke = nullptr;
+  }
   for (auto &o : st.iss)
     if (o) {
       lv_obj_delete(o);
@@ -390,10 +422,10 @@ inline void frame_launch() {
     const float age = step * AGE_STEP;
     const int a = (int) (150 - 260 * age);
     if (a <= 0) {
-      hide(st.puff[i]);
+      hide(PADS + i);
       continue;
     }
-    smoke_at(st.puff[i], (int) st.puff_x[i], (int) st.puff_y[i], (int) (7 + 22 * age), a, 0xC8CDD7);
+    smoke_at(PADS + i, (int) st.puff_x[i], (int) st.puff_y[i], (int) (7 + 22 * age), a, 0xC8CDD7);
   }
   t_a = now_us();
   pf.t_puff += t_a - t_b;
@@ -408,7 +440,7 @@ inline void frame_launch() {
       continue;
     st.pad_step[k] = (int8_t) ps;
     if (ps < 0 || ps == 99) {
-      hide(st.pad[k]);
+      hide(k);
       continue;
     }
     const PadBillow &b = PAD_BILLOWS[k];
@@ -420,7 +452,7 @@ inline void frame_launch() {
     const int x = (int) (PAD_X + b.dx * g + (b.dx > 0 ? drift : b.dx < 0 ? -drift : 0));
     const int y = (int) (PAD_Y + 8 + b.dy * g - drift * 0.15f);
     const int a = (int) (b.a * (1.0f - std::max(0.0f, uq - 0.25f) / (PAD_END - 0.25f)));
-    smoke_at(st.pad[k], x, y, r, a, b.col);
+    smoke_at(k, x, y, r, a, b.col);
   }
   pf.t_pad += now_us() - t_a;
 }
@@ -503,10 +535,10 @@ inline void frame_undock() {
     const float age = step * 0.06f;
     const int a = (int) (220 - 340 * age);
     if (a <= 60) {  // gone before it reads as a dark blot (opaque: it fades toward the sky colour)
-      hide(st.puff[i]);
+      hide(PADS + i);
       continue;
     }
-    smoke_at(st.puff[i], (int) st.puff_x[i], (int) st.puff_y[i], (int) (3 + 9 * age), a, 0xF4F6FA);
+    smoke_at(PADS + i, (int) st.puff_x[i], (int) st.puff_y[i], (int) (3 + 9 * age), a, 0xF4F6FA);
   }
 }
 
@@ -610,12 +642,8 @@ inline void play_scene(bool undock, const char *name) {
       lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
       st.iss[k] = o;
     }
-  } else {
-    for (int k = 0; k < PADS; k++)
-      st.pad[k] = blob();
   }
-  for (auto &o : st.puff)
-    o = blob();
+  smoke_create();  // over the ISS, under the rocket and the banner
   st.img = lv_image_create(lv_layer_top());
   lv_image_set_src(st.img, undock ? st.capsule_buf : st.img_buf[0]);
   if (!undock)
