@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.20 (queued): a tap on an alert opens its details (UI-41d): the card of its object (ISS or Tiangong overhead, planet, comet, meteor shower, Moon), or a details card for launches, space events, passes to come, aurora, solar wind, alignments, eclipses and seasons. Alert icons centred on the whole text, one or two lines (UI-41c mode 2). The internet update screen's bar and percentage move during the download (UI-68b); installs started from the web page or HA show that screen too.
+- 4.6.20 (queued): Settings gains a Satellites tab (LEO cone, LEO, Starlink, MEO, GEO, Debris, Sat Trails moved from Celestial), tabs with the icon above the text (UI-16a). A tap on an alert opens its details (UI-41d): the card of its object (ISS or Tiangong overhead, planet, comet, meteor shower, Moon), or a details card for launches, space events, passes to come, aurora, solar wind, alignments, eclipses and seasons. Alert icons centred on the whole text, one or two lines (UI-41c mode 2). The internet update screen's bar and percentage move during the download (UI-68b); installs started from the web page or HA show that screen too.
 - 4.6.19 (installed): the ground cloud fades from 15% of the climb and is gone by 35% (was 25% / 70%), so the animation doesn't bog down early (UI-69j).
 - 4.6.18: fixes a boot loop. The rocket and capsule pictures are drawn at boot (~5 s, 4x4 supersampled, code from PSRAM) without feeding the task watchdog; the device reset 13 s into every boot, so 4.6.17 never got past setup (display dark, safe mode). The drawing loops now feed it each row (FAIL-11).
 - 4.6.17 (boot loop, withdrawn): the launch and undocking smoke is one full-screen object that draws its discs itself (UI-69i), instead of ~40 objects resized and moved each frame. 4.6.16's log: 4.6 fps, ~4.7 ms per lv_obj_set_size and ~4.8 ms per set_pos even with the 32 KB cache; a changed disc now only invalidates its old and new areas.
@@ -512,10 +512,13 @@ UI-25  Header status line (replaces the countdown), coloured OK/warn/bad:
 UI-26  Motion trails: each moving marker leaves 3 fading segments covering the
        last 30 s. HA/settings switch "Show Motion Trails" (default on).
 
-UI-16a Settings tabs: under the header (SETTINGS, Cancel, Save) three tab buttons,
-       148x40 at y 52 (x 8, 166, 324): Display (MDI monitor), Location (map-marker),
-       Celestial (weather-night), icon and text centred; the active tab is 0x2D5BD0,
-       the others 0x1A2547. Each tab is a panel (y 100, 340 high); only one is shown.
+UI-16a Settings tabs: under the header (SETTINGS, Cancel, Save) four tab buttons,
+       115x58 at y 52 (x 4, 123, 242, 361): Display (MDI monitor), Location (map-marker),
+       Celestial (weather-night), Satellites (satellite-variant), the icon above the text,
+       centred; the active tab is 0x2D5BD0, the others 0x1A2547. Each tab is a panel
+       (y 118, 322 high); only one is shown. Satellites: LEO cone, LEO | Starlink,
+       MEO | GEO, Debris | Sat Trails. Celestial: Stars | After dusk, Planets | Aurora alert,
+       Sky events | Planet alert, Milky Way | Comets.
        The page always opens on Display; switching tabs hides the keyboard. Cancel
        and Save cover all tabs.
        Every obj container on the page (panels, coordinate boxes, tab rows) MUST set

@@ -2085,7 +2085,7 @@ lvgl:
             set(id(sw_planets), id(show_planets).state);  // UI-40
             set(id(sw_autob), id(auto_bright).state);     // UI-44
             set(id(sw_night), id(night_mode).state);      // UI-45
-            sat::settings_planet_icon(id(pnl_celestial), 122, 244);
+            sat::settings_planet_icon(id(pnl_celestial), 122, 62);
             set(id(sw_aur_alerts), id(aurora_alerts).state);  // UI-41a
             set(id(sw_pl_alerts), id(planet_alerts).state);
             set(id(sw_sky_alerts), id(sky_alerts).state);  // UI-47..51
@@ -2095,7 +2095,7 @@ lvgl:
             lv_slider_set_value(id(sl_cone), (int) id(leo_cone).state, LV_ANIM_OFF);
             sat::cone_label(id(lbl_cone), (int) id(leo_cone).state);
             if (auto ix = id(time_zone).active_index()) lv_dropdown_set_selected(id(dd_tz)->obj, *ix);  // UI-70
-            sat::settings_tab(0, id(pnl_display), id(pnl_location), id(pnl_celestial), id(tab_display), id(tab_location), id(tab_celestial));
+            sat::settings_tab(0, id(pnl_display), id(pnl_location), id(pnl_celestial), id(pnl_satellites), id(tab_display), id(tab_location), id(tab_celestial), id(tab_satellites));
             // Starlink is part of LEO: editable only while LEO is on
             if (id(show_satellites).state) lv_obj_remove_state(id(sw_starlink), LV_STATE_DISABLED);
             else lv_obj_add_state(id(sw_starlink), LV_STATE_DISABLED);
@@ -2178,18 +2178,20 @@ lvgl:
                         // UI-39: LEO cone, 5° steps
                         id(leo_cone).make_call().set_value(sat::cone_snap(lv_slider_get_value(id(sl_cone)))).perform();
                     - lvgl.page.show: sky_page
-        # UI-16a: three tabs under the header (Display, Location, Celestial); each tab is a panel, only one shown
+        # UI-16a: four tabs under the header (Display, Location, Celestial, Satellites), icon over
+        # text; each tab is a panel, only one shown
         - button:
             id: tab_display
-            x: 8
+            x: 4
             y: 52
-            width: 148
-            height: 40
+            width: 115
+            height: 58
             bg_color: 0x2D5BD0
             shadow_width: 0
             radius: 8
+            pad_all: 0
             widgets:
-              - obj:                   # icon + text, centred together
+              - obj:                   # icon over text, centred together
                   align: CENTER
                   width: SIZE_CONTENT
                   height: SIZE_CONTENT
@@ -2201,9 +2203,9 @@ lvgl:
                   scrollable: false
                   layout:
                     type: FLEX
-                    flex_flow: ROW
+                    flex_flow: COLUMN
                     flex_align_cross: CENTER
-                    pad_column: 6
+                    pad_row: 1
                   widgets:
                     - label:
                         text: "\U000F0379"   # monitor
@@ -2213,19 +2215,20 @@ lvgl:
                         text_font: mono16
             on_click:
               - lambda: |-
-                  sat::settings_tab(0, id(pnl_display), id(pnl_location), id(pnl_celestial), id(tab_display), id(tab_location), id(tab_celestial));
+                  sat::settings_tab(0, id(pnl_display), id(pnl_location), id(pnl_celestial), id(pnl_satellites), id(tab_display), id(tab_location), id(tab_celestial), id(tab_satellites));
               - lvgl.widget.hide: settings_kb
         - button:
             id: tab_location
-            x: 166
+            x: 123
             y: 52
-            width: 148
-            height: 40
+            width: 115
+            height: 58
             bg_color: 0x1A2547
             shadow_width: 0
             radius: 8
+            pad_all: 0
             widgets:
-              - obj:                   # icon + text, centred together
+              - obj:                   # icon over text, centred together
                   align: CENTER
                   width: SIZE_CONTENT
                   height: SIZE_CONTENT
@@ -2237,9 +2240,9 @@ lvgl:
                   scrollable: false
                   layout:
                     type: FLEX
-                    flex_flow: ROW
+                    flex_flow: COLUMN
                     flex_align_cross: CENTER
-                    pad_column: 6
+                    pad_row: 1
                   widgets:
                     - label:
                         text: "\U000F034E"   # map-marker
@@ -2249,19 +2252,20 @@ lvgl:
                         text_font: mono16
             on_click:
               - lambda: |-
-                  sat::settings_tab(1, id(pnl_display), id(pnl_location), id(pnl_celestial), id(tab_display), id(tab_location), id(tab_celestial));
+                  sat::settings_tab(1, id(pnl_display), id(pnl_location), id(pnl_celestial), id(pnl_satellites), id(tab_display), id(tab_location), id(tab_celestial), id(tab_satellites));
               - lvgl.widget.hide: settings_kb
         - button:
             id: tab_celestial
-            x: 324
+            x: 242
             y: 52
-            width: 148
-            height: 40
+            width: 115
+            height: 58
             bg_color: 0x1A2547
             shadow_width: 0
             radius: 8
+            pad_all: 0
             widgets:
-              - obj:                   # icon + text, centred together
+              - obj:                   # icon over text, centred together
                   align: CENTER
                   width: SIZE_CONTENT
                   height: SIZE_CONTENT
@@ -2273,9 +2277,9 @@ lvgl:
                   scrollable: false
                   layout:
                     type: FLEX
-                    flex_flow: ROW
+                    flex_flow: COLUMN
                     flex_align_cross: CENTER
-                    pad_column: 6
+                    pad_row: 1
                   widgets:
                     - label:
                         text: "\U000F0594"   # weather-night
@@ -2285,14 +2289,51 @@ lvgl:
                         text_font: mono16
             on_click:
               - lambda: |-
-                  sat::settings_tab(2, id(pnl_display), id(pnl_location), id(pnl_celestial), id(tab_display), id(tab_location), id(tab_celestial));
+                  sat::settings_tab(2, id(pnl_display), id(pnl_location), id(pnl_celestial), id(pnl_satellites), id(tab_display), id(tab_location), id(tab_celestial), id(tab_satellites));
+              - lvgl.widget.hide: settings_kb
+        - button:
+            id: tab_satellites
+            x: 361
+            y: 52
+            width: 115
+            height: 58
+            bg_color: 0x1A2547
+            shadow_width: 0
+            radius: 8
+            pad_all: 0
+            widgets:
+              - obj:                   # icon over text, centred together
+                  align: CENTER
+                  width: SIZE_CONTENT
+                  height: SIZE_CONTENT
+                  bg_opa: TRANSP
+                  text_color: 0xFFFFFF
+                  border_width: 0
+                  pad_all: 0
+                  clickable: false
+                  scrollable: false
+                  layout:
+                    type: FLEX
+                    flex_flow: COLUMN
+                    flex_align_cross: CENTER
+                    pad_row: 1
+                  widgets:
+                    - label:
+                        text: "\U000F0471"   # satellite-variant
+                        text_font: mdi_card20
+                    - label:
+                        text: "Satellites"
+                        text_font: mono16
+            on_click:
+              - lambda: |-
+                  sat::settings_tab(3, id(pnl_display), id(pnl_location), id(pnl_celestial), id(pnl_satellites), id(tab_display), id(tab_location), id(tab_celestial), id(tab_satellites));
               - lvgl.widget.hide: settings_kb
         - obj:
             id: pnl_display
             x: 0
-            y: 100
+            y: 118
             width: 480
-            height: 340
+            height: 322
             bg_opa: TRANSP
             text_color: 0xC9D3F2   # obj containers take the theme text colour (dark grey) otherwise
             border_width: 0
@@ -2478,9 +2519,9 @@ lvgl:
         - obj:
             id: pnl_location
             x: 0
-            y: 100
+            y: 118
             width: 480
-            height: 340
+            height: 322
             bg_opa: TRANSP
             text_color: 0xC9D3F2   # obj containers take the theme text colour (dark grey) otherwise
             border_width: 0
@@ -2914,9 +2955,151 @@ lvgl:
         - obj:
             id: pnl_celestial
             x: 0
-            y: 100
+            y: 118
             width: 480
-            height: 380
+            height: 322
+            bg_opa: TRANSP
+            text_color: 0xC9D3F2   # obj containers take the theme text colour (dark grey) otherwise
+            border_width: 0
+            radius: 0
+            pad_all: 0
+            scrollable: false
+            clickable: false
+            hidden: true
+            widgets:
+              - label:                 # UI-40 (its Saturn picture is added from C++)
+                  id: lbl_planets
+                  x: 16
+                  y: 64
+                  text: "Planets"
+                  text_font: mono16
+              - switch:
+                  id: sw_planets
+                  x: 150
+                  y: 58
+                  width: 56
+                  height: 28
+              - label:                 # UI-41a: alert switches (4.5.6), right column
+                  x: 246
+                  y: 64
+                  text: "Aurora alert"
+                  text_font: mono16
+              - label:
+                  x: 372
+                  y: 62
+                  text: "\U000F1BB9"   # aurora
+                  text_font: mdi_card20
+                  text_color: 0x7EE0B0
+              - switch:
+                  id: sw_aur_alerts
+                  x: 400
+                  y: 58
+                  width: 56
+                  height: 28
+              - label:                 # UI-47..51 sky event alerts (4.5.15), left column
+                  x: 16
+                  y: 108
+                  text: "Sky events"
+                  text_font: mono16
+              - label:
+                  x: 122
+                  y: 106
+                  text: "\U000F0594"   # weather-night
+                  text_font: mdi_card20
+                  text_color: 0xA8D8FF
+              - switch:
+                  id: sw_sky_alerts
+                  x: 150
+                  y: 102
+                  width: 56
+                  height: 28
+              - label:                 # its alignment picture is added from C++
+                  x: 246
+                  y: 108
+                  text: "Planet alert"
+                  text_font: mono16
+              - switch:
+                  id: sw_pl_alerts
+                  x: 400
+                  y: 102
+                  width: 56
+                  height: 28
+              - label:                 # UI-64 Milky Way (left) | UI-63 Comets (right), 4.5.24
+                  x: 16
+                  y: 152
+                  text: "Milky Way"
+                  text_font: mono16
+              - label:
+                  x: 122
+                  y: 150
+                  text: "\U000F00B8"   # blur-radial
+                  text_font: mdi_card20
+                  text_color: 0xB4C4F0
+              - switch:
+                  id: sw_milky_way
+                  x: 150
+                  y: 146
+                  width: 56
+                  height: 28
+              - label:
+                  x: 246
+                  y: 152
+                  text: "Comets"
+                  text_font: mono16
+              - label:
+                  x: 372
+                  y: 150
+                  text: "\U000F0629"   # meteor
+                  text_font: mdi_card20
+                  text_color: 0xA8F0E0
+              - switch:
+                  id: sw_comets
+                  x: 400
+                  y: 146
+                  width: 56
+                  height: 28
+              - label:
+                  id: ico_stars
+                  x: 122
+                  y: 18
+                  text: "\U000F0AE2"   # star-four-points
+                  text_font: mdi_card20
+                  text_color: 0xFFF1B8
+              - label:
+                  id: ico_dusk
+                  x: 372
+                  y: 18
+                  text: "\U000F059B"   # weather-sunset-down
+                  text_font: mdi_card20
+                  text_color: 0xF2A65A
+              - label:
+                  x: 16
+                  y: 20
+                  text: "Stars"
+                  text_font: mono16
+              - switch:
+                  id: sw_stars
+                  x: 150
+                  y: 14
+                  width: 56
+                  height: 28
+              - label:
+                  x: 250
+                  y: 20
+                  text: "After dusk"
+                  text_font: mono16
+              - switch:
+                  id: sw_dusk
+                  x: 400
+                  y: 14
+                  width: 56
+                  height: 28
+        - obj:
+            id: pnl_satellites
+            x: 0
+            y: 118
+            width: 480
+            height: 322
             bg_opa: TRANSP
             text_color: 0xC9D3F2   # obj containers take the theme text colour (dark grey) otherwise
             border_width: 0
@@ -2931,97 +3114,6 @@ lvgl:
                   y: 14
                   text: "LEO cone"
                   text_font: mono16
-              - label:                 # UI-40 (its Saturn picture is added from C++)
-                  id: lbl_planets
-                  x: 16
-                  y: 246
-                  text: "Planets"
-                  text_font: mono16
-              - switch:
-                  id: sw_planets
-                  x: 150
-                  y: 240
-                  width: 56
-                  height: 28
-              - label:                 # UI-41a: alert switches (4.5.6), right column
-                  x: 246
-                  y: 246
-                  text: "Aurora alert"
-                  text_font: mono16
-              - label:
-                  x: 372
-                  y: 244
-                  text: "\U000F1BB9"   # aurora
-                  text_font: mdi_card20
-                  text_color: 0x7EE0B0
-              - switch:
-                  id: sw_aur_alerts
-                  x: 400
-                  y: 240
-                  width: 56
-                  height: 28
-              - label:                 # UI-47..51 sky event alerts (4.5.15), left column
-                  x: 16
-                  y: 290
-                  text: "Sky events"
-                  text_font: mono16
-              - label:
-                  x: 122
-                  y: 288
-                  text: "\U000F0594"   # weather-night
-                  text_font: mdi_card20
-                  text_color: 0xA8D8FF
-              - switch:
-                  id: sw_sky_alerts
-                  x: 150
-                  y: 284
-                  width: 56
-                  height: 28
-              - label:                 # its alignment picture is added from C++
-                  x: 246
-                  y: 290
-                  text: "Planet alert"
-                  text_font: mono16
-              - switch:
-                  id: sw_pl_alerts
-                  x: 400
-                  y: 284
-                  width: 56
-                  height: 28
-              - label:                 # UI-64 Milky Way (left) | UI-63 Comets (right), 4.5.24
-                  x: 16
-                  y: 334
-                  text: "Milky Way"
-                  text_font: mono16
-              - label:
-                  x: 122
-                  y: 332
-                  text: "\U000F00B8"   # blur-radial
-                  text_font: mdi_card20
-                  text_color: 0xB4C4F0
-              - switch:
-                  id: sw_milky_way
-                  x: 150
-                  y: 328
-                  width: 56
-                  height: 28
-              - label:
-                  x: 246
-                  y: 334
-                  text: "Comets"
-                  text_font: mono16
-              - label:
-                  x: 372
-                  y: 332
-                  text: "\U000F0629"   # meteor
-                  text_font: mdi_card20
-                  text_color: 0xA8F0E0
-              - switch:
-                  id: sw_comets
-                  x: 400
-                  y: 328
-                  width: 56
-                  height: 28
               - slider:
                   id: sl_cone
                   x: 150
@@ -3091,20 +3183,6 @@ lvgl:
                   text: "\U000F1741"   # star-shooting
                   text_font: mdi_card20
                   text_color: 0x9FB2EA
-              - label:
-                  id: ico_stars
-                  x: 122
-                  y: 200
-                  text: "\U000F0AE2"   # star-four-points
-                  text_font: mdi_card20
-                  text_color: 0xFFF1B8
-              - label:
-                  id: ico_dusk
-                  x: 372
-                  y: 200
-                  text: "\U000F059B"   # weather-sunset-down
-                  text_font: mdi_card20
-                  text_color: 0xF2A65A
               - label:
                   x: 16
                   y: 70
@@ -3183,28 +3261,6 @@ lvgl:
                   id: sw_trails
                   x: 400
                   y: 152
-                  width: 56
-                  height: 28
-              - label:
-                  x: 16
-                  y: 202
-                  text: "Stars"
-                  text_font: mono16
-              - switch:
-                  id: sw_stars
-                  x: 150
-                  y: 196
-                  width: 56
-                  height: 28
-              - label:
-                  x: 250
-                  y: 202
-                  text: "After dusk"
-                  text_font: mono16
-              - switch:
-                  id: sw_dusk
-                  x: 400
-                  y: 196
                   width: 56
                   height: 28
         - button:                # UI-67: About (version, device, credits), lower right

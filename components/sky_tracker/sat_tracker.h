@@ -6421,9 +6421,11 @@ inline void cone_label(lv_obj_t *lbl, int v) {
 }
 // UI-16a: settings tabs. which 0 = Display, 1 = Location, 2 = Celestial
 constexpr uint32_t C_TAB_ON = 0x2D5BD0, C_TAB_OFF = 0x1A2547;
-inline void settings_tab(int which, lv_obj_t *p0, lv_obj_t *p1, lv_obj_t *p2, lv_obj_t *t0, lv_obj_t *t1, lv_obj_t *t2) {
-  lv_obj_t *const P[3] = {p0, p1, p2}, *const T[3] = {t0, t1, t2};
-  for (int k = 0; k < 3; k++) {
+// UI-16a: four tabs (Display, Location, Celestial, Satellites), each a panel; one shown
+inline void settings_tab(int which, lv_obj_t *p0, lv_obj_t *p1, lv_obj_t *p2, lv_obj_t *p3, lv_obj_t *t0, lv_obj_t *t1,
+                         lv_obj_t *t2, lv_obj_t *t3) {
+  lv_obj_t *const P[4] = {p0, p1, p2, p3}, *const T[4] = {t0, t1, t2, t3};
+  for (int k = 0; k < 4; k++) {
     if (k == which)
       lv_obj_remove_flag(P[k], LV_OBJ_FLAG_HIDDEN);
     else
