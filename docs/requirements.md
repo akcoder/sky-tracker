@@ -1,7 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.17 (installed): the launch and undocking smoke is one full-screen object that draws its discs itself (UI-69i), instead of ~40 objects resized and moved each frame. 4.6.16's log: 4.6 fps, ~4.7 ms per lv_obj_set_size and ~4.8 ms per set_pos even with the 32 KB cache; a changed disc now only invalidates its old and new areas.
+- 4.6.18 (installed): fixes a boot loop. The rocket and capsule pictures are drawn at boot (~5 s, 4x4 supersampled, code from PSRAM) without feeding the task watchdog; the device reset 13 s into every boot, so 4.6.17 never got past setup (display dark, safe mode). The drawing loops now feed it each row (FAIL-11).
+- 4.6.17 (boot loop, withdrawn): the launch and undocking smoke is one full-screen object that draws its discs itself (UI-69i), instead of ~40 objects resized and moved each frame. 4.6.16's log: 4.6 fps, ~4.7 ms per lv_obj_set_size and ~4.8 ms per set_pos even with the 32 KB cache; a changed disc now only invalidates its old and new areas.
 - 4.6.16: 32 KB instruction cache (PERF-13). 4.6.15's probes: a cache-resident CPU loop ran at the same speed during the launch animation as before it (5.4 ms), but a PSRAM read cost ~0.7-1 us per cache line and one smoke update's lv_obj_set_size ~5 ms: LVGL's code, run from PSRAM (PERF-10), keeps missing the 16 KB instruction cache while the panel scanout holds the bus.
 - 4.6.15: the planet picture is always the photo (Photo | Drawn removed; the drawing stays only as a fallback with no photo); a "Tonight's phase" switch at the lower right of Mercury, Venus and Mars turns the phase shading on or off (UI-61g). Alert icons are centred on the first line of their text, measured from the fonts' glyphs (UI-41c; they sat 2 px above the text box, high on some glyphs and low on others). 4.6.14's profile: frame() ~126 ms a call, ~12 ms per smoke update; the log now splits a smoke update into its LVGL calls and times a fixed CPU loop and a PSRAM read before and during the animation (UI-69h), to tell a slow LVGL path from a starved core or PSRAM bus. The rocket's angle is only set again after 1.5 degrees.
 - 4.6.14 (installed): 4.6.13's frame profile of the launch animation: 3.7 fps; per frame the animation's own code took 95 ms (max 334), the refresh 87 ms more (flush only 5 ms), and the rest of the loop 97 ms, which includes the 40 ms fallback timer running the animation again. The profile now splits frame() into the rocket image, the puffs and the ground cloud and counts smoke updates and fallback frames; the fallback waits 150 ms; hidden smoke discs start at size 0 off screen (LVGL's default square at 0,0 was redrawn every time one was hidden again, over the title and alert text) and are not hidden twice.
@@ -1277,6 +1278,10 @@ FAIL-9 Anything that walks a heap (heap_caps_get_largest_free_block,
        bounce-buffer ISR misses its deadline and the picture glitches or shifts.
        MUST NOT be called at runtime; heap_caps_get_free_size() is a counter read and
        is fine.
+FAIL-11 Any loop that runs during setup for more than a moment (marker pools, the launch
+       animation's rocket and capsule pictures) MUST call ui_feed_wdt() as it goes. Setup runs
+       in the loop task; past the task watchdog's limit the device resets before the display
+       comes up, every boot.
 FAIL-10 Crash capture (sky_diag.h): ESPHome's crash handler keeps the last panic in
        no-init RAM, logs it at boot and to the first API client, then clears it. At
        on_boot 600 (before the API) the record is replayed through a logger callback,

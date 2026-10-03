@@ -201,6 +201,7 @@ inline lv_draw_buf_t *draw_rocket(const Flame &flame) {
     return nullptr;
   const uint32_t stride = db->header.stride;
   for (int py = 0; py < IH; py++) {
+    ui_feed_wdt();  // FAIL-11: drawn at boot, seconds from PSRAM code; keep the task watchdog fed
     uint8_t *row = (uint8_t *) db->data + (size_t) py * stride;
     for (int px = 0; px < IW; px++) {
       uint32_t r = 0, g = 0, b = 0, a = 0;
@@ -480,6 +481,7 @@ inline lv_draw_buf_t *draw_capsule() {
   if (db == nullptr)
     return nullptr;
   for (int py = 0; py < CAP_H; py++) {
+    ui_feed_wdt();  // FAIL-11: drawn at boot, seconds from PSRAM code; keep the task watchdog fed
     uint8_t *row = (uint8_t *) db->data + (size_t) py * db->header.stride;
     for (int px = 0; px < CAP_W; px++) {
       uint32_t r = 0, g = 0, b = 0, a = 0;
