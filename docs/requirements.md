@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.15 (installed): the planet picture is always the photo (Photo | Drawn removed; the drawing stays only as a fallback with no photo); a "Tonight's phase" switch at the lower right of Mercury, Venus and Mars turns the phase shading on or off (UI-61g). Alert icons are centred on the first line of their text, measured from the fonts' glyphs (UI-41c; they sat 2 px above the text box, high on some glyphs and low on others). 4.6.14's profile: frame() ~126 ms a call, ~12 ms per smoke update; the log now splits a smoke update into its LVGL calls and times a fixed CPU loop and a PSRAM read before and during the animation (UI-69h), to tell a slow LVGL path from a starved core or PSRAM bus. The rocket's angle is only set again after 1.5 degrees.
 - 4.6.14 (installed): 4.6.13's frame profile of the launch animation: 3.7 fps; per frame the animation's own code took 95 ms (max 334), the refresh 87 ms more (flush only 5 ms), and the rest of the loop 97 ms, which includes the 40 ms fallback timer running the animation again. The profile now splits frame() into the rocket image, the puffs and the ground cloud and counts smoke updates and fallback frames; the fallback waits 150 ms; hidden smoke discs start at size 0 off screen (LVGL's default square at 0,0 was redrawn every time one was hidden again, over the title and alert text) and are not hidden twice.
 - 4.6.13 (installed): planet photos with a phase (Venus as a crescent) no longer show a thin unlit arc around the dark side: the photo's soft rim reached past the disc the shading found, and was left bright (UI-61f). The Wi-Fi status page names the network it is trying (saved in flash, NET-2c; the public build showed its placeholder "your Wi-Fi network"). ISS undocking animation (UI-69f) and a Play Undocking Animation button. Each animation now logs where a frame's time goes (UI-69g): the opaque smoke of 4.6.12 did not help, still 3.4-3.6 fps, and the same with the Milky Way and stars switched off, so the map is not the cost. A long mission name in the animation banner wrapped to two lines and spilled over the border: the banner now grows upward to hold two lines (dots after that).
 - 4.6.12 (released): the unit's own frame log on 4.6.11 showed 3-5 fps during the launch animation (longest gap 600+ ms), worst while the ground cloud shows: translucent smoke makes LVGL blend against the PSRAM side (PERF-9). Smoke is now opaque discs, their colour pre-mixed with the background under each one (UI-69e); the soft smoke images of 4.6.11 are gone.
@@ -625,6 +626,9 @@ UI-41  Status-line alerts, when the status line would be all-is-well or empty
        below the status line's position; icons 2 px above the text. Alignment
        alerts show only within 3 days of the event (ALIGN_ALERT_S); the scan
        still looks 60 days ahead.
+UI-41c Alert icon placement: after the text is set, the icon (glyph or picture) is placed so
+       its ink is centred on the first line's cap band (top of 'H' to the baseline), from the
+       fonts' glyph metrics (lv_font_get_glyph_dsc), for one- and two-line alerts alike.
 UI-41b Solstices and equinoxes (next_season: the Sun's apparent ecliptic longitude at a
        multiple of 90°, low-precision Sun and Newton steps; within 15 min of USNO) in the
        alert rotation from 3 days before until the end of that local day, Sun glyph in
@@ -829,10 +833,12 @@ UI-61f Photo phase shading covers the whole image: pixels outside the disc found
        brightness threshold are shaded as the limb in their direction (unit vector, no depth),
        so the photo's soft edge and glow on the night side go dark with it; the lit side keeps
        its glow.
-UI-61b Photo | Drawn: two 128x32 buttons at 108,442 / 244,442 (as Globe | region), the one
-       showing navy with orange text; one caption line above (the planet's facts). The
-       choice (sat::planet_drawn) holds for every planet until changed; Drawn fetches
-       nothing.
+UI-61b (removed in 4.6.15: Photo | Drawn buttons; see UI-61g.)
+UI-61g "Tonight's phase": an LVGL switch (56x28, theme look as on the settings page) at
+       408,442 with its label to the left, on Mercury, Venus and Mars only; on (default) the
+       photo is shaded for tonight's phase (UI-61a/f), off it shows the whole lit disc. Kept
+       between opens (sat::planet_phase), redrawn at once. The drawn planet (UI-61) is shown
+       only when no photo can be had.
 UI-62  The Earth: NOAA STAR CDN GOES18 or GOES19 ABI/FD/GEOCOLOR/678x678.jpg (~450 KB,
        every 10 min), the satellite nearer the observer's longitude (137.0 W / 75.2 W).
        The Last-Modified header dates it; an unchanged frame is dropped after the headers.
@@ -977,6 +983,9 @@ UI-69b While the launch animation plays, sat::tick() returns at once (no propaga
 UI-69c Flame flicker: FLAMES = 5 pre-drawn flames (length 0.8..1.3, width 0.92..1.10, tip
        lean -0.06..+0.05 body widths; outer orange, inner yellow, white core), shown in the
        irregular FLAME_SEQ order, one every 45 ms.
+UI-69h Load probes in the animation log: a 100,000-step integer loop and a 64 KB PSRAM read
+       (one byte per cache line), timed before the animation and 2 s into it; and each smoke
+       update's LVGL calls (size, position, colour, show) averaged.
 UI-41a Switches Aurora Alerts (mdi:aurora), Planet Alerts (mdi:orbit) and Sky Event Alerts
        (mdi:weather-night; UI-41b, UI-47..51, 4.5.15), default on,
        in the Celestial settings tab (with the aurora glyph and alignment picture)
