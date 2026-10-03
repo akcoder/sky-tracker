@@ -1,0 +1,8 @@
+deps/
+build/
+out/
+t4
+fixtures/
+*.ppm
+*.raw
+*.gif

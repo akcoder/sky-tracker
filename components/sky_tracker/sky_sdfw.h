@@ -321,7 +321,7 @@ inline Ui sui;
 #ifdef SAT_HOST_TEST
 inline int host_restarts = 0;
 inline void restart() { host_restarts++; }
-inline uint32_t ms() { return (uint32_t) (sat_host_now * 1000.0); }
+inline uint32_t ms() { return (uint32_t) (uint64_t) (sat_host_now * 1000.0); }  // wraps as on the device (a plain cast saturates on ARM64)
 #else
 inline void restart() { esphome::App.safe_reboot(); }
 inline uint32_t ms() { return esphome::millis(); }

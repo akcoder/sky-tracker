@@ -57,7 +57,7 @@ inline bool has_prog() { return host.has_progress; }
 inline float prog() { return host.progress; }
 inline void do_check() { host.checks++; }
 inline void do_perform() { host.performs++; }
-inline uint32_t now_ms() { return (uint32_t) (sat_host_now * 1000.0); }
+inline uint32_t now_ms() { return (uint32_t) (uint64_t) (sat_host_now * 1000.0); }  // wraps as on the device (a plain cast saturates on ARM64)
 #else
 inline esphome::update::UpdateEntity *ent = nullptr;
 inline int st() { return ent ? (int) ent->state : 0; }

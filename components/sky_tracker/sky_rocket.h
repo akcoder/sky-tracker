@@ -145,8 +145,8 @@ struct St {
 inline St st;
 
 #ifdef SAT_HOST_TEST
-inline uint32_t now_ms() { return (uint32_t) (sat_host_now * 1000.0); }
-inline uint32_t now_us() { return (uint32_t) (sat_host_now * 1e6); }
+inline uint32_t now_ms() { return (uint32_t) (uint64_t) (sat_host_now * 1000.0); }  // wraps as on the device (a plain cast saturates on ARM64)
+inline uint32_t now_us() { return (uint32_t) (uint64_t) (sat_host_now * 1e6); }  // wraps as on the device (a plain cast saturates on ARM64)
 #else
 inline uint32_t now_ms() { return esphome::millis(); }
 inline uint32_t now_us() { return esphome::micros(); }
