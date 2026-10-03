@@ -8,6 +8,11 @@
 // init into FLAMES small ARGB8888 buffers (flames of different length, width and lean, swapped
 // in an irregular order for the flicker, UI-69c) and shown
 // with an lv_image rotated along the path; the smoke is round lv_objs drawn OPAQUE (UI-69e).
+// UI-69f undocking animation: when a Launch Library event "Spacecraft Undocking" at the ISS
+// reaches its time, the station is drawn in the middle of the map (opaque shapes: truss, solar
+// arrays, radiators, modules) with a capsule at its forward port; the capsule lets go with a
+// burst of thruster puffs and backs away off the top of the screen, about 6 s. Same banner,
+// tap to skip, switch and frame log as the launch; the Play Undocking Animation button shows it.
 // Compiled in sky_extra.cpp (SKY_IMPL), as sky_about.h.
 #include <cstdint>
 
@@ -17,6 +22,7 @@ namespace rocket {
 void init(const lv_font_t *banner);
 void set_enabled(bool on);
 void play_now();  // the button: the next launch's name (or a generic one)
+void play_undock_now();  // UI-69f button: the next ISS undocking's name (or a generic one)
 bool active();    // playing now (sat::tick pauses, UI-69b)
 }  // namespace rocket
 }  // namespace sat
@@ -64,6 +70,29 @@ constexpr PadBillow PAD_BILLOWS[] = {
     {-68, 4, 15, 135, 0xD2D4DC},  {68, 4, 15, 135, 0xD2D4DC},  {0, -26, 15, 120, 0xE8DCD0},
 };
 constexpr float PAD_STEP = 0.025f, PAD_PHASE = 0.004f, PAD_END = 0.7f;
+// UI-69f the ISS, seen from above (opaque rectangles, x y w h colour, border colour or 0)
+struct Part {
+  int16_t x, y, w, h;
+  uint32_t col, edge;
+};
+constexpr uint32_t C_ARRAY = 0xA87632, C_ARRAY_EDGE = 0x6E4C1E, C_MOD = 0xE6E9EF;
+constexpr Part ISS_SHAPE[] = {
+    {110, 244, 260, 6, 0xA9ADB5, 0},                                          // truss
+    {121, 186, 22, 56, C_ARRAY, C_ARRAY_EDGE}, {149, 186, 22, 56, C_ARRAY, C_ARRAY_EDGE},  // arrays above
+    {309, 186, 22, 56, C_ARRAY, C_ARRAY_EDGE}, {337, 186, 22, 56, C_ARRAY, C_ARRAY_EDGE},
+    {121, 252, 22, 56, C_ARRAY, C_ARRAY_EDGE}, {149, 252, 22, 56, C_ARRAY, C_ARRAY_EDGE},  // and below
+    {309, 252, 22, 56, C_ARRAY, C_ARRAY_EDGE}, {337, 252, 22, 56, C_ARRAY, C_ARRAY_EDGE},
+    {198, 254, 14, 36, 0xF0F2F5, 0xC0C4CC},   {268, 254, 14, 36, 0xF0F2F5, 0xC0C4CC},     // radiators
+    {233, 176, 14, 150, C_MOD, 0xB8BCC6},                                     // modules, fore to aft
+    {226, 192, 28, 16, 0xDCE0E8, 0xB8BCC6},   {226, 272, 28, 16, 0xDCE0E8, 0xB8BCC6},     // nodes
+    {231, 326, 18, 36, 0xD8DCE4, 0xB0B4BE},                                   // Russian segment
+    {186, 340, 44, 8, 0x3C4F86, 0x26335A},    {250, 340, 44, 8, 0x3C4F86, 0x26335A},      // its arrays
+};
+constexpr int ISS_PARTS = sizeof(ISS_SHAPE) / sizeof(ISS_SHAPE[0]);
+constexpr int CAP_W = 26, CAP_H = 40;       // capsule image; its nose (bottom) docks at PORT
+constexpr int PORT_X = 240, PORT_Y = 176;   // the forward port, top of the module stack
+constexpr float UNDOCK_S = 6.0f;            // the scene's length
+constexpr float UNDOCK_GO = 1.0f;           // docked until then, then the hooks let go
 constexpr double LATE_S = 120;       // a launch is "now" for 2 min after T-0 (refresh lag)
 
 struct St {
@@ -83,14 +112,28 @@ struct St {
   lv_timer_t *anim = nullptr;  // fallback driver; frames normally come from the display refresh
   uint32_t last_frame = 0;
   uint32_t frames = 0, max_gap = 0, last_refr = 0;  // UI-69a: logged when it ends
+  // UI-69g: where each frame's time goes (microseconds), logged when it ends
+  struct Prof {
+    uint32_t start = 0, ready = 0, flush_t0 = 0;  // this frame's refresh start, the last one's end
+    uint32_t anim = 0, render = 0, flush = 0, idle = 0;          // sums
+    uint32_t anim_max = 0, render_max = 0, flush_max = 0, idle_max = 0;
+    uint32_t flush_now = 0, chunks = 0, px = 0, px_max = 0, px_now = 0, n = 0;
+  } prof;
   uint32_t played_key = 0;  // the last launch shown (name + T-0)
+  // UI-69f
+  bool undock = false;      // the scene playing: false launch, true undocking
+  lv_draw_buf_t *capsule_buf = nullptr;
+  lv_obj_t *iss[ISS_PARTS] = {};
+  uint32_t undock_key = 0;  // the last undocking shown
 };
 inline St st;
 
 #ifdef SAT_HOST_TEST
 inline uint32_t now_ms() { return (uint32_t) (sat_host_now * 1000.0); }
+inline uint32_t now_us() { return (uint32_t) (sat_host_now * 1e6); }
 #else
 inline uint32_t now_ms() { return esphome::millis(); }
+inline uint32_t now_us() { return esphome::micros(); }
 #endif
 
 inline uint32_t key_of(const char *name, double net) {
@@ -197,12 +240,24 @@ inline void smoke_at(lv_obj_t *o, int x, int y, int r, int a, uint32_t col) {
 }
 
 inline void on_refr(lv_event_t *);
+inline void on_prof(lv_event_t *);
 inline void stop() {
   if (st.anim && st.frames > 1)
     ESP_LOGI("rocket", "animation: %u frames in %u ms (%.1f fps), longest gap %u ms", (unsigned) st.frames,
              (unsigned) (st.last_refr - st.t0), st.frames * 1000.0f / std::max<uint32_t>(1, st.last_refr - st.t0),
              (unsigned) st.max_gap);
+  if (st.anim && st.prof.n > 0) {
+    const auto &p = st.prof;
+    const uint32_t n = p.n;
+    ESP_LOGI("rocket", "per frame (avg/max ms): refresh %.1f/%.1f (flush %.1f/%.1f in %.1f chunks), "
+             "loop between refreshes %.1f/%.1f, animation code %.2f/%.2f; dirty %u/%u px",
+             p.render / 1000.0f / n, p.render_max / 1000.0f, p.flush / 1000.0f / n, p.flush_max / 1000.0f,
+             (float) p.chunks / n, p.idle / 1000.0f / n, p.idle_max / 1000.0f, p.anim / 1000.0f / n,
+             p.anim_max / 1000.0f, (unsigned) (p.px / n), (unsigned) p.px_max);
+  }
   if (st.anim) {
+    if (lv_display_t *d = lv_display_get_default())
+      lv_display_remove_event_cb_with_user_data(d, on_prof, nullptr);
     lv_timer_delete(st.anim);
     st.anim = nullptr;
     if (lv_display_t *d = lv_display_get_default())
@@ -224,13 +279,18 @@ inline void stop() {
       lv_obj_delete(o);
       o = nullptr;
     }
+  for (auto &o : st.iss)
+    if (o) {
+      lv_obj_delete(o);
+      o = nullptr;
+    }
   st.label = nullptr;
 }
 inline bool playing() { return st.anim != nullptr; }
 bool active() { return playing(); }
 
-inline void frame() {
-  st.last_frame = now_ms();
+inline void frame_undock();
+inline void frame_launch() {
   const float ts = (now_ms() - st.t0) / 1000.0f, u = ts / DUR_S;
   if (u > 1.25f) {  // the smoke has faded out
     stop();
@@ -300,6 +360,99 @@ inline void frame() {
   }
 }
 
+// UI-69f the capsule, nose down (toward the station): trunk with solar cells, heat shield,
+// white capsule tapering to the docking adapter. Drawn once, 4x4 supersampled.
+inline uint32_t capsule_sample(float x, float y) {
+  if (y < 12)
+    return (x >= 4 && x < 22) ? ((x < 13) ? 0xFF2A3148 : 0xFF3B4B7A) : 0;   // trunk, two cell tones
+  if (y < 15)
+    return (x >= 2 && x < 24) ? 0xFF3A3A3E : 0;                             // heat shield
+  if (y < 34) {
+    const float f = (y - 15) / 19.0f, l = 2 + 5 * f, r = 24 - 5 * f;          // tapering body
+    if (x < l || x >= r)
+      return 0;
+    const float wx = x - 13, wy = y - 22;
+    if (wy > -2 && wy < 2 && (std::fabs(wx - 4) < 1.6f || std::fabs(wx + 4) < 1.6f))
+      return 0xFF283250;                                                      // windows
+    return 0xFFEEF0F5;
+  }
+  return (y < CAP_H - 1 && x >= 10 && x < 16) ? 0xFFB0B4BC : 0;               // docking adapter
+}
+inline lv_draw_buf_t *draw_capsule() {
+  lv_draw_buf_t *db = lv_draw_buf_create(CAP_W, CAP_H, LV_COLOR_FORMAT_ARGB8888, 0);
+  if (db == nullptr)
+    return nullptr;
+  for (int py = 0; py < CAP_H; py++) {
+    uint8_t *row = (uint8_t *) db->data + (size_t) py * db->header.stride;
+    for (int px = 0; px < CAP_W; px++) {
+      uint32_t r = 0, g = 0, b = 0, a = 0;
+      for (int sy = 0; sy < 4; sy++)
+        for (int sx = 0; sx < 4; sx++) {
+          const uint32_t c = capsule_sample(px + (sx + 0.5f) / 4, py + (sy + 0.5f) / 4);
+          if (c) {
+            r += (c >> 16) & 255, g += (c >> 8) & 255, b += c & 255, a += 255;
+          }
+        }
+      const uint32_t n = a / 255;
+      row[px * 4 + 0] = n ? b / n : 0;
+      row[px * 4 + 1] = n ? g / n : 0;
+      row[px * 4 + 2] = n ? r / n : 0;
+      row[px * 4 + 3] = a / 16;
+    }
+  }
+  return db;
+}
+// capsule position (top-left of its image) at ts seconds into the scene
+inline void capsule_at(float ts, float &x, float &y) {
+  const float u = std::max(0.0f, ts - UNDOCK_GO);
+  x = PORT_X - CAP_W / 2 + 3.0f * u * u;            // drifts a little to the side
+  y = PORT_Y - CAP_H - (4.0f * u + 9.0f * u * u);   // backs away, gathering speed
+}
+inline void frame_undock() {
+  const float ts = (now_ms() - st.t0) / 1000.0f;
+  if (ts > UNDOCK_S) {
+    stop();
+    return;
+  }
+  float x, y;
+  capsule_at(ts, x, y);
+  lv_obj_set_pos(st.img, (int32_t) std::lround(x), (int32_t) std::lround(y));
+  // thruster puffs: a burst of four at separation, then a pair every half second for 2 s
+  auto emit = [&](float px, float py) {
+    const int i = st.puff_next++ % PUFFS;
+    st.puff_x[i] = px, st.puff_y[i] = py, st.puff_t[i] = ts, st.puff_step[i] = -1;
+  };
+  const int due = ts < UNDOCK_GO ? 0 : 1 + std::min(4, (int) ((ts - UNDOCK_GO) / 0.5f));
+  while (st.last_emit < due) {  // last_emit counts bursts here
+    st.last_emit += 1;
+    const float cy = y + CAP_H - 8;
+    emit(x - 2, cy), emit(x + CAP_W + 2, cy);
+    if (st.last_emit == 1)
+      emit(x + 4, y + CAP_H), emit(x + CAP_W - 4, y + CAP_H);
+  }
+  for (int i = 0; i < PUFFS && i < st.puff_next; i++) {
+    const int step = (int) ((ts - st.puff_t[i]) / 0.06f);
+    if (step == st.puff_step[i])
+      continue;
+    st.puff_step[i] = (int8_t) std::min(step, 127);
+    const float age = step * 0.06f;
+    const int a = (int) (220 - 340 * age);
+    if (a <= 60) {  // gone before it reads as a dark blot (opaque: it fades toward the sky colour)
+      lv_obj_add_flag(st.puff[i], LV_OBJ_FLAG_HIDDEN);
+      continue;
+    }
+    smoke_at(st.puff[i], (int) st.puff_x[i], (int) st.puff_y[i], (int) (3 + 9 * age), a, 0xF4F6FA);
+  }
+}
+
+inline void frame() {
+  st.last_frame = now_ms();
+  if (st.undock)
+    frame_undock();
+  else
+    frame_launch();
+}
+
 inline void on_refr(lv_event_t *) {
   if (!playing())
     return;
@@ -307,7 +460,48 @@ inline void on_refr(lv_event_t *) {
   if (st.frames++ > 0)
     st.max_gap = std::max(st.max_gap, t - st.last_refr);
   st.last_refr = t;
+  auto &p = st.prof;
+  const uint32_t a = now_us();
+  if (p.ready) {  // the gap since the last refresh ended: the rest of the main loop
+    const uint32_t idle = a - p.ready;
+    p.idle += idle, p.idle_max = std::max(p.idle_max, idle);
+  }
   frame();
+  const uint32_t b = now_us();
+  p.anim += b - a, p.anim_max = std::max(p.anim_max, b - a);
+  p.start = a;
+}
+// UI-69g: render, flush and dirty-area accounting while the animation plays
+inline void on_prof(lv_event_t *e) {
+  auto &p = st.prof;
+  const uint32_t t = now_us();
+  switch (lv_event_get_code(e)) {
+    case LV_EVENT_FLUSH_START:
+      p.flush_t0 = t;
+      p.chunks++;
+      break;
+    case LV_EVENT_FLUSH_FINISH:
+      p.flush_now += t - p.flush_t0;
+      break;
+    case LV_EVENT_INVALIDATE_AREA:
+      if (const lv_area_t *ar = (const lv_area_t *) lv_event_get_param(e))
+        p.px_now += (uint32_t) lv_area_get_size(ar);
+      break;
+    case LV_EVENT_REFR_READY:
+      if (p.start) {
+        const uint32_t r = t - p.start;
+        p.render += r, p.render_max = std::max(p.render_max, r);
+        p.flush += p.flush_now, p.flush_max = std::max(p.flush_max, p.flush_now);
+        p.px += p.px_now, p.px_max = std::max(p.px_max, p.px_now);
+        p.n++;
+        p.start = 0;
+      }
+      p.flush_now = 0, p.px_now = 0;
+      p.ready = t;
+      break;
+    default:
+      break;
+  }
 }
 
 // "Falcon 9 | Starlink Group 12-5" -> "Falcon 9 · Starlink Group 12-5"
@@ -324,23 +518,43 @@ inline void banner_text(const char *name, char *b, size_t n) {
   b[k] = 0;
 }
 
-inline void play(const char *name) {
+inline void play_scene(bool undock, const char *name) {
   stop();
-  if (!st.img_buf[0])
+  if (!st.img_buf[0] || (undock && !st.capsule_buf))
     return;
+  st.undock = undock;
   // a transparent full-screen layer: any tap skips
   st.catcher = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(st.catcher);
   lv_obj_set_size(st.catcher, 480, 480);
   lv_obj_add_flag(st.catcher, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(st.catcher, [](lv_event_t *) { stop(); }, LV_EVENT_CLICKED, nullptr);
-  for (int k = 0; k < PADS; k++)
-    st.pad[k] = blob();
+  if (undock) {
+    for (int k = 0; k < ISS_PARTS; k++) {
+      const Part &q = ISS_SHAPE[k];
+      lv_obj_t *o = lv_obj_create(lv_layer_top());
+      lv_obj_remove_style_all(o);
+      lv_obj_set_pos(o, q.x, q.y);
+      lv_obj_set_size(o, q.w, q.h);
+      lv_obj_set_style_bg_color(o, lv_color_hex(q.col), 0);
+      lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+      if (q.edge) {
+        lv_obj_set_style_border_color(o, lv_color_hex(q.edge), 0);
+        lv_obj_set_style_border_width(o, 1, 0);
+      }
+      lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
+      st.iss[k] = o;
+    }
+  } else {
+    for (int k = 0; k < PADS; k++)
+      st.pad[k] = blob();
+  }
   for (auto &o : st.puff)
     o = blob();
   st.img = lv_image_create(lv_layer_top());
-  lv_image_set_src(st.img, st.img_buf[0]);
-  lv_image_set_pivot(st.img, PX, PY);
+  lv_image_set_src(st.img, undock ? st.capsule_buf : st.img_buf[0]);
+  if (!undock)
+    lv_image_set_pivot(st.img, PX, PY);
   lv_obj_remove_flag(st.img, LV_OBJ_FLAG_CLICKABLE);
   // the banner: the mission, centred both ways in its box
   st.banner = lv_obj_create(lv_layer_top());
@@ -361,7 +575,7 @@ inline void play(const char *name) {
   lv_label_set_long_mode(st.label, LV_LABEL_LONG_MODE_DOTS);
   lv_obj_set_style_text_align(st.label, LV_TEXT_ALIGN_CENTER, 0);
   char b[96];
-  banner_text(name && *name ? name : "Rocket launch", b, sizeof(b));
+  banner_text(name && *name ? name : undock ? "Undocking from the ISS" : "Rocket launch", b, sizeof(b));
   lv_label_set_text(st.label, b);
   // the label box is ascent + descent tall; caps and digits sit in the top part of it, so
   // centring the box leaves the text high. Drop it by a third of the descent.
@@ -370,15 +584,19 @@ inline void play(const char *name) {
   st.t0 = now_ms();
   st.puff_next = 0;
   st.frames = st.max_gap = 0;
-  st.last_emit = -1;
+  st.last_emit = undock ? 0 : -1;  // undocking: counts thruster bursts
   for (auto &p : st.pad_step)
     p = -1;
   // Move everything at the start of each display refresh, from the clock at that moment, so
   // every frame drawn shows a fresh position (a separate 33 ms timer beat against the 16 ms
   // refresh and dropped or doubled steps). The objects it moves re-arm the next refresh. The
   // timer only covers a stretch where nothing moved and no refresh came.
-  if (lv_display_t *d = lv_display_get_default())
+  st.prof = St::Prof();
+  if (lv_display_t *d = lv_display_get_default()) {
     lv_display_add_event_cb(d, on_refr, LV_EVENT_REFR_START, nullptr);
+    for (lv_event_code_t c : {LV_EVENT_REFR_READY, LV_EVENT_FLUSH_START, LV_EVENT_FLUSH_FINISH, LV_EVENT_INVALIDATE_AREA})
+      lv_display_add_event_cb(d, on_prof, c, nullptr);
+  }
   st.anim = lv_timer_create(
       [](lv_timer_t *) {
         if (now_ms() - st.last_frame >= 40)
@@ -386,8 +604,9 @@ inline void play(const char *name) {
       },
       40, nullptr);
   frame();
-  ESP_LOGI("rocket", "launch animation: %s", b);
+  ESP_LOGI("rocket", "%s animation: %s", undock ? "undocking" : "launch", b);
 }
+inline void play(const char *name) { play_scene(false, name); }
 
 // every second: a launch at T-0 that has not been shown
 inline void check() {
@@ -406,18 +625,38 @@ inline void check() {
     play(l.name);
     return;
   }
+  for (const auto &e : live.events) {  // UI-69f
+    if (!e.iss || !e.exact || !strstr(e.type, "Undocking") || e.t > t || t - e.t > LATE_S)
+      continue;
+    const uint32_t k = key_of(e.name, e.t);
+    if (k == st.undock_key)
+      continue;
+    st.undock_key = k;
+    play_scene(true, e.name);
+    return;
+  }
 }
 
 void init(const lv_font_t *banner) {
   st.font = banner;
   for (int i = 0; i < FLAMES; i++)
     st.img_buf[i] = draw_rocket(FLAME[i]);
+  st.capsule_buf = draw_capsule();
   lv_timer_create([](lv_timer_t *) { check(); }, 1000, nullptr);
 }
 void set_enabled(bool on) {
   st.enabled = on;
   if (!on)
     stop();
+}
+void play_undock_now() {
+  const double t = clock_valid() ? clock_now() : 0;
+  for (const auto &e : live.events)
+    if (e.iss && strstr(e.type, "Undocking") && e.t > t - LATE_S) {
+      play_scene(true, e.name);
+      return;
+    }
+  play_scene(true, "Undocking from the ISS");
 }
 void play_now() {
   const double t = clock_valid() ? clock_now() : 0;
