@@ -313,12 +313,21 @@ inline void shade_photo(const View &v, uint16_t *buf, int W, int H, bool phase) 
       uint16_t &p = buf[y * W + x];
       float r = (p >> 11) << 3, g = ((p >> 5) & 63) << 2, b = (p & 31) << 3;
       if (shade) {
-        const float E = -(x + 0.5f - cx) / R, N = (cy - (y + 0.5f)) / R, rr = E * E + N * N;
-        if (rr <= 1.0f) {
-          const float nz = sqrtf(1 - rr), lam = E * sE + N * sN + nz * ci;
-          const float k = lam <= 0 ? 0.03f : 0.03f + 0.97f * powf(std::min(1.0f, lam * 1.4f), 0.45f);
-          r *= k, g *= k, b *= k;
+        float E = -(x + 0.5f - cx) / R, N = (cy - (y + 0.5f)) / R;
+        const float rr = E * E + N * N;
+        // UI-61f: the photo's soft rim and glow reach past the disc found by the threshold;
+        // outside it, shade as at the limb in that direction, so no unlit ring (a "halo") is
+        // left around the dark side
+        float nz = 0;
+        if (rr > 1.0f) {
+          const float n = 1.0f / sqrtf(rr);
+          E *= n, N *= n;
+        } else {
+          nz = sqrtf(1 - rr);
         }
+        const float lam = E * sE + N * sN + nz * ci;
+        const float k = lam <= 0 ? 0.03f : 0.03f + 0.97f * powf(std::min(1.0f, lam * 1.4f), 0.45f);
+        r *= k, g *= k, b *= k;
       }
       r = std::max(r, 7.0f), g = std::max(g, 11.0f), b = std::max(b, 24.0f);
       p = (uint16_t) (((int) r >> 3) << 11 | ((int) g >> 2) << 5 | ((int) b >> 3));
