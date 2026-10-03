@@ -942,6 +942,16 @@ int main() {
     sat::live.status.error[0] = 0;  // an error would take the line (and does, by design)
     for (auto &k : sat::live.kp) k.kp = 5.0f;
     sat_host_now = tt; sat::aur.until = 0; sat::draw_hud(tt);
+    // alerts rotate once a minute: find the aurora one among them, and put it on the line
+    static sat::Alert aal[sat::MAX_ALERTS];
+    auto aurora_alert = [&]() -> const sat::Alert * {
+      const int na = sat::collect_alerts(tt, aal, sat::MAX_ALERTS);
+      for (int i = 0; i < na; i++) if (strstr(aal[i].text, "Aurora")) return &aal[i];
+      return nullptr;
+    };
+    const sat::Alert *aa = aurora_alert();
+    sat::alert_override = aa;
+    sat::draw_hud(tt);
     const char *st = lv_label_get_text(sat::ui.w.status);
     printf("aurora line: %s (dark %d, kp %.1f)\n", st, sat::aur.dark_now, sat::aur.kp);
     CHECK(sat::aur.show && sat::aur.likely && sat::aur.dark_now && strstr(st, "Aurora likely until") && strstr(st, "strong"), "aurora notice: %s", st);
@@ -950,10 +960,11 @@ int main() {
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
     save_ppm(HOST_DIR "/r4_aurora_likely.ppm");
     for (auto &k : sat::live.kp) k.kp = 3.0f;  // low in the north only
+    sat::alert_override = nullptr;
     sat::aur.until = 0; sat::draw_hud(tt);
-    st = lv_label_get_text(sat::ui.w.status);
-    printf("aurora line: %s\n", st);
-    CHECK(sat::aur.show && !sat::aur.likely && strstr(st, "Aurora possible"), "possible notice: %s", st);
+    aa = aurora_alert();
+    printf("faint aurora alert: %s\n", aa ? aa->text : "(none)");
+    CHECK(sat::aur.show && !sat::aur.likely && aa == nullptr, "UI-38b: no alert for a faint aurora (%s)", aa ? aa->text : "");
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
     save_ppm(HOST_DIR "/r4_aurora_possible.ppm");
     for (auto &k : sat::live.kp) k.kp = 0.3f;  // nothing
@@ -1254,6 +1265,27 @@ int main() {
         sat::shown_alert_ok = false;
         lv_obj_send_event(sat::ui.w.status, LV_EVENT_CLICKED, nullptr);
         CHECK(!sat::card_open(), "no alert: tap ignored");
+      }
+      if (getenv("ALERT_INV")) {  // what an alert switch redraws
+        static std::vector<lv_area_t> inv;
+        lv_display_add_event_cb(disp, [](lv_event_t *e) {
+            if (const lv_area_t *ar = (const lv_area_t *) lv_event_get_param(e)) inv.push_back(*ar);
+          }, LV_EVENT_INVALIDATE_AREA, nullptr);
+        double tt = sat_host_now;
+        sat::draw_hud(tt);
+        lv_refr_now(disp);
+        for (int k = 1; k <= 6; k++) {
+          inv.clear();
+          g_flush_px = 0;
+          tt += sat::ALERT_ROTATE_S;
+          sat::draw_hud(tt);
+          auto a0 = std::chrono::steady_clock::now();
+          lv_refr_now(disp);
+          const double us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - a0).count();
+          printf("ALERT_INV switch to \"%s\": %ld px flushed, %.0f us\n", lv_label_get_text(sat::ui.w.status), g_flush_px, us);
+          for (const auto &ar : inv)
+            printf("   inval %d,%d-%d,%d (%d px)\n", (int) ar.x1, (int) ar.y1, (int) ar.x2, (int) ar.y2, (int) lv_area_get_size(&ar));
+        }
       }
       sat::live.status = st0;
     }
