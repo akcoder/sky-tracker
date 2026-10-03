@@ -7,7 +7,7 @@
 // Everything sits on lv_layer_top and is deleted when it ends. The rocket is drawn once at
 // init into FLAMES small ARGB8888 buffers (flames of different length, width and lean, swapped
 // in an irregular order for the flicker, UI-69c) and shown
-// with an lv_image rotated along the path; the smoke is a ring of round lv_objs.
+// with an lv_image rotated along the path; the smoke is round lv_objs drawn OPAQUE (UI-69e).
 // Compiled in sky_extra.cpp (SKY_IMPL), as sky_about.h.
 #include <cstdint>
 
@@ -34,9 +34,12 @@ constexpr float S = 22.0f;           // rocket scale (body half-width is 0.32 S)
 constexpr int IW = 32, IH = 84;      // image buffer
 constexpr int PX = 16, PY = 30;      // pivot (body centre) in the buffer
 constexpr int PUFFS = 32, PADS = 6;
-// UI-69a: smoke is drawn from soft round images made at init (radius PR_MIN + i * PR_STEP), so a
-// puff is a plain image blend instead of an anti-aliased rounded-rectangle mask
-constexpr int PR_MIN = 4, PR_STEP = 3, PR_N = 12;
+// UI-69e: smoke is opaque. Translucent pixels make LVGL blend against what is already drawn,
+// which on this panel means reading the PSRAM side back pixel by pixel (PERF-9): the unit
+// managed 3-5 fps with translucent smoke. Each puff is a solid disc whose colour is the smoke
+// colour pre-mixed with the background under its centre (sky or page), so fading is a colour
+// change, not transparency.
+constexpr int MAP_CX = 240, MAP_CY = 242, MAP_R = 184;  // sky_box in the YAML
 constexpr int FLAMES = 5;
 // UI-69c: flame shapes (length and width scale, sideways lean of the tip, in body widths)
 struct Flame {
@@ -67,7 +70,6 @@ struct St {
   bool enabled = true;
   const lv_font_t *font = nullptr;
   lv_draw_buf_t *img_buf[FLAMES] = {};
-  lv_draw_buf_t *smoke[PR_N] = {};
   int flame_i = 0;
   uint32_t flame_at = 0;
   lv_obj_t *catcher = nullptr, *img = nullptr, *banner = nullptr, *label = nullptr;
@@ -175,50 +177,22 @@ inline void path(float u, float &x, float &y, float &deg) {
   deg = std::atan2(dx, -dy) * 180.0f / (float) M_PI;  // clockwise from straight up
 }
 
-// a soft round puff: opaque core fading to nothing at the rim (smoothstep over the outer half)
-inline lv_draw_buf_t *draw_smoke(int r) {
-  const int d = 2 * r;
-  lv_draw_buf_t *db = lv_draw_buf_create(d, d, LV_COLOR_FORMAT_ARGB8888, 0);
-  if (db == nullptr)
-    return nullptr;
-  for (int py = 0; py < d; py++) {
-    uint8_t *row = (uint8_t *) db->data + (size_t) py * db->header.stride;
-    for (int px = 0; px < d; px++) {
-      const float dx = px + 0.5f - r, dy = py + 0.5f - r;
-      float t = (r - std::sqrt(dx * dx + dy * dy)) / (0.5f * r);
-      t = std::min(1.0f, std::max(0.0f, t));
-      row[px * 4 + 0] = 0xD7;  // B, G, R of 0xC8CDD7
-      row[px * 4 + 1] = 0xCD;
-      row[px * 4 + 2] = 0xC8;
-      row[px * 4 + 3] = (uint8_t) (255.0f * t * t * (3 - 2 * t));
-    }
-  }
-  return db;
-}
-// the smoke image nearest radius r; returns the radius it has
-inline int smoke_pick(int r, lv_draw_buf_t *&img) {
-  const int i = std::min(PR_N - 1, std::max(0, (r - PR_MIN + PR_STEP / 2) / PR_STEP));
-  img = st.smoke[i];
-  return PR_MIN + i * PR_STEP;
-}
-inline lv_obj_t *blob(uint32_t warm) {
-  lv_obj_t *o = lv_image_create(lv_layer_top());
-  if (warm) {  // the billows nearest the flame: tinted
-    lv_obj_set_style_image_recolor(o, lv_color_hex(warm), 0);
-    lv_obj_set_style_image_recolor_opa(o, LV_OPA_20, 0);
-  }
+inline lv_obj_t *blob() {
+  lv_obj_t *o = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(o);
+  lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
   lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
   return o;
 }
-inline void smoke_at(lv_obj_t *o, int x, int y, int r, int opa) {
-  lv_draw_buf_t *img = nullptr;
-  r = smoke_pick(r, img);
-  if (img == nullptr)
-    return;
-  lv_image_set_src(o, img);
+// a disc of colour col at strength a (0..255) over whatever background is under (x, y)
+inline void smoke_at(lv_obj_t *o, int x, int y, int r, int a, uint32_t col) {
+  const int dx = x - MAP_CX, dy = y - MAP_CY;
+  const uint32_t bg = dx * dx + dy * dy <= MAP_R * MAP_R ? SKY_BG : PAGE_BG;
+  lv_obj_set_size(o, 2 * r, 2 * r);
   lv_obj_set_pos(o, x - r, y - r);
-  lv_obj_set_style_image_opa(o, (lv_opa_t) std::min(255, std::max(0, opa)), 0);
+  lv_obj_set_style_bg_color(o, lv_color_hex(mix(col, bg, (uint32_t) std::min(255, std::max(0, a)))), 0);
   lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -297,7 +271,7 @@ inline void frame() {
       lv_obj_add_flag(st.puff[i], LV_OBJ_FLAG_HIDDEN);
       continue;
     }
-    smoke_at(st.puff[i], (int) st.puff_x[i], (int) st.puff_y[i], (int) (10 + 28 * age), a + 40);
+    smoke_at(st.puff[i], (int) st.puff_x[i], (int) st.puff_y[i], (int) (7 + 22 * age), a, 0xC8CDD7);
   }
   // The ground cloud: round billows that roll out sideways from the pad along the ground
   // (exhaust deflected by the flame trench), the inner ones bigger and lit warm by the flame,
@@ -322,7 +296,7 @@ inline void frame() {
     const int x = (int) (PAD_X + b.dx * g + (b.dx > 0 ? drift : b.dx < 0 ? -drift : 0));
     const int y = (int) (PAD_Y + 8 + b.dy * g - drift * 0.15f);
     const int a = (int) (b.a * (1.0f - std::max(0.0f, uq - 0.25f) / (PAD_END - 0.25f)));
-    smoke_at(st.pad[k], x, y, (int) (r * 1.2f), a + 50);
+    smoke_at(st.pad[k], x, y, r, a, b.col);
   }
 }
 
@@ -361,9 +335,9 @@ inline void play(const char *name) {
   lv_obj_add_flag(st.catcher, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(st.catcher, [](lv_event_t *) { stop(); }, LV_EVENT_CLICKED, nullptr);
   for (int k = 0; k < PADS; k++)
-    st.pad[k] = blob(k < 3 ? 0xFFB070 : 0);
+    st.pad[k] = blob();
   for (auto &o : st.puff)
-    o = blob(0);
+    o = blob();
   st.img = lv_image_create(lv_layer_top());
   lv_image_set_src(st.img, st.img_buf[0]);
   lv_image_set_pivot(st.img, PX, PY);
@@ -438,8 +412,6 @@ void init(const lv_font_t *banner) {
   st.font = banner;
   for (int i = 0; i < FLAMES; i++)
     st.img_buf[i] = draw_rocket(FLAME[i]);
-  for (int i = 0; i < PR_N; i++)
-    st.smoke[i] = draw_smoke(PR_MIN + i * PR_STEP);
   lv_timer_create([](lv_timer_t *) { check(); }, 1000, nullptr);
 }
 void set_enabled(bool on) {
