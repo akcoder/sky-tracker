@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.12"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.13"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -703,11 +703,19 @@ interval:
             if (on_status)
               id(lvgl_comp)->show_page(id(sky_page)->index, LV_SCREEN_LOAD_ANIM_FADE_IN, 300);
           } else {
-            if (st != state) {
-              if (st == 1) {
+            if (st == 1) {  // NET-2c: the network it is trying (saved in flash or built in)
+              const auto ssid = id(wifi_comp).get_sta().get_ssid();
+              char b[40];
+              snprintf(b, sizeof(b), "%.*s", (int) ssid.size(), ssid.c_str());
+              if (!b[0])
+                snprintf(b, sizeof(b), "%s", "${wifi_name}");
+              if (st != state)
                 lv_label_set_text(id(wifi_title), "Connecting to Wi-Fi");
-                lv_label_set_text(id(wifi_body), "${wifi_name}");
-              } else {
+              if (strcmp(lv_label_get_text(id(wifi_body)), b) != 0)
+                lv_label_set_text(id(wifi_body), b);
+            }
+            if (st != state) {
+              if (st == 2) {
                 auto ap = id(wifi_comp).get_ap();
                 char b[128];
                 snprintf(b, sizeof(b), "Join '%.*s'\nfrom your phone", (int) ap.get_ssid().size(), ap.get_ssid().c_str());
@@ -1380,6 +1388,15 @@ button:
     icon: mdi:rocket-launch
     on_press:
       - lambda: sat::rocket::play_now();
+  - platform: template           # UI-69f: show the undocking animation now
+    id: btn_play_undock
+    name: Play Undocking Animation
+    web_server:
+      sorting_group_id: grp_display
+      sorting_weight: 8
+    icon: mdi:space-station
+    on_press:
+      - lambda: sat::rocket::play_undock_now();
   - platform: template           # UI-68b: the Settings Upgrade Check, from the web UI and HA
     id: btn_upgrade_check
     name: Upgrade Check
@@ -1588,7 +1605,7 @@ lvgl:
                   text_align: CENTER
               - label:
                   id: wifi_body
-                  text: "${wifi_name}"
+                  text: ""                # NET-2c: the SSID being tried, set by the status lambda
                   text_font: setup_body
                   text_color: 0xB0B0B0
                   width: 380
