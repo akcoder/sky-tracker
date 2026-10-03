@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.20"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.21"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -105,6 +105,7 @@ esphome:
             sat::set_sky_alerts(id(sky_alerts).state);  // UI-47..51
             sat::set_night(id(night_mode).state);      // UI-45
             sat::setup(c, w);
+            sat::vs::install(id(main_display));  // PERF-14: status-line changes drawn behind the scan
             sat::night_install();
             sat::settings_bind(id(ta_heading), id(ta_lat), id(ta_lon), id(sw_24h), id(settings_status));
             sat::settings_bind_dms(id(sw_dms), id(box_lat_dd), id(box_lat_dms), id(ta_lat_d), id(ta_lat_m),

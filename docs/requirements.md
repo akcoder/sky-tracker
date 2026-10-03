@@ -1,7 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.20 (queued): a rocket launches across the boot screen (UI-69k). Settings gains a Satellites tab (LEO cone, LEO, Starlink, MEO, GEO, Debris, Sat Trails moved from Celestial), tabs with the icon above the text (UI-16a). A tap on an alert opens its details (UI-41d): the card of its object (ISS or Tiangong overhead, planet, comet, meteor shower, Moon), or a details card for launches, space events, passes to come, aurora, solar wind, alignments, eclipses and seasons. Alert icons centred on the whole text, one or two lines (UI-41c mode 2). The internet update screen's bar and percentage move during the download (UI-68b); installs started from the web page or HA show that screen too.
+- 4.6.21 (queued): alerts change once a minute (were every 6 s); no aurora alert for a faint one (Kp under 3.5) unless NOAA's nowcast says likely (UI-38b); a changed status line is drawn just after the panel's scan has passed it, so it no longer tears (PERF-14).
+- 4.6.20 (installed): a rocket launches across the boot screen (UI-69k). Settings gains a Satellites tab (LEO cone, LEO, Starlink, MEO, GEO, Debris, Sat Trails moved from Celestial), tabs with the icon above the text (UI-16a). A tap on an alert opens its details (UI-41d): the card of its object (ISS or Tiangong overhead, planet, comet, meteor shower, Moon), or a details card for launches, space events, passes to come, aurora, solar wind, alignments, eclipses and seasons. Alert icons centred on the whole text, one or two lines (UI-41c mode 2). The internet update screen's bar and percentage move during the download (UI-68b); installs started from the web page or HA show that screen too.
 - 4.6.19 (installed): the ground cloud fades from 15% of the climb and is gone by 35% (was 25% / 70%), so the animation doesn't bog down early (UI-69j).
 - 4.6.18: fixes a boot loop. The rocket and capsule pictures are drawn at boot (~5 s, 4x4 supersampled, code from PSRAM) without feeding the task watchdog; the device reset 13 s into every boot, so 4.6.17 never got past setup (display dark, safe mode). The drawing loops now feed it each row (FAIL-11).
 - 4.6.17 (boot loop, withdrawn): the launch and undocking smoke is one full-screen object that draws its discs itself (UI-69i), instead of ~40 objects resized and moved each frame. 4.6.16's log: 4.6 fps, ~4.7 ms per lv_obj_set_size and ~4.8 ms per set_pos even with the 32 KB cache; a changed disc now only invalidates its old and new areas.
@@ -642,6 +643,8 @@ UI-41d A tap on the status line while an alert shows opens that alert's details:
        name, time, at the ISS), an ISS/Tiangong pass to come (rise, peak, set; its arc drawn),
        aurora and solar wind (Kp, NOAA nowcast, Bz), conjunction and parade, eclipse (times,
        totality, magnitude), season. With no alert the tap goes on to the page.
+UI-38b No aurora alert for a faint aurora (Kp under 3.5) unless the OVATION nowcast says
+       likely; the glow on the map is unchanged. Alerts rotate every 60 s (ALERT_ROTATE_S).
 UI-41c Alert icon placement: after the text is set, the icon (glyph or picture) is placed so
        its ink is centred on the text, from the first line's cap top to the last line's
        baseline, from the fonts' glyph metrics (lv_font_get_glyph_dsc).
@@ -1143,6 +1146,11 @@ PERF-10 CONFIG_SPIRAM_XIP_FROM_PSRAM and CONFIG_ESP32S3_DATA_CACHE_LINE_64B MUST
 PERF-13 CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB MUST be enabled. Code runs from PSRAM
        (PERF-10), which the panel scanout keeps busy, so an instruction-cache miss costs
        ~1 us; with 16 KB LVGL calls took milliseconds each. Costs 16 KB of internal RAM.
+PERF-14 Status-line changes are drawn behind the scan: the panel's vsync interrupt (an
+       esp_lcd RGB panel callback; ESPHome's mipi_rgb registers none) times each frame, and
+       when the status text changes draw_hud waits (at most one frame) until the scan and its
+       bounce-buffer refill are past the line, then calls lv_refr_now(). With one PSRAM
+       framebuffer, a write across the rows being scanned out shows as a one-frame tear.
 PERF-11 When a restyle binds more than 8 new markers (a layer switched on), the whole
        sky is invalidated first. Otherwise each marker adds its own small dirty
        area and LVGL redraws the stars and constellation lines under every one of

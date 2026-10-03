@@ -34,9 +34,60 @@
 #include "driver/gpio.h"
 #include "esp_rom_sys.h"
 #include "esp_sntp.h"
+#include "esp_timer.h"
+#include "esp_lcd_panel_rgb.h"
+#include "esphome/components/mipi_rgb/mipi_rgb.h"
 #endif
 
 namespace sat {
+
+// ================================================================== PERF-14 scan-synced updates
+// The panel has one framebuffer in PSRAM, read out top to bottom every frame (~22 ms at 12 MHz)
+// through 10-row bounce buffers. A change written to rows the scan is passing shows for one
+// frame half old, half new: a tear. The status line (rows ~26-69) changes are rendered right
+// after the scan has passed it, so they land behind it. wait_scan_past() waits at most a frame.
+namespace vs {
+#ifdef SAT_HOST_TEST
+inline void install(void *) {}
+inline void wait_scan_past(int) {}
+#else
+inline volatile int64_t last_us = 0, period_us = 0;
+inline bool on_vsync(esp_lcd_panel_handle_t, const esp_lcd_rgb_panel_event_data_t *, void *) {
+  const int64_t n = esp_timer_get_time();
+  if (last_us)
+    period_us = n - last_us;
+  last_us = n;
+  return false;
+}
+struct Peek : esphome::mipi_rgb::MipiRgb {  // the driver keeps its panel handle protected
+  static esp_lcd_panel_handle_t handle(esphome::mipi_rgb::MipiRgb *m) { return static_cast<Peek *>(m)->handle_; }
+};
+inline void install(esphome::mipi_rgb::MipiRgb *d) {
+  if (d == nullptr || Peek::handle(d) == nullptr)
+    return;
+  esp_lcd_rgb_panel_event_callbacks_t cb = {};
+  cb.on_vsync = on_vsync;
+  if (esp_lcd_rgb_panel_register_event_callbacks(Peek::handle(d), &cb, nullptr) != ESP_OK)
+    ESP_LOGW("sat_ui", "vsync callback not registered");
+}
+// wait until the scan (and the bounce-buffer refill ~20 rows ahead of it) is below row
+// `row` and well short of the bottom, so rows above `row` can be written untorn
+inline void wait_scan_past(int row) {
+  constexpr int V_RES = 480, V_BLANK = 30, LEAD = 24, TOTAL = V_RES + V_BLANK;
+  const int64_t per = period_us;
+  if (per < 10000 || per > 50000)
+    return;  // no vsync seen yet
+  const int64_t lo = per * (V_BLANK + row + LEAD) / TOTAL, hi = per * 85 / 100;
+  const int64_t give_up = esp_timer_get_time() + per + 2000;
+  while (esp_timer_get_time() < give_up) {
+    const int64_t ph = (esp_timer_get_time() - last_us) % per;
+    if (ph >= lo && ph <= hi)
+      return;
+    esp_rom_delay_us(200);
+  }
+}
+#endif
+}  // namespace vs
 
 static const char *const UI_TAG = "sat_ui";
 
@@ -1909,7 +1960,7 @@ inline lv_obj_t *card_find_btn = nullptr;  // the card's Find button (hidden on 
 inline void alert_click_cb(lv_event_t *e);
 constexpr int MAX_ALERTS = 12;
 constexpr int ALERT_DY = 3;  // UI-41: alerts sit this much lower than the status line (4.5.4)
-constexpr double ALERT_ROTATE_S = 6;
+constexpr double ALERT_ROTATE_S = 60;  // UI-41: each alert for a minute (was 6 s)
 inline int collect_alerts(double t, Alert *out, int max);
 // UI-41c where an alert's icon sits against its text: 1 its top on the text's cap height,
 // 2 centred on the text (one or two lines), 3 centred on the first line; 0 the old fixed spot
@@ -2025,6 +2076,8 @@ inline void draw_hud(double t) {
       lv_obj_set_y(ui.w.status, base_y + (al && af ? ALERT_DY : 0));
     }
   }
+  // PERF-14: a new status line is drawn as the scan leaves it (see the end of draw_hud)
+  const bool status_changed = ui.w.status && strcmp(lv_label_get_text(ui.w.status), b) != 0;
   set_text_if(ui.w.status, b);
   // UI-41c: the icon against the text as it now stands (one or two lines)
   if (al && ui.w.status && alert_icon_align) {
@@ -2096,6 +2149,10 @@ inline void draw_hud(double t) {
   if ((int) visible != pass_vis && ui.w.foot_pass) {
     pass_vis = visible;
     lv_obj_set_style_text_color(ui.w.foot_pass, lv_color_hex(visible ? C_SUN : C_DIM), 0);
+  }
+  if (status_changed && ui.w.status && lv_obj_is_visible(ui.w.status)) {
+    vs::wait_scan_past(lv_obj_get_y(ui.w.status) + lv_obj_get_height(ui.w.status) + 8);
+    lv_refr_now(nullptr);
   }
 }
 
@@ -3233,7 +3290,8 @@ inline int collect_alerts(double t, Alert *out, int max) {
     }
   }
   // UI-38 aurora
-  if (aur.show && ui.aurora_alerts)
+  // (UI-38b: not for a faint one, Kp under 3.5, unless the nowcast says likely)
+  if (aur.show && ui.aurora_alerts && (aur.kp >= 3.5f || aur.likely))
     if (Alert *a = add(C_AURORA, "\xF3\xB1\xAE\xB9", nullptr)) {  // mdi:aurora
       a->info = AI_AURORA;
       char hm[16];
