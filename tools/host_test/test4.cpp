@@ -260,9 +260,38 @@ int main() {
   c.lon = LON;
   c.alt_m = ALT;
   sat_host_now = T0;
+  // REAL_SKY=1: the real sky now, from CelesTrak data cached by ./fetch_celestrak.py (no checks)
+  const bool real_sky = getenv("REAL_SKY") != nullptr;
+  if (real_sky) {
+    const struct { const char *key, *file; } RS[] = {
+        {"CATNR=25544&FORMAT=csv", "iss.csv"},         {"CATNR=48274&FORMAT=csv", "css.csv"},
+        {"GROUP=visual&FORMAT=csv", "visual.csv"},     {"GROUP=starlink&FORMAT=csv", "starlink.csv"},
+        {"GROUP=gps-ops&FORMAT=csv", "gps-ops.csv"},   {"GROUP=galileo&FORMAT=csv", "galileo.csv"},
+        {"GROUP=glo-ops&FORMAT=csv", "glo-ops.csv"},   {"GROUP=beidou&FORMAT=csv", "beidou.csv"},
+        {"GROUP=geo&FORMAT=csv", "geo.csv"},           {"satcat/records.php?GROUP=visual", "satcat_visual.json"}};
+    for (const auto &r : RS) {
+      const std::string body = slurp((std::string(HOST_DIR "/cache/celestrak/") + r.file).c_str());
+      if (body.empty()) {
+        printf("REAL_SKY: no cache/celestrak/%s - run ./fetch_celestrak.py first\n", r.file);
+        return 1;
+      }
+      host_http_bodies[r.key] = body;
+    }
+    sat_host_now = (double) time(nullptr);
+  }
   sat::setup(c, w);
   sat::tick();  // queues the element download
   run_jobs();   // downloads, computes passes
+  if (real_sky) {
+    for (int k = 0; k < 4; k++) { sat_host_now += 2; sat::tick(); run_jobs(); }
+    sat::tick();
+    lv_obj_invalidate(lv_screen_active());
+    lv_refr_now(disp);
+    save_ppm(OUT_DIR "/real_sky.ppm");
+    printf("REAL_SKY: ISS %d, %zu satellites, %zu Starlink -> " OUT_DIR "/real_sky.ppm\n", (int) sat::net::have_iss,
+           sat::net::sats.size(), sat::net::starlink.size());
+    return 0;
+  }
   CHECK(sat::net::have_iss && sat::net::sats.size() == 60 && sat::net::starlink.size() == 600, "elements %d/%zu/%zu",
         sat::net::have_iss, sat::net::sats.size(), sat::net::starlink.size());
   for (int k = 0; k < 3; k++) { sat_host_now += 2; sat::tick(); run_jobs(); }
@@ -1184,8 +1213,47 @@ int main() {
           lv_obj_invalidate(lv_screen_active());
           lv_refr_now(disp);
           save_ppm(HOST_DIR "/r16_event_alert.ppm");
+          // UI-41d: a tap on the alert opens its details card
+          lv_obj_send_event(sat::ui.w.status, LV_EVENT_CLICKED, nullptr);
+          printf("event details: %s\n%s\n", lv_label_get_text(sat::ui.card_title), lv_label_get_text(sat::ui.card_body));
+          CHECK(sat::ui.sel_kind == sat::K_INFO && strstr(lv_label_get_text(sat::ui.card_body), "SpaceX Crew-12 Crew Dragon Undocking") &&
+                strstr(lv_label_get_text(sat::ui.card_body), "International Space Station"), "event alert tap: details card");
+          lv_obj_invalidate(lv_screen_active());
+          lv_refr_now(disp);
+          save_ppm(HOST_DIR "/r16_event_details.ppm");
+          sat::deselect();
           break;
         }
+      }
+      for (int k = 0; k < 12; k++) {  // and a launch alert
+        sat::draw_hud(sat_host_now + k * sat::ALERT_ROTATE_S);
+        if (strstr(lv_label_get_text(sat::ui.w.status), "launches in") || strstr(lv_label_get_text(sat::ui.w.status), " from ")) {
+          lv_obj_send_event(sat::ui.w.status, LV_EVENT_CLICKED, nullptr);
+          printf("launch details: %s\n%s\n", lv_label_get_text(sat::ui.card_title), lv_label_get_text(sat::ui.card_body));
+          CHECK(sat::ui.sel_kind == sat::K_INFO && strstr(lv_label_get_text(sat::ui.card_body), "Status:") &&
+                strstr(lv_label_get_text(sat::ui.card_body), "From "), "launch alert tap: details card");
+          lv_obj_invalidate(lv_screen_active());
+          lv_refr_now(disp);
+          save_ppm(HOST_DIR "/r16_launch_details.ppm");
+          sat::deselect();
+          break;
+        }
+      }
+      {  // a planet alert opens the planet's own card; no alert: the tap is not taken
+        sat::Alert pa = {};
+        snprintf(pa.text, sizeof(pa.text), "Jupiter visible - SE, 30\xC2\xB0 up");
+        int shown_p = -1;  // one on the map (planet alerts only come for those)
+        for (int q = 0; q < sat::planets::N_PLANETS && shown_p < 0; q++)
+          if (sat::ui.planet_shown[q]) shown_p = q;
+        pa.kind = sat::K_PLANET, pa.id = shown_p < 0 ? 0 : shown_p, pa.col = 0xFFFFFF;
+        sat::shown_alert = pa;
+        sat::shown_alert_ok = true;
+        lv_obj_send_event(sat::ui.w.status, LV_EVENT_CLICKED, nullptr);
+        CHECK(shown_p < 0 || (sat::ui.sel_kind == sat::K_PLANET && sat::ui.sel_id == shown_p), "planet alert tap: planet card (%d)", shown_p);
+        sat::deselect();
+        sat::shown_alert_ok = false;
+        lv_obj_send_event(sat::ui.w.status, LV_EVENT_CLICKED, nullptr);
+        CHECK(!sat::card_open(), "no alert: tap ignored");
       }
       sat::live.status = st0;
     }
