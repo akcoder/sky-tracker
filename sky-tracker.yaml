@@ -131,6 +131,7 @@ esphome:
             sat::upd::set_source("${manifest_url}");  // NET-13a
             sat::rocket::init(id(mono18)->get_lv_font());  // UI-69
             sat::rocket::set_enabled(id(launch_anim).state);
+            sat::rocket::play_boot();  // UI-69k: a launch over the boot screen (Launch Animation on)
             sat::tz::init();  // UI-70
 
 esp32:

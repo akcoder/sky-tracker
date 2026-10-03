@@ -24,6 +24,7 @@ void set_enabled(bool on);
 void play_now();  // the button: the next launch's name (or a generic one)
 void play_undock_now();  // UI-69f button: the next ISS undocking's name (or a generic one)
 bool active();    // playing now (sat::tick pauses, UI-69b)
+void play_boot();  // UI-69k on the boot screen: no banner, smoke over black
 }  // namespace rocket
 }  // namespace sat
 #else
@@ -112,6 +113,7 @@ struct St {
   struct Disc {
     int16_t x = 0, y = 0, r = 0;
     uint32_t col = 0;
+    uint8_t opa = 255;  // UI-69k: translucent on the boot screen (the map's smoke is opaque, PERF-9)
     bool on = false;
   };
   lv_obj_t *smoke = nullptr;
@@ -138,6 +140,7 @@ struct St {
   uint32_t played_key = 0;  // the last launch shown (name + T-0)
   // UI-69f
   bool undock = false;      // the scene playing: false launch, true undocking
+  bool boot = false;        // UI-69k on the boot screen (black page, no banner)
   lv_draw_buf_t *capsule_buf = nullptr;
   lv_obj_t *iss[ISS_PARTS] = {};
   uint32_t undock_key = 0;  // the last undocking shown
@@ -261,6 +264,7 @@ inline void draw_smoke(lv_event_t *e) {
     if (a.x2 < c.x1 || a.x1 > c.x2 || a.y2 < c.y1 || a.y1 > c.y2)
       continue;
     dsc.bg_color = lv_color_hex(d.col);
+    dsc.bg_opa = d.opa;
     lv_draw_rect(layer, &dsc, &a);
   }
 }
@@ -290,9 +294,13 @@ inline void smoke_at(int k, int x, int y, int r, int a, uint32_t col) {
   const uint32_t bg = dx * dx + dy * dy <= MAP_R * MAP_R ? SKY_BG : PAGE_BG;
   St::Disc n;
   n.x = (int16_t) x, n.y = (int16_t) y, n.r = (int16_t) r, n.on = true;
-  n.col = mix(col, bg, (uint32_t) std::min(255, std::max(0, a)));
+  const uint32_t aa = (uint32_t) std::min(255, std::max(0, a));
+  if (st.boot)  // UI-69k: over the logo and text, translucent so they show through as it thins
+    n.col = col, n.opa = (uint8_t) aa;
+  else
+    n.col = mix(col, bg, aa);
   St::Disc &d = st.disc[k];
-  if (!(d.on && d.x == n.x && d.y == n.y && d.r == n.r && d.col == n.col)) {
+  if (!(d.on && d.x == n.x && d.y == n.y && d.r == n.r && d.col == n.col && d.opa == n.opa)) {
     if (d.on)
       inval_disc(d);
     d = n;
@@ -370,6 +378,7 @@ inline void stop() {
       o = nullptr;
     }
   st.label = nullptr;
+  st.boot = false;
 }
 inline bool playing() { return st.anim != nullptr; }
 bool active() { return playing(); }
@@ -619,11 +628,12 @@ inline void banner_text(const char *name, char *b, size_t n) {
   b[k] = 0;
 }
 
-inline void play_scene(bool undock, const char *name) {
+inline void play_scene(bool undock, const char *name, bool boot = false) {
   stop();
   if (!st.img_buf[0] || (undock && !st.capsule_buf))
     return;
   st.undock = undock;
+  st.boot = boot && !undock;
   // a transparent full-screen layer: any tap skips
   st.catcher = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(st.catcher);
@@ -653,42 +663,44 @@ inline void play_scene(bool undock, const char *name) {
   if (!undock)
     lv_image_set_pivot(st.img, PX, PY);
   lv_obj_remove_flag(st.img, LV_OBJ_FLAG_CLICKABLE);
-  // the banner: the mission, centred both ways in its box
-  st.banner = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(st.banner);
-  lv_obj_set_size(st.banner, 360, 46);
-  lv_obj_set_pos(st.banner, 60, 424);
-  lv_obj_set_style_radius(st.banner, 10, 0);
-  lv_obj_set_style_bg_color(st.banner, lv_color_hex(0x0E1836), 0);
-  lv_obj_set_style_bg_opa(st.banner, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_color(st.banner, lv_color_hex(0x2D5BD0), 0);
-  lv_obj_set_style_border_width(st.banner, 2, 0);
-  lv_obj_remove_flag(st.banner, LV_OBJ_FLAG_CLICKABLE);
-  st.label = lv_label_create(st.banner);
-  if (st.font)
-    lv_obj_set_style_text_font(st.label, st.font, 0);
-  lv_obj_set_style_text_color(st.label, lv_color_hex(0xFFFFFF), 0);
-  lv_obj_set_width(st.label, 336);
-  lv_label_set_long_mode(st.label, LV_LABEL_LONG_MODE_DOTS);
-  lv_obj_set_style_text_align(st.label, LV_TEXT_ALIGN_CENTER, 0);
-  char b[96];
-  banner_text(name && *name ? name : undock ? "Undocking from the ISS" : "Rocket launch", b, sizeof(b));
-  lv_label_set_text(st.label, b);
-  // A long name wraps to two lines (no more: dots after that); the banner grows upward to hold
-  // them, its bottom staying put (a fixed 46 px banner let the second line spill over the
-  // border).
-  const int32_t lh = st.font ? lv_font_get_line_height(st.font) : 20;
-  lv_obj_set_style_max_height(st.label, 2 * lh, 0);
-  lv_obj_update_layout(st.label);
-  const int32_t text_h = std::min<int32_t>(lv_obj_get_height(st.label), 2 * lh);
-  lv_obj_set_height(st.label, text_h);  // DOTS cuts a third line here
-  const int32_t bh = std::max<int32_t>(46, text_h + 18);
-  lv_obj_set_height(st.banner, bh);
-  lv_obj_set_y(st.banner, 470 - bh);
-  // the label box is ascent + descent tall; caps and digits sit in the top part of it, so
-  // centring the box leaves the text high. Drop it by a third of the descent.
-  const int32_t drop = st.font ? std::max<int32_t>(1, st.font->base_line / 3) : 1;
-  lv_obj_align(st.label, LV_ALIGN_CENTER, 0, drop);
+  char b[96] = "";
+  if (!st.boot) {  // UI-69k: no banner on the boot screen
+    // the banner: the mission, centred both ways in its box
+    st.banner = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(st.banner);
+    lv_obj_set_size(st.banner, 360, 46);
+    lv_obj_set_pos(st.banner, 60, 424);
+    lv_obj_set_style_radius(st.banner, 10, 0);
+    lv_obj_set_style_bg_color(st.banner, lv_color_hex(0x0E1836), 0);
+    lv_obj_set_style_bg_opa(st.banner, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(st.banner, lv_color_hex(0x2D5BD0), 0);
+    lv_obj_set_style_border_width(st.banner, 2, 0);
+    lv_obj_remove_flag(st.banner, LV_OBJ_FLAG_CLICKABLE);
+    st.label = lv_label_create(st.banner);
+    if (st.font)
+      lv_obj_set_style_text_font(st.label, st.font, 0);
+    lv_obj_set_style_text_color(st.label, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_set_width(st.label, 336);
+    lv_label_set_long_mode(st.label, LV_LABEL_LONG_MODE_DOTS);
+    lv_obj_set_style_text_align(st.label, LV_TEXT_ALIGN_CENTER, 0);
+    banner_text(name && *name ? name : undock ? "Undocking from the ISS" : "Rocket launch", b, sizeof(b));
+    lv_label_set_text(st.label, b);
+    // A long name wraps to two lines (no more: dots after that); the banner grows upward to hold
+    // them, its bottom staying put (a fixed 46 px banner let the second line spill over the
+    // border).
+    const int32_t lh = st.font ? lv_font_get_line_height(st.font) : 20;
+    lv_obj_set_style_max_height(st.label, 2 * lh, 0);
+    lv_obj_update_layout(st.label);
+    const int32_t text_h = std::min<int32_t>(lv_obj_get_height(st.label), 2 * lh);
+    lv_obj_set_height(st.label, text_h);  // DOTS cuts a third line here
+    const int32_t bh = std::max<int32_t>(46, text_h + 18);
+    lv_obj_set_height(st.banner, bh);
+    lv_obj_set_y(st.banner, 470 - bh);
+    // the label box is ascent + descent tall; caps and digits sit in the top part of it, so
+    // centring the box leaves the text high. Drop it by a third of the descent.
+    const int32_t drop = st.font ? std::max<int32_t>(1, st.font->base_line / 3) : 1;
+    lv_obj_align(st.label, LV_ALIGN_CENTER, 0, drop);
+  }
   st.t0 = now_ms();
   st.puff_next = 0;
   st.frames = st.max_gap = 0;
@@ -717,7 +729,7 @@ inline void play_scene(bool undock, const char *name) {
       },
       40, nullptr);
   frame();
-  ESP_LOGI("rocket", "%s animation: %s", undock ? "undocking" : "launch", b);
+  ESP_LOGI("rocket", "%s animation: %s", undock ? "undocking" : st.boot ? "boot" : "launch", b);
 }
 inline void play(const char *name) { play_scene(false, name); }
 
@@ -761,6 +773,11 @@ void set_enabled(bool on) {
   st.enabled = on;
   if (!on)
     stop();
+}
+void play_boot() {
+  if (!st.enabled)
+    return;
+  play_scene(false, nullptr, true);
 }
 void play_undock_now() {
   const double t = clock_valid() ? clock_now() : 0;

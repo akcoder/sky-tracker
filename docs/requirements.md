@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.20 (queued): Settings gains a Satellites tab (LEO cone, LEO, Starlink, MEO, GEO, Debris, Sat Trails moved from Celestial), tabs with the icon above the text (UI-16a). A tap on an alert opens its details (UI-41d): the card of its object (ISS or Tiangong overhead, planet, comet, meteor shower, Moon), or a details card for launches, space events, passes to come, aurora, solar wind, alignments, eclipses and seasons. Alert icons centred on the whole text, one or two lines (UI-41c mode 2). The internet update screen's bar and percentage move during the download (UI-68b); installs started from the web page or HA show that screen too.
+- 4.6.20 (queued): a rocket launches across the boot screen (UI-69k). Settings gains a Satellites tab (LEO cone, LEO, Starlink, MEO, GEO, Debris, Sat Trails moved from Celestial), tabs with the icon above the text (UI-16a). A tap on an alert opens its details (UI-41d): the card of its object (ISS or Tiangong overhead, planet, comet, meteor shower, Moon), or a details card for launches, space events, passes to come, aurora, solar wind, alignments, eclipses and seasons. Alert icons centred on the whole text, one or two lines (UI-41c mode 2). The internet update screen's bar and percentage move during the download (UI-68b); installs started from the web page or HA show that screen too.
 - 4.6.19 (installed): the ground cloud fades from 15% of the climb and is gone by 35% (was 25% / 70%), so the animation doesn't bog down early (UI-69j).
 - 4.6.18: fixes a boot loop. The rocket and capsule pictures are drawn at boot (~5 s, 4x4 supersampled, code from PSRAM) without feeding the task watchdog; the device reset 13 s into every boot, so 4.6.17 never got past setup (display dark, safe mode). The drawing loops now feed it each row (FAIL-11).
 - 4.6.17 (boot loop, withdrawn): the launch and undocking smoke is one full-screen object that draws its discs itself (UI-69i), instead of ~40 objects resized and moved each frame. 4.6.16's log: 4.6 fps, ~4.7 ms per lv_obj_set_size and ~4.8 ms per set_pos even with the 32 KB cache; a changed disc now only invalidates its old and new areas.
@@ -1008,6 +1008,10 @@ UI-68b The internet install (http_request OTA) downloads and writes in one block
        the main loop, so no LVGL timer runs: its on_begin/on_progress/on_end/on_error hooks
        update the "Updating firmware" screen (bar and percentage every 2%) and call
        lv_refr_now(). An install started from the web page or HA opens that screen too.
+UI-69k At the end of setup, with Launch Animation on, the launch plays once over the boot
+       (Wi-Fi status) screen: no banner, and the smoke translucent (true colours at the
+       puff's strength) so the logo and text show through as it thins; on the map the smoke
+       stays opaque and pre-mixed (PERF-9). A switch to the map mid-flight lets it finish.
 UI-69h Load probes in the animation log: a 100,000-step integer loop and a 64 KB PSRAM read
        (one byte per cache line), timed before the animation and 2 s into it; and each smoke
        update's LVGL calls (size, position, colour, show) averaged.
