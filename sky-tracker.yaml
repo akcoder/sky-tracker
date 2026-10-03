@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.19"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.20"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -214,6 +214,18 @@ api:
 ota:
   - platform: http_request         # UI-68: installs what the update entity finds
     id: ota_http
+    on_begin:                      # UI-68b: the download blocks the loop; redraw from here
+      then:
+        - lambda: sat::upd::ota_begin();
+    on_progress:
+      then:
+        - lambda: sat::upd::ota_progress(x);
+    on_end:
+      then:
+        - lambda: sat::upd::ota_end(true);
+    on_error:
+      then:
+        - lambda: sat::upd::ota_end(false);
   - platform: esphome
     id: ota_esphome
     on_begin:

@@ -23,6 +23,11 @@ void check_quiet(const char *why);  // NET-13a: hourly, at boot, the web/HA butt
 void set_source(const char *url);   // the manifest URL, for the log
 void set_button(lv_obj_t *b);  // the map page's update icon, beside the gear
 void offer_now();              // that icon tapped
+// UI-68b the internet install's own callbacks (begin, progress %, end, error): the download
+// blocks the main loop, so the screen is updated and redrawn from here
+void ota_begin();
+void ota_progress(float pc);
+void ota_end(bool ok);
 }  // namespace upd
 }  // namespace sat
 #else
@@ -266,6 +271,36 @@ inline void log_result(int s) {
   if ((s == 1 || s == 2) && !v.empty())
     ESP_LOGI("upd", "firmware: manifest has %s, installed %s (%s)", v.c_str(), current().c_str(),
              s == 2 ? "newer, offered" : "nothing newer");
+}
+// UI-68b ESPHome's http_request OTA downloads and writes in one blocking call on the main
+// loop: no lv_timer runs and nothing redraws until it ends, so the bar sat at 0. Its own
+// callbacks move the bar and force a redraw (every 2%, ~25 ms each).
+void ota_begin() {
+  if (ui_.mode != M_INSTALLING) {  // started from the web page or HA: show the screen too
+    ui_.since = now_ms();
+    show(M_INSTALLING);
+  }
+  lv_refr_now(nullptr);
+}
+void ota_progress(float pc) {
+  static int last = -10;
+  const int p = (int) pc;
+  if (ui_.mode != M_INSTALLING || (p < last + 2 && p >= last && p < 100))
+    return;
+  last = p;
+  char b[32];
+  snprintf(b, sizeof(b), "Downloading  %d%%", p);
+  lv_label_set_text(ui_.l1, b);
+  lv_bar_set_value(ui_.bar, p, LV_ANIM_OFF);
+  lv_refr_now(nullptr);
+}
+void ota_end(bool ok) {
+  if (ui_.mode != M_INSTALLING)
+    return;
+  lv_label_set_text(ui_.l1, ok ? "Installed, restarting" : "Install failed");
+  if (ok)
+    lv_bar_set_value(ui_.bar, 100, LV_ANIM_OFF);
+  lv_refr_now(nullptr);
 }
 // every 500 ms (lv_timer): follow the entity
 inline void tick() {

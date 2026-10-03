@@ -1900,7 +1900,7 @@ constexpr double ALERT_ROTATE_S = 6;
 inline int collect_alerts(double t, Alert *out, int max);
 // UI-41c where an alert's icon sits against its text: 1 its top on the text's cap height,
 // 2 centred on the text (one or two lines), 3 centred on the first line; 0 the old fixed spot
-inline int alert_icon_align = 3;
+inline int alert_icon_align = 2;
 inline const Alert *alert_override = nullptr;  // host tests: show this alert
 // the first code point of a UTF-8 string
 inline uint32_t utf8_first(const char *s) {
