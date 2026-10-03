@@ -100,6 +100,8 @@ struct St {
   const lv_font_t *font = nullptr;
   lv_draw_buf_t *img_buf[FLAMES] = {};
   int flame_i = 0;
+  int32_t last_rot = -100000;
+  bool benched = false;
   uint32_t flame_at = 0;
   lv_obj_t *catcher = nullptr, *img = nullptr, *banner = nullptr, *label = nullptr;
   lv_obj_t *puff[PUFFS] = {}, *pad[PADS] = {};
@@ -119,6 +121,8 @@ struct St {
     uint32_t anim_max = 0, render_max = 0, flush_max = 0, idle_max = 0;
     uint32_t flush_now = 0, chunks = 0, px = 0, px_max = 0, px_now = 0, n = 0;
     uint32_t t_img = 0, t_puff = 0, t_pad = 0, calls = 0, fallback = 0;  // inside frame()
+    uint32_t t_size = 0, t_pos = 0, t_col = 0, t_flag = 0;          // inside smoke_at()
+    uint32_t bench_cpu[2] = {}, bench_ram[2] = {};                    // UI-69h: before / during
   } prof;
   uint32_t played_key = 0;  // the last launch shown (name + T-0)
   // UI-69f
@@ -242,10 +246,39 @@ inline void smoke_at(lv_obj_t *o, int x, int y, int r, int a, uint32_t col) {
   st.prof.calls++;
   const int dx = x - MAP_CX, dy = y - MAP_CY;
   const uint32_t bg = dx * dx + dy * dy <= MAP_R * MAP_R ? SKY_BG : PAGE_BG;
+  auto &p = st.prof;
+  uint32_t t0 = now_us();
   lv_obj_set_size(o, 2 * r, 2 * r);
+  uint32_t t1 = now_us();
   lv_obj_set_pos(o, x - r, y - r);
+  uint32_t t2 = now_us();
   lv_obj_set_style_bg_color(o, lv_color_hex(mix(col, bg, (uint32_t) std::min(255, std::max(0, a)))), 0);
-  lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+  uint32_t t3 = now_us();
+  if (lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN))
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+  p.t_size += t1 - t0, p.t_pos += t2 - t1, p.t_col += t3 - t2, p.t_flag += now_us() - t3;
+}
+// UI-69h: how much CPU and PSRAM the main loop gets: a fixed integer loop and a 64 KB read of
+// PSRAM, timed (microseconds); run before the animation and once in the middle of it
+inline uint8_t *bench_buf = nullptr;
+inline void bench(int k) {
+  volatile uint32_t acc = 0;
+  uint32_t t0 = now_us();
+  for (uint32_t i = 0; i < 100000; i++)
+    acc = acc * 1664525u + 1013904223u + i;
+  st.prof.bench_cpu[k] = now_us() - t0;
+#ifndef SAT_HOST_TEST
+  if (bench_buf == nullptr)
+    bench_buf = (uint8_t *) heap_caps_malloc(65536, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+#endif
+  if (bench_buf) {
+    t0 = now_us();
+    uint32_t sum = 0;
+    for (int i = 0; i < 65536; i += 32)  // one read per cache line
+      sum += bench_buf[i];
+    acc = acc + sum;
+    st.prof.bench_ram[k] = now_us() - t0;
+  }
 }
 
 inline void on_refr(lv_event_t *);
@@ -266,6 +299,11 @@ inline void stop() {
     ESP_LOGI("rocket", "frame() parts (total ms): rocket image %.1f, puffs %.1f, ground cloud %.1f; %u smoke updates, "
              "%u fallback frames", p.t_img / 1000.0f, p.t_puff / 1000.0f, p.t_pad / 1000.0f, (unsigned) p.calls,
              (unsigned) p.fallback);
+    const float c = p.calls ? 1000.0f * p.calls : 1.0f;
+    ESP_LOGI("rocket", "per smoke update (avg ms): size %.2f, pos %.2f, colour %.2f, show %.2f", p.t_size / c,
+             p.t_pos / c, p.t_col / c, p.t_flag / c);
+    ESP_LOGI("rocket", "bench before/during (us): cpu loop %u/%u, psram 64 KB read %u/%u", (unsigned) p.bench_cpu[0],
+             (unsigned) p.bench_cpu[1], (unsigned) p.bench_ram[0], (unsigned) p.bench_ram[1]);
   }
   if (st.anim) {
     if (lv_display_t *d = lv_display_get_default())
@@ -311,6 +349,10 @@ inline void frame_launch() {
   float x, y, deg;
   path(std::min(u, 1.1f), x, y, deg);
   auto &pf = st.prof;
+  if (!st.benched && ts > 2.0f) {
+    st.benched = true;
+    bench(1);
+  }
   uint32_t t_a = now_us();
   // rocket: pivot on the body centre; the flame steps through FLAME_SEQ (UI-69c)
   if (now_ms() - st.flame_at >= FLAME_MS) {
@@ -319,7 +361,11 @@ inline void frame_launch() {
     if (lv_draw_buf_t *b = st.img_buf[FLAME_SEQ[st.flame_i]])
       lv_image_set_src(st.img, b);
   }
-  lv_image_set_rotation(st.img, (int32_t) (deg * 10.0f));
+  const int32_t rot = (int32_t) (deg * 10.0f);
+  if (std::abs(rot - st.last_rot) >= 15) {  // a new angle only every 1.5 degrees
+    st.last_rot = rot;
+    lv_image_set_rotation(st.img, rot);
+  }
   lv_obj_set_pos(st.img, (int32_t) std::lround(x) - PX, (int32_t) std::lround(y) - PY);
   uint32_t t_b = now_us();
   pf.t_img += t_b - t_a;
@@ -622,6 +668,9 @@ inline void play_scene(bool undock, const char *name) {
   // refresh and dropped or doubled steps). The objects it moves re-arm the next refresh. The
   // timer only covers a stretch where nothing moved and no refresh came.
   st.prof = St::Prof();
+  st.last_rot = -100000;
+  st.benched = false;
+  bench(0);
   if (lv_display_t *d = lv_display_get_default()) {
     lv_display_add_event_cb(d, on_refr, LV_EVENT_REFR_START, nullptr);
     for (lv_event_code_t c : {LV_EVENT_REFR_READY, LV_EVENT_FLUSH_START, LV_EVENT_FLUSH_FINISH, LV_EVENT_INVALIDATE_AREA})
