@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.12 (queued): the unit's own frame log on 4.6.11 showed 3-5 fps during the launch animation (longest gap 600+ ms), worst while the ground cloud shows: translucent smoke makes LVGL blend against the PSRAM side (PERF-9). Smoke is now opaque discs, their colour pre-mixed with the background under each one (UI-69e); the soft smoke images of 4.6.11 are gone.
 - 4.6.11 (installed): the launch animation was still jerky on the unit. Smoke is now soft round images made at boot (a plain image blend, no anti-aliased circle masks), the ground cloud has 6 billows (was 12) and the trail 32 puffs (was 48); host render time per frame down about 30%, the largest frame's redraw down 37%. Firmware update checks are logged: the manifest URL at DEBUG and the answer at INFO (NET-13a; ESPHome's own update check logged nothing). The unit logs the frame rate after each animation ("animation: N frames in T ms (F fps), longest gap G ms") to tune from.
 - 4.6.10 (installed): the launch's ground cloud is 12 round billows rolling out sideways from the pad, the inner ones warm-lit, then drifting and thinning (UI-69; was three widening rounded bars). Upgrade Check button in the web UI and HA (UI-68b). Satellite and sky updates pause while the launch animation plays (UI-69b). The rocket's flame flickers through five shapes (length, width, lean) with a white-hot core (UI-69c; was two lengths swapped every 80 ms). README animation re-recorded at 30 fps.
 - 4.6.9 (installed): smoother launch animation (UI-69a): positions are set at the start of every display refresh (16 ms) instead of on a 33 ms timer that beat against it, and the smoke puffs grow and fade in 0.18 s steps so only a few change per frame (host test: 6% of the screen redrawn per frame, was 36% with whole-screen frames when the 32 dirty-area limit overflowed).
@@ -941,11 +942,12 @@ UI-69a Launch animation smoothness: frame() runs on the display's LV_EVENT_REFR_
        refresh). Each puff and the pad cloud change only when their age crosses a 0.04 DUR
        step, so the number of dirty areas per frame stays well under LVGL's 32 (past that
        a frame redraws the whole screen).
-UI-69d Smoke images: PR_N = 12 soft round ARGB8888 images (radius 4..37 in steps of 3, colour
-       0xC8CDD7, alpha a smoothstep over the outer half) drawn at boot; each puff and billow is
-       an lv_image showing the nearest size with image_opa for its fade; the three inner
-       billows are recoloured 20% toward 0xFFB070. After each animation the frame count, rate
-       and longest gap between refreshes are logged (INFO, tag rocket).
+UI-69e Smoke is drawn opaque (PERF-9): each puff and billow is a round lv_obj, bg_opa COVER,
+       coloured mix(smoke colour, background, strength), the background being SKY_BG when its
+       centre is inside the sky disc (centre 240,242, radius 184) and PAGE_BG outside. Fading
+       is a colour step toward the background. (UI-69d's translucent soft images, 4.6.11, ran at
+       3-5 fps on the unit.) After each animation the frame count, rate and longest gap between
+       refreshes are logged (INFO, tag rocket).
 UI-69b While the launch animation plays, sat::tick() returns at once (no propagation, marker
        moves, sky layers or data drain); the first tick after it ends redraws for the
        current time.
