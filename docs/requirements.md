@@ -1,7 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.12 (queued): the unit's own frame log on 4.6.11 showed 3-5 fps during the launch animation (longest gap 600+ ms), worst while the ground cloud shows: translucent smoke makes LVGL blend against the PSRAM side (PERF-9). Smoke is now opaque discs, their colour pre-mixed with the background under each one (UI-69e); the soft smoke images of 4.6.11 are gone.
+- 4.6.13 (queued): planet photos with a phase (Venus as a crescent) no longer show a thin unlit arc around the dark side: the photo's soft rim reached past the disc the shading found, and was left bright (UI-61f). The Wi-Fi status page names the network it is trying (saved in flash, NET-2c; the public build showed its placeholder "your Wi-Fi network"). ISS undocking animation (UI-69f) and a Play Undocking Animation button. Each animation now logs where a frame's time goes (UI-69g): the opaque smoke of 4.6.12 did not help, still 3.4-3.6 fps, and the same with the Milky Way and stars switched off, so the map is not the cost.
+- 4.6.12 (released): the unit's own frame log on 4.6.11 showed 3-5 fps during the launch animation (longest gap 600+ ms), worst while the ground cloud shows: translucent smoke makes LVGL blend against the PSRAM side (PERF-9). Smoke is now opaque discs, their colour pre-mixed with the background under each one (UI-69e); the soft smoke images of 4.6.11 are gone.
 - 4.6.11 (installed): the launch animation was still jerky on the unit. Smoke is now soft round images made at boot (a plain image blend, no anti-aliased circle masks), the ground cloud has 6 billows (was 12) and the trail 32 puffs (was 48); host render time per frame down about 30%, the largest frame's redraw down 37%. Firmware update checks are logged: the manifest URL at DEBUG and the answer at INFO (NET-13a; ESPHome's own update check logged nothing). The unit logs the frame rate after each animation ("animation: N frames in T ms (F fps), longest gap G ms") to tune from.
 - 4.6.10 (installed): the launch's ground cloud is 12 round billows rolling out sideways from the pad, the inner ones warm-lit, then drifting and thinning (UI-69; was three widening rounded bars). Upgrade Check button in the web UI and HA (UI-68b). Satellite and sky updates pause while the launch animation plays (UI-69b). The rocket's flame flickers through five shapes (length, width, lean) with a white-hot core (UI-69c; was two lengths swapped every 80 ms). README animation re-recorded at 30 fps.
 - 4.6.9 (installed): smoother launch animation (UI-69a): positions are set at the start of every display refresh (16 ms) instead of on a 33 ms timer that beat against it, and the smoke puffs grow and fade in 0.18 s steps so only a few change per frame (host test: 6% of the screen redrawn per frame, was 36% with whole-screen frames when the 32 dirty-area limit overflowed).
@@ -823,6 +824,10 @@ UI-61e Display-size photos: sky_photos.h stores each photo scaled in the browser
        360x184), baseline JPEG q0.92, ~92 KB in all, with w and h. planet_photo_ready() decodes
        it 1:1 (skyjpg::decode_copy, its own work area) straight into planet_src on the loop
        when the view opens (a few tens of ms); the last one decoded is kept.
+UI-61f Photo phase shading covers the whole image: pixels outside the disc found by the
+       brightness threshold are shaded as the limb in their direction (unit vector, no depth),
+       so the photo's soft edge and glow on the night side go dark with it; the lit side keeps
+       its glow.
 UI-61b Photo | Drawn: two 128x32 buttons at 108,442 / 244,442 (as Globe | region), the one
        showing navy with orange text; one caption line above (the planet's facts). The
        choice (sat::planet_drawn) holds for every planet until changed; Drawn fetches
@@ -948,6 +953,22 @@ UI-69e Smoke is drawn opaque (PERF-9): each puff and billow is a round lv_obj, b
        is a colour step toward the background. (UI-69d's translucent soft images, 4.6.11, ran at
        3-5 fps on the unit.) After each animation the frame count, rate and longest gap between
        refreshes are logged (INFO, tag rocket).
+UI-69f Undocking animation: at the time of a Launch Library event whose type contains
+       "Undocking" and whose location is the International Space Station (EventRec.iss, from
+       the list's "location" string; exact times only, within 2 min after), once per event: the
+       station from above as opaque rectangles (ISS_SHAPE: truss, eight solar arrays, two
+       radiators, the module stack with two nodes, the Russian segment and its arrays) and a
+       capsule image (26x40, trunk, heat shield, white body, docking adapter) nose-down at the
+       forward port (240,176). At 1 s the hooks let go: four thruster puffs, then a pair every
+       0.5 s for 2 s (opaque discs fading toward the sky colour, hidden below strength 60); the
+       capsule backs away up and slightly right (4u + 9u^2 px, u in s since release) and leaves
+       the screen; 6 s in all. Same banner, tap to skip, Launch Animation switch and frame log.
+       Play Undocking Animation button (web Display group, weight 8, and HA): the next ISS
+       undocking's name, or "Undocking from the ISS".
+UI-69g Frame profile, logged at INFO after each animation: per refresh, average and maximum of
+       the refresh itself (LV_EVENT_REFR_START to REFR_READY) and its flush part (FLUSH_START to
+       FLUSH_FINISH, with the number of flushed chunks), the main-loop time between refreshes,
+       the animation's own code, and the invalidated pixels.
 UI-69b While the launch animation plays, sat::tick() returns at once (no propagation, marker
        moves, sky layers or data drain); the first tick after it ends redraws for the
        current time.
@@ -1191,6 +1212,9 @@ NET-12 Connection reuse: one kept-alive esp_http_client, reused (esp_http_client
        non-200 whose body can't be flushed, or a body left unread. A reused connection the
        server has closed is replaced at once; a fresh connect that fails is retried twice,
        a second apart (NET-11). The download log says "reused connection" or "connect".
+NET-2c The Wi-Fi status page's second line is the SSID being tried (the station entry ESPHome
+       selected: credentials saved in flash, or built in), refreshed while it shows; the
+       substitution wifi_name only if none is known.
 NET-13 Each request's URL goes to the log at DEBUG when it starts ("<what>: GET <url>"), and the
        failure lines (client init, connect failed, HTTP <code>, read failed) end with the URL,
        so any download can be tried by hand from a browser.
