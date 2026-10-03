@@ -577,6 +577,17 @@ inline void play_scene(bool undock, const char *name) {
   char b[96];
   banner_text(name && *name ? name : undock ? "Undocking from the ISS" : "Rocket launch", b, sizeof(b));
   lv_label_set_text(st.label, b);
+  // A long name wraps to two lines (no more: dots after that); the banner grows upward to hold
+  // them, its bottom staying put (a fixed 46 px banner let the second line spill over the
+  // border).
+  const int32_t lh = st.font ? lv_font_get_line_height(st.font) : 20;
+  lv_obj_set_style_max_height(st.label, 2 * lh, 0);
+  lv_obj_update_layout(st.label);
+  const int32_t text_h = std::min<int32_t>(lv_obj_get_height(st.label), 2 * lh);
+  lv_obj_set_height(st.label, text_h);  // DOTS cuts a third line here
+  const int32_t bh = std::max<int32_t>(46, text_h + 18);
+  lv_obj_set_height(st.banner, bh);
+  lv_obj_set_y(st.banner, 470 - bh);
   // the label box is ascent + descent tall; caps and digits sit in the top part of it, so
   // centring the box leaves the text high. Drop it by a third of the descent.
   const int32_t drop = st.font ? std::max<int32_t>(1, st.font->base_line / 3) : 1;
