@@ -453,7 +453,7 @@ font:
     # monitor, map-marker, weather-night (UI-16a settings tabs); star-shooting, star-four-points,
     # weather-sunset-down (UI-33 Sat Trails, Stars, After dusk)
     # moon-full (UI-48/49 alerts, 4.5.15)
-    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F1BB9", "\U000F0379", "\U000F034E", "\U000F0594", "\U000F1741", "\U000F0AE2", "\U000F059B", "\U000F0F62", "\U000F018C", "\U000F14DE", "\U000F0629", "\U000F00B8", "\U000F0150", "\U000F00DF", "\U000F00E1", "\U000F08F0", "\U000F0F57", "\U000F0F5A", "\U000F1382", "\U000F009E", "\U000F1616"]  # moon-full, compass-outline, rocket-launch, meteor (UI-63), blur-radial (UI-64); settings row icons (UI-16a, 4.5.38): clock-outline, brightness-6, brightness-auto, map-marker-distance; latitude, longitude, compass-rose
+    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F1BB9", "\U000F0379", "\U000F034E", "\U000F0594", "\U000F1741", "\U000F0AE2", "\U000F059B", "\U000F0F62", "\U000F018C", "\U000F14DE", "\U000F0629", "\U000F00B8", "\U000F0150", "\U000F00DF", "\U000F00E1", "\U000F08F0", "\U000F0F57", "\U000F0F5A", "\U000F1382", "\U000F009E", "\U000F1616", "\U000F0937"]  # moon-full, compass-outline, rocket-launch, meteor (UI-63), blur-radial (UI-64); settings row icons (UI-16a, 4.5.38): clock-outline, brightness-6, brightness-auto, map-marker-distance; latitude, longitude, compass-rose
   - file:
       type: web
       url: https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf
@@ -3085,6 +3085,13 @@ lvgl:
                   y: 14
                   text: "LEO cone"
                   text_font: mono16
+              - label:
+                  id: ico_cone
+                  x: 122
+                  y: 18
+                  text: "\U000F0937"   # angle-acute
+                  text_font: mdi_card20
+                  text_color: 0x9FB2EA
               - slider:
                   id: sl_cone
                   x: 150

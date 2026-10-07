@@ -519,7 +519,7 @@ UI-16a Settings tabs: under the header (SETTINGS, Cancel, Save) five icon-only t
        91x44 at y 52 (x 4, 99, 194, 289, 384): Display (MDI monitor), Location (map-marker),
        Celestial (weather-night), Satellites (satellite-variant), Alerts (bell-ring); the
        active tab is 0x2D5BD0, the others 0x1A2547. Each tab is a panel (y 104, 336 high);
-       only one is shown. Satellites: LEO cone, LEO | Starlink, MEO | GEO, Debris |
+       only one is shown. Satellites: LEO cone (angle-acute icon), LEO | Starlink, MEO | GEO, Debris |
        Sat Trails, Stations. Celestial: Stars | After dusk, Planets | Comets, Milky Way.
        Alerts: Aurora | Planets, Sky events | Stations, Launches | Dockings.
        The page always opens on Display; switching tabs hides the keyboard. Cancel

@@ -112,6 +112,7 @@ int main(int argc, char **argv) {
   lv_obj_set_size(pn, 480, 336);
   if (sel == 3) {
     L(pn, 16, 14, "LEO cone", &mono16, 0xE6EAF5);
+    L(pn, 122, 18, "\xF3\xB0\xA4\xB7", &mdi20, 0x9FB2EA);  // angle-acute
     lv_obj_t *sl = lv_slider_create(pn);
     lv_obj_set_pos(sl, 150, 18);
     lv_obj_set_size(sl, 230, 14);
