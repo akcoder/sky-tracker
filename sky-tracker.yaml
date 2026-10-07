@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.24"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.25"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -105,6 +105,7 @@ esphome:
             sat::set_sky_alerts(id(sky_alerts).state);  // UI-47..51
             sat::set_alert_kinds(id(station_alerts).state, id(launch_alerts).state, id(event_alerts).state);  // UI-41e
             sat::set_stations(id(show_stations).state);  // UI-52b
+            sat::set_lunar_alerts(id(lunar_alerts).state);  // UI-41f
             sat::set_night(id(night_mode).state);      // UI-45
             sat::setup(c, w);
             sat::vs::install(id(main_display));  // PERF-14: status-line changes drawn behind the scan
@@ -1334,6 +1335,19 @@ switch:
       - lambda: sat::set_alert_kinds(true, id(launch_alerts).state, id(event_alerts).state);
     on_turn_off:
       - lambda: sat::set_alert_kinds(false, id(launch_alerts).state, id(event_alerts).state);
+  - platform: template           # UI-41f: full Moon, Moon near a planet or star, lunar eclipses
+    id: lunar_alerts
+    name: Lunar Alerts
+    web_server:
+      sorting_group_id: grp_celestial
+      sorting_weight: 14
+    icon: mdi:moon-full
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_lunar_alerts(true);
+    on_turn_off:
+      - lambda: sat::set_lunar_alerts(false);
   - platform: template           # UI-54: launch alerts
     id: launch_alerts
     name: Launch Alerts
@@ -2149,6 +2163,7 @@ lvgl:
             set(id(sw_station_alerts), id(station_alerts).state);  // UI-41e
             set(id(sw_launch_alerts), id(launch_alerts).state);
             set(id(sw_event_alerts), id(event_alerts).state);
+            set(id(sw_lunar_alerts), id(lunar_alerts).state);  // UI-41f
             set(id(sw_stations), id(show_stations).state);  // UI-52b
             set(id(sw_milky_way), id(show_milky_way).state);  // UI-64
             set(id(sw_comets), id(show_comets).state);        // UI-63
@@ -2236,6 +2251,7 @@ lvgl:
                         sw(id(sw_station_alerts), id(station_alerts));  // UI-41e
                         sw(id(sw_launch_alerts), id(launch_alerts));
                         sw(id(sw_event_alerts), id(event_alerts));
+                        sw(id(sw_lunar_alerts), id(lunar_alerts));  // UI-41f
                         sw(id(sw_stations), id(show_stations));  // UI-52b
                         sw(id(sw_milky_way), id(show_milky_way));  // UI-64
                         sw(id(sw_comets), id(show_comets));        // UI-63
@@ -3341,7 +3357,7 @@ lvgl:
               - label:                 # UI-54
                   x: 16
                   y: 108
-                  text: "Launches"
+                  text: "Launch"
                   text_font: mono16
               - label:
                   x: 122
@@ -3370,6 +3386,23 @@ lvgl:
                   id: sw_event_alerts
                   x: 400
                   y: 102
+                  width: 56
+                  height: 28
+              - label:                 # UI-41f
+                  x: 16
+                  y: 152
+                  text: "Lunar"
+                  text_font: mono16
+              - label:
+                  x: 122
+                  y: 150
+                  text: "\U000F0F62"   # moon-full
+                  text_font: mdi_card20
+                  text_color: 0xDCE2EE
+              - switch:
+                  id: sw_lunar_alerts
+                  x: 150
+                  y: 146
                   width: 56
                   height: 28
         - button:                # UI-67: About (version, device, credits), lower right

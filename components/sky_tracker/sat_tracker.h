@@ -403,6 +403,7 @@ struct Ui {
   // UI-41a alert switches (UI-47..51: sky events)
   bool aurora_alerts = true, planet_alerts = true, sky_alerts = true;
   bool station_alerts = true, launch_alerts = true, event_alerts = true;  // UI-41e
+  bool lunar_alerts = true;  // UI-41f: full Moon, Moon near a planet or star, lunar eclipses
   bool stations_on = true;  // UI-52b: ISS and Tiangong drawn on the map
   // UI-52 Tiangong
   Marker css;
@@ -2763,6 +2764,7 @@ inline void set_alerts(bool aurora, bool planet) {
     lv_obj_invalidate(ui.w.sky);
 }
 inline void set_sky_alerts(bool on) { ui.sky_alerts = on; }  // UI-47..51 (and UI-41b)
+inline void set_lunar_alerts(bool on) { ui.lunar_alerts = on; }  // UI-41f
 inline void set_alert_kinds(bool stations, bool launches, bool events) {  // UI-41e
   ui.station_alerts = stations;
   ui.launch_alerts = launches;
@@ -3434,10 +3436,11 @@ inline int collect_alerts(double t, Alert *out, int max) {
         }
       break;
     }
-  if (ui.sky_alerts) {
+  if (ui.sky_alerts || ui.lunar_alerts) {  // UI-41f: the Moon's own alerts follow Lunar
     char w[32], h0[16], h1[16];
-    // UI-51 eclipses seen from here
-    if (const ev::Eclipse *e = next_eclipse(t); e && e->t0 - t <= SKY_ALERT_S)
+    // UI-51 eclipses seen from here (lunar ones follow Lunar, solar ones Sky events)
+    if (const ev::Eclipse *e = next_eclipse(t);
+        e && e->t0 - t <= SKY_ALERT_S && (ev::is_lunar(e->type) ? ui.lunar_alerts : ui.sky_alerts))
       if (Alert *a = add(C_ECLIPSE, ev::is_lunar(e->type) ? "\xF3\xB0\xBD\xA2" : "\xF3\xB0\x96\x99", nullptr)) {
         a->info = AI_ECLIPSE;
         const bool tot = e->c1 > e->c0 && e->c0 > 0;
@@ -3455,7 +3458,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
         }
       }
     // UI-47 meteor showers: from 3 days before the peak to the end of the peak's day
-    for (int i = 0; i < ev::N_SHOWERS; i++) {
+    for (int i = 0; i < ev::N_SHOWERS && ui.sky_alerts; i++) {
       const double pk = sev.peak[i];
       if (pk - t > SKY_ALERT_S || t >= local_midnight(pk) + 86400.0)
         continue;
@@ -3467,7 +3470,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
       }
     }
     // UI-48 the full Moon, on its day and the day before
-    if (sev.full_t > 0 && sev.full_t - t <= 1.5 * 86400.0 && t < local_midnight(sev.full_t) + 86400.0)
+    if (ui.lunar_alerts && sev.full_t > 0 && sev.full_t - t <= 1.5 * 86400.0 && t < local_midnight(sev.full_t) + 86400.0)
       if (Alert *a = add(C_MOON, "\xF3\xB0\xBD\xA2", nullptr)) {  // moon-full
         a->kind = K_MOON;
         day_word(t, sev.full_t, w, sizeof(w));
@@ -3479,7 +3482,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
           snprintf(a->text, sizeof(a->text), "%s %s%s", sev.full_name, w, sev.full_super ? " - supermoon" : "");
       }
     // UI-49 the Moon near a planet or bright star
-    if (sev.conj_with)
+    if (ui.lunar_alerts && sev.conj_with)
       if (Alert *a = add(C_MOON, "\xF3\xB0\xBD\xA2", nullptr)) {
         a->kind = K_MOON;
         if (sev.conj_t - t < 1800)

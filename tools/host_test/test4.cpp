@@ -1282,6 +1282,26 @@ int main() {
         sat::set_alert_kinds(true, true, true);
         CHECK(l0 > 0 && e0 > 0 && l1 == 0 && e1 == e0 && l2 == l0 && e2 == 0, "alert kinds %d/%d %d/%d %d/%d", l0, e0, l1, e1, l2, e2);
       }
+      {  // UI-41f: the Moon's alerts follow Lunar, not Sky events
+        auto counts = [&](int &moon, int &other) {
+          static sat::Alert xa[sat::MAX_ALERTS];
+          // half a day before the next full Moon (sev.full_t), when its alert is up
+          const double tm = sat::sev.full_t > sat_host_now ? sat::sev.full_t - 43200 : sat_host_now;
+          const int nx = sat::collect_alerts(tm, xa, sat::MAX_ALERTS);
+          moon = other = 0;
+          for (int i = 0; i < nx; i++) (xa[i].col == sat::C_MOON ? moon : other)++;
+        };
+        int m0, o0, m1, o1, m2, o2;
+        counts(m0, o0);
+        sat::set_lunar_alerts(false);
+        counts(m1, o1);
+        sat::set_lunar_alerts(true);
+        sat::set_sky_alerts(false);
+        counts(m2, o2);
+        sat::set_sky_alerts(true);
+        printf("lunar alerts: on %d/%d, Lunar off %d/%d, Sky events off %d/%d (moon/other)\n", m0, o0, m1, o1, m2, o2);
+        CHECK(m0 > 0 && m1 == 0 && o1 == o0 && m2 == m0, "Lunar switch");
+      }
       {  // UI-52b: Space stations off hides both stations and their list rows
         sat::set_stations(false);
         CHECK(!sat::ui.iss.up && !sat::ui.css.up && !sat::ui.iss.shown, "stations hidden");

@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.25 (queued): a Lunar alert switch (Settings > Alerts and Home Assistant): the full Moon, the Moon near a planet or bright star, and lunar eclipses now follow it instead of Sky events (UI-41f). "Launches" reads "Launch".
 - 4.6.24 (queued): the settings header names the open tab (DISPLAY, LOCATION, CELESTIAL, SATELLITES, ALERTS) instead of SETTINGS (UI-16a).
 - 4.6.23 (installed): Settings tabs are icons only, with a fifth, Alerts (bell-ring): Aurora, Planets and Sky events moved there from Celestial, plus new Space station, Launch and Docking alert switches (UI-41e). A Space stations switch on the Satellites tab shows or hides the ISS and Tiangong (UI-52b). Each new switch is also a Home Assistant switch.
 - 4.6.22 (installed over USB to end a 4.6.21 boot loop): fixes a crash (abort) when satellite lists downloaded while layers were switched: downloads freed and reallocated lists of up to 1 MB until PSRAM was in pieces too small for the next one. The lists are now reserved once at start and refilled in place (FAIL-12). Crash records survive (their flash sector moved off the launch list's, which overwrote them) and the Last Crash sensor carries the backtrace (FAIL-10).
@@ -522,7 +523,7 @@ UI-16a Settings tabs: under the header (the open tab's name, Cancel, Save) five 
        active tab is 0x2D5BD0, the others 0x1A2547. Each tab is a panel (y 104, 336 high);
        only one is shown. Satellites: LEO cone (angle-acute icon), LEO | Starlink, MEO | GEO, Debris |
        Sat Trails, Stations. Celestial: Stars | After dusk, Planets | Comets, Milky Way.
-       Alerts: Aurora | Planets, Sky events | Stations, Launches | Dockings.
+       Alerts: Aurora | Planets, Sky events | Stations, Launch | Dockings, Lunar.
        The page always opens on Display; switching tabs hides the keyboard. Cancel
        and Save cover all tabs.
        Every obj container on the page (panels, coordinate boxes, tab rows) MUST set
@@ -652,6 +653,10 @@ UI-41e Alert kinds with their own switch (Settings > Alerts and Home Assistant),
        default: Space Station Alerts (ISS and Tiangong visible passes), Launch Alerts (UI-54),
        Docking Alerts (UI-54c dockings, undockings, EVAs). Launches and events no longer
        follow Sky Event Alerts.
+UI-41f Lunar Alerts (on by default): the full Moon (UI-48), the Moon near a planet or bright
+       star (UI-49) and lunar eclipses (UI-51). Sky Event Alerts keeps comets bright enough to
+       see (UI-63), solar eclipses, meteor shower peaks (UI-47) and their radiant on the map,
+       and solstices and equinoxes (UI-41b).
 UI-41c Alert icon placement: after the text is set, the icon (glyph or picture) is placed so
        its ink is centred on the text, from the first line's cap top to the last line's
        baseline, from the fonts' glyph metrics (lv_font_get_glyph_dsc).
@@ -1345,6 +1350,8 @@ FAIL-10 Crash capture (sky_diag.h): ESPHome's crash handler keeps the last panic
        was lost at the next launch-list save.
 
 ## 9. Verification (VER)
+VER-3  Design comps live in docs/comps (PNG/GIF), rendered by tools/host_test/make_comps.sh
+       from the harness (settings tabs: setcomp.cpp; boot launch: BOOT_GIF=1 ./t4).
 TEST-1 Download stress: tools/host_test/fetch_celestrak.py caches the CelesTrak files (at most
        one fetch per file per 2 h); tools/host_test/celestrak_server.py serves them on the
        firmware's paths. A debug build sets net::celestrak_base to that server (no CelesTrak
