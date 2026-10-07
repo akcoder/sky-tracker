@@ -1329,6 +1329,14 @@ int main() {
         CHECK(sat::alert_zone && hit(10, 5) == sat::alert_zone && hit(390, 50) == sat::alert_zone &&
               hit(30, 40) == sat::alert_zone && hit(240, 120) != sat::alert_zone && hit(460, 40) != sat::alert_zone,
               "alert tap zone");
+        for (lv_obj_t *ic : {sat::ui.aurora_icon, sat::ui.alert_img}) {  // and on either icon slot
+          lv_area_t c;
+          lv_obj_get_coords(ic, &c);
+          const bool was = lv_obj_has_flag(ic, LV_OBJ_FLAG_HIDDEN);
+          lv_obj_remove_flag(ic, LV_OBJ_FLAG_HIDDEN);
+          CHECK(hit((c.x1 + c.x2) / 2, (c.y1 + c.y2) / 2) == sat::alert_zone, "a tap on the alert icon reaches the zone");
+          if (was) lv_obj_add_flag(ic, LV_OBJ_FLAG_HIDDEN);
+        }
       }
       {  // UI-41f: the Moon's alerts follow Lunar, not Sky events
         auto counts = [&](int &moon, int &other) {

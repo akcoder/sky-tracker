@@ -155,11 +155,15 @@ struct St {
   bool splash = false;
   lv_draw_buf_t *sea_buf = nullptr, *cap2_buf = nullptr, *chute_buf = nullptr;
   lv_obj_t *sea = nullptr, *chutes = nullptr, *sea_front = nullptr;  // sea_front: water over the floating capsule's base
+  lv_obj_t *sea_img = nullptr, *sea_line = nullptr;  // the ocean inside its rising clip; the surface line
+  float sp_land = 0, sp_amp = 7, sp_freq = 1.4f, sp_phase = 0, sp_drift = 1;  // this splashdown's own path
   uint32_t splash_key = 0;  // the last splashdown shown
   bool splashed = false;
   uint32_t undock_key = 0;  // the last undocking shown
 };
 inline St st;
+inline bool pics_ready = false, boot_pending = false;  // UI-69n: the pictures drawn; a boot launch waiting
+inline uint32_t boot_asked = 0;
 
 #ifdef SAT_HOST_TEST
 inline uint32_t now_ms() { return (uint32_t) (uint64_t) (sat_host_now * 1000.0); }  // wraps as on the device (a plain cast saturates on ARM64)
@@ -391,7 +395,7 @@ inline void stop() {
       lv_obj_delete(o);
       o = nullptr;
     }
-  for (lv_obj_t **o : {&st.sea, &st.chutes, &st.sea_front})
+  for (lv_obj_t **o : {&st.sea, &st.chutes, &st.sea_front, &st.sea_line})
     if (*o) {
       lv_obj_delete(*o);
       *o = nullptr;
@@ -399,6 +403,7 @@ inline void stop() {
   st.label = nullptr;
   st.boot = false;
   st.splash = false;
+  st.sea_img = nullptr;  // (deleted with st.sea, its clip)
 }
 inline bool playing() { return st.anim != nullptr; }
 bool active() { return playing(); }
@@ -650,9 +655,28 @@ inline void frame_splash() {
     stop();
     return;
   }
+  // the sea rises into view over the first 1.3 s (the clip grows up; the picture stays put)
+  if (st.sea && st.sea_img) {
+    const float g = std::min(1.0f, ts / 1.3f);
+    const int h = (int) std::lround(SEA_H * (1 - (1 - g) * (1 - g)));
+    if (h != lv_obj_get_height(st.sea)) {
+      lv_obj_set_pos(st.sea, SEA_X0, SEA_Y + SEA_H - h);
+      lv_obj_set_size(st.sea, SEA_W, h);
+      lv_obj_set_pos(st.sea_img, 0, h - SEA_H);
+      const int top = SEA_Y + SEA_H - h, dy = top - MAP_CY;  // the surface: the disc's chord there
+      const int half = (int) std::sqrt(std::max(0.0f, (float) ((MAP_R - 2) * (MAP_R - 2) - dy * dy)));
+      if (h > 1 && half > 4) {
+        lv_obj_set_pos(st.sea_line, MAP_CX - half, top);
+        lv_obj_set_size(st.sea_line, 2 * half, 2);
+        lv_obj_remove_flag(st.sea_line, LV_OBJ_FLAG_HIDDEN);
+      } else {
+        lv_obj_add_flag(st.sea_line, LV_OBJ_FLAG_HIDDEN);
+      }
+    }
+  }
   const float rest = SEA_Y - CAP2_H + 7;  // floating: the shield and a little of the body under water
-  const float sway = 7.0f * std::sin(ts * 1.4f) * std::max(0.0f, 1 - ts / SPLASH_HIT);
-  const float cx = MAP_CX + sway;
+  const float sway = st.sp_amp * std::sin(ts * st.sp_freq + st.sp_phase) * std::max(0.0f, 1 - ts / SPLASH_HIT);
+  const float cx = MAP_CX + st.sp_land * std::min(1.0f, ts / SPLASH_HIT) + sway;  // drifts to its own spot
   float y;
   if (ts < SPLASH_HIT)
     y = -CAP2_H + (rest + CAP2_H) * (ts / SPLASH_HIT);  // a steady fall: the chutes are open
@@ -666,7 +690,7 @@ inline void frame_splash() {
   }
   if (st.chutes) {
     const float u = std::max(0.0f, ts - SPLASH_HIT - 0.3f);  // let go: they drift off downwind
-    const float chx = cx - CHUTE_W / 2.0f + 34.0f * u, chy = y - CHUTE_H + 2 + 14.0f * u * u;
+    const float chx = cx - CHUTE_W / 2.0f + st.sp_drift * 34.0f * u, chy = y - CHUTE_H + 2 + 14.0f * u * u;
     if (u > 0 && chy > SEA_Y - CHUTE_H / 2)
       lv_obj_add_flag(st.chutes, LV_OBJ_FLAG_HIDDEN);
     else
@@ -772,7 +796,7 @@ inline void banner_text(const char *name, char *b, size_t n) {
 
 inline void play_scene(bool undock, const char *name, bool boot = false, bool splash = false) {
   stop();
-  if (!st.img_buf[0] || (undock && !st.capsule_buf) || (splash && (!st.sea_buf || !st.cap2_buf || !st.chute_buf)))
+  if (!pics_ready || !st.img_buf[0] || (undock && !st.capsule_buf) || (splash && (!st.sea_buf || !st.cap2_buf || !st.chute_buf)))
     return;
   st.undock = undock && !splash;
   st.splash = splash;
@@ -802,11 +826,29 @@ inline void play_scene(bool undock, const char *name, bool boot = false, bool sp
       st.iss[k] = o;
     }
   }
-  if (splash) {  // UI-69m: the ocean under the spray, the chutes over it
-    st.sea = lv_image_create(lv_layer_top());
-    lv_image_set_src(st.sea, st.sea_buf);
-    lv_obj_set_pos(st.sea, SEA_X0, SEA_Y);
-    lv_obj_remove_flag(st.sea, LV_OBJ_FLAG_CLICKABLE);
+  if (splash) {  // UI-69m: the ocean (rising inside a clip) under the spray, the chutes over it
+    st.sea = lv_obj_create(lv_layer_top());  // the clip: grows up from the bottom of the band
+    lv_obj_remove_style_all(st.sea);
+    lv_obj_remove_flag(st.sea, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_set_pos(st.sea, SEA_X0, SEA_Y + SEA_H);
+    lv_obj_set_size(st.sea, SEA_W, 0);
+    st.sea_img = lv_image_create(st.sea);
+    lv_image_set_src(st.sea_img, st.sea_buf);
+    lv_obj_remove_flag(st.sea_img, LV_OBJ_FLAG_CLICKABLE);
+    st.sea_line = lv_obj_create(lv_layer_top());  // the surface, as wide as the disc at its height
+    lv_obj_remove_style_all(st.sea_line);
+    lv_obj_set_style_bg_color(st.sea_line, lv_color_hex(C_SEA_LIGHT), 0);
+    lv_obj_set_style_bg_opa(st.sea_line, LV_OPA_COVER, 0);
+    lv_obj_remove_flag(st.sea_line, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(st.sea_line, LV_OBJ_FLAG_HIDDEN);
+    // UI-69m: each one its own: where it lands, how it sways, which way the chutes drift
+    uint32_t r = now_us() * 2654435761u;
+    auto rnd = [&r]() { r ^= r << 13, r ^= r >> 17, r ^= r << 5; return (r % 10000) / 10000.0f; };
+    st.sp_land = -60 + 120 * rnd();
+    st.sp_amp = 3 + 9 * rnd();
+    st.sp_freq = 0.9f + 1.1f * rnd();
+    st.sp_phase = 6.283f * rnd();
+    st.sp_drift = rnd() < 0.5f ? -1.0f : 1.0f;
   }
   smoke_create();  // over the ISS, under the rocket and the banner
   if (splash) {
@@ -941,14 +983,88 @@ inline void check() {
   }
 }
 
+// UI-69n: the pictures are drawn after the display is up, a slice at a time (BOOT-1): drawn in
+// setup they kept the screen dark for ~5 s of every boot. Until they are ready no scene plays;
+// a boot launch asked for meanwhile plays when they are, if the boot screen is still up.
+struct PicJob {
+  lv_draw_buf_t *db;
+  uint8_t kind, arg;  // kind: 0 rocket (arg: flame), 1 undocking capsule, 2 returning capsule, 3 chutes, 4 sea
+  uint16_t row;
+};
+inline PicJob pic_jobs[FLAMES + 4];
+inline int pic_n = 0, pic_i = 0;
+inline uint32_t pic_sample(const PicJob &j, float x, float y) {
+  switch (j.kind) {
+    case 0: {
+      const float u = (x - PX) / S, v = (y - PY) / S;
+      return sample(u, v, FLAME[j.arg]);
+    }
+    case 1: return capsule_sample(x, y);
+    case 2: return capsule2_sample(x, y);
+    case 3: return chute_sample(x, y);
+    default: return sea_sample(x, y);
+  }
+}
+inline void pic_row(PicJob &j) {  // one row, 4x4 supersampled (as draw_pic)
+  const int w = j.db->header.w;
+  uint8_t *row = (uint8_t *) j.db->data + (size_t) j.row * j.db->header.stride;
+  for (int px = 0; px < w; px++) {
+    uint32_t r = 0, g = 0, b = 0, a = 0;
+    for (int sy = 0; sy < 4; sy++)
+      for (int sx = 0; sx < 4; sx++) {
+        const uint32_t c = pic_sample(j, px + (sx + 0.5f) / 4, j.row + (sy + 0.5f) / 4);
+        if (c >> 24)
+          r += (c >> 16) & 255, g += (c >> 8) & 255, b += c & 255, a += c >> 24;
+      }
+    const uint32_t n = a ? a : 1;
+    row[px * 4 + 0] = (uint8_t) std::min<uint32_t>(255, b * 255 / n);
+    row[px * 4 + 1] = (uint8_t) std::min<uint32_t>(255, g * 255 / n);
+    row[px * 4 + 2] = (uint8_t) std::min<uint32_t>(255, r * 255 / n);
+    row[px * 4 + 3] = (uint8_t) (a / 16);
+  }
+  j.row++;
+}
+inline void pics_work(uint32_t budget_us) {  // draw rows until the budget is spent
+  const uint32_t t0 = now_us();
+  while (pic_i < pic_n && now_us() - t0 < budget_us) {
+    PicJob &j = pic_jobs[pic_i];
+    if (j.db == nullptr || j.row >= j.db->header.h) {
+      pic_i++;
+      continue;
+    }
+    pic_row(j);
+  }
+  if (pic_i >= pic_n && !pics_ready) {
+    pics_ready = true;
+    ESP_LOGI("rocket", "animation pictures ready");
+    if (boot_pending && now_ms() - boot_asked < 30000)
+      play_scene(false, nullptr, true);
+    boot_pending = false;
+  }
+}
 void init(const lv_font_t *banner) {
   st.font = banner;
+  auto job = [](lv_draw_buf_t *&dst, int w, int h, uint8_t kind, uint8_t arg) {
+    dst = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_ARGB8888, 0);
+    if (dst)
+      lv_draw_buf_clear(dst, nullptr);
+    pic_jobs[pic_n++] = {dst, kind, arg, 0};
+  };
   for (int i = 0; i < FLAMES; i++)
-    st.img_buf[i] = draw_rocket(FLAME[i]);
-  st.capsule_buf = draw_capsule();
-  st.cap2_buf = draw_pic(CAP2_W, CAP2_H, capsule2_sample);  // UI-69m
-  st.chute_buf = draw_pic(CHUTE_W, CHUTE_H, chute_sample);
-  st.sea_buf = draw_pic(SEA_W, SEA_H, sea_sample);
+    job(st.img_buf[i], IW, IH, 0, (uint8_t) i);
+  job(st.capsule_buf, CAP_W, CAP_H, 1, 0);
+  job(st.cap2_buf, CAP2_W, CAP2_H, 2, 0);  // UI-69m
+  job(st.chute_buf, CHUTE_W, CHUTE_H, 3, 0);
+  job(st.sea_buf, SEA_W, SEA_H, 4, 0);
+#ifdef SAT_HOST_TEST
+  pics_work(UINT32_MAX);  // the host draws them at once
+#else
+  lv_timer_create([](lv_timer_t *t) {  // ~10 ms of drawing every 25 ms, then it stops
+    pics_work(10000);
+    if (pics_ready)
+      lv_timer_delete(t);
+  }, 25, nullptr);
+#endif
   lv_timer_create([](lv_timer_t *) { check(); }, 1000, nullptr);
 }
 void set_enabled(bool on) {
@@ -959,6 +1075,11 @@ void set_enabled(bool on) {
 void play_boot() {
   if (!st.enabled)
     return;
+  if (!pics_ready) {  // UI-69n: when the pictures are drawn
+    boot_pending = true;
+    boot_asked = now_ms();
+    return;
+  }
   play_scene(false, nullptr, true);
 }
 void play_splash_now() {  // UI-69m

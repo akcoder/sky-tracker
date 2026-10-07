@@ -2060,12 +2060,14 @@ inline void draw_hud(double t) {
       lv_label_set_text(ui.aurora_icon, "");
       lv_obj_set_pos(ui.aurora_icon, base_x, base_y + ALERT_DY - 2);
       lv_obj_add_flag(ui.aurora_icon, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_remove_flag(ui.aurora_icon, LV_OBJ_FLAG_CLICKABLE);  // UI-41d: a tap goes to the alert's zone
     }
     if (ui.alert_img == nullptr) {  // picture slot (planets, alignments)
       ui.alert_img = lv_image_create(parent);
       lv_obj_remove_style_all(ui.alert_img);
       lv_obj_set_pos(ui.alert_img, base_x, base_y + ALERT_DY - 2);
       lv_obj_add_flag(ui.alert_img, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_remove_flag(ui.alert_img, LV_OBJ_FLAG_CLICKABLE);  // UI-41d: images take taps by default
     }
     static const void *shown_icon = nullptr;
     const void *want_icon = al ? (al->img ? (const void *) al->img : (const void *) al->glyph) : nullptr;
