@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.25 (queued): a Comets alert switch (UI-41g): the visible-comet alert follows it instead of Sky events. A Lunar alert switch (Settings > Alerts and Home Assistant): the full Moon, the Moon near a planet or bright star, and lunar eclipses now follow it instead of Sky events (UI-41f). "Launches" reads "Launch".
+- 4.6.25 (queued): every progress bar uses the same colours (UI-71; the picture loader's was orange). A Comets alert switch (UI-41g): the visible-comet alert follows it instead of Sky events. A Lunar alert switch (Settings > Alerts and Home Assistant): the full Moon, the Moon near a planet or bright star, and lunar eclipses now follow it instead of Sky events (UI-41f). "Launches" reads "Launch".
 - 4.6.24 (queued): the settings header names the open tab (DISPLAY, LOCATION, CELESTIAL, SATELLITES, ALERTS) instead of SETTINGS (UI-16a).
 - 4.6.23 (installed): Settings tabs are icons only, with a fifth, Alerts (bell-ring): Aurora, Planets and Sky events moved there from Celestial, plus new Space station, Launch and Docking alert switches (UI-41e). A Space stations switch on the Satellites tab shows or hides the ISS and Tiangong (UI-52b). Each new switch is also a Home Assistant switch.
 - 4.6.22 (installed over USB to end a 4.6.21 boot loop): fixes a crash (abort) when satellite lists downloaded while layers were switched: downloads freed and reallocated lists of up to 1 MB until PSRAM was in pieces too small for the next one. The lists are now reserved once at start and refilled in place (FAIL-12). Crash records survive (their flash sector moved off the launch list's, which overwrote them) and the Last Crash sensor carries the backtrace (FAIL-10).
@@ -658,6 +658,8 @@ UI-41f Lunar Alerts (on by default): the full Moon (UI-48), the Moon near a plan
        shower peaks (UI-47) and their radiant on the map, and solstices and equinoxes (UI-41b).
 UI-41g Comet Alerts (on by default): a comet bright enough to see (UI-63). The Comets map layer
        (Celestial) must be on too: a comet not on the map raises no alert.
+UI-71  Every progress bar (picture downloads, internet and microSD updates) uses C_BAR 0x2D5BD0 on
+       C_BAR_BG 0x1A2547.
 UI-41c Alert icon placement: after the text is set, the icon (glyph or picture) is placed so
        its ink is centred on the text, from the first line's cap top to the last line's
        baseline, from the fonts' glyph metrics (lv_font_get_glyph_dsc).
@@ -1351,9 +1353,12 @@ FAIL-10 Crash capture (sky_diag.h): ESPHome's crash handler keeps the last panic
        was lost at the next launch-list save.
 
 ## 9. Verification (VER)
-VER-3  Design comps live in docs/comps (PNG/GIF), rendered by tools/host_test/make_comps.sh
-       from the harness (settings tabs: setcomp.cpp; boot launch: BOOT_GIF=1 ./t4), with the
-       test suite's screen renders (./t4 writes them to out/renders) in docs/comps/renders.
+VER-3  Design comps live in docs/comps (PNG/GIF), rendered by tools/host_test/make_comps.sh:
+       the settings tabs by render_settings.py (the page's LVGL calls lifted from ESPHome's
+       generated main.cpp, LVGL built with ESPHome's lv_conf.h, fonts rebuilt from the YAML),
+       the boot launch (BOOT_GIF=1) and the test suite's screens (docs/comps/renders), drawn on
+       the cached CelesTrak lists (RENDER_REAL=1; fake data where CelesTrak refuses). The checks
+       run separately on the test data.
        Pictures are the real ones (tools/host_test/fetch_images.py: GOES SUVI, Dial-A-Moon
        at the test's hour, GOES GeoColor, Wikimedia planet photos, JPL comets), cached and
        not committed; without the cache gen_fixtures.py draws stand-ins.

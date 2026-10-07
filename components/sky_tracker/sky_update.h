@@ -141,9 +141,9 @@ inline void open() {
   lv_obj_set_size(ui_.bar, 340, 16);
   lv_obj_align(ui_.bar, LV_ALIGN_TOP_MID, 0, 180);
   lv_bar_set_range(ui_.bar, 0, 100);
-  lv_obj_set_style_bg_color(ui_.bar, lv_color_hex(0x1A2547), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(ui_.bar, lv_color_hex(sat::C_BAR_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(ui_.bar, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(ui_.bar, lv_color_hex(0x2D5BD0), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(ui_.bar, lv_color_hex(sat::C_BAR), LV_PART_INDICATOR);  // UI-71
   lv_obj_add_flag(ui_.bar, LV_OBJ_FLAG_HIDDEN);
   for (int i = 0; i < 2; i++) {
     lv_obj_t *b = lv_button_create(c);

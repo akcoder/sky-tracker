@@ -131,6 +131,7 @@ constexpr uint32_t C_DEBRIS = 0xB39B7D;  // UI-29: trash-can icon
 constexpr uint32_t C_GEO_DOT = 0x9C7A3C; // UI-28: dim GEO dots
 constexpr uint32_t C_STARLINK = 0x4F74DB;
 constexpr uint32_t C_ISS = 0xFF8A1F;
+constexpr uint32_t C_BAR = 0x2D5BD0, C_BAR_BG = 0x1A2547;  // UI-71: every progress bar (fill, track)
 constexpr uint32_t C_SUN = 0xFFD54A;
 constexpr uint32_t C_MOON = 0xDCE2EE;
 // UI-40 planets: name tags and alert text, one tint per planet
@@ -5610,9 +5611,9 @@ inline void img_view_open_now(int kind, int planet) {
   lv_obj_set_size(sv.bar, 300, 10);
   lv_obj_align(sv.bar, LV_ALIGN_TOP_MID, 0, 236);
   lv_bar_set_range(sv.bar, 0, 100);
-  lv_obj_set_style_bg_color(sv.bar, lv_color_hex(0x1A2547), LV_PART_MAIN);
+  lv_obj_set_style_bg_color(sv.bar, lv_color_hex(C_BAR_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(sv.bar, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(sv.bar, lv_color_hex(0xFF8A1F), LV_PART_INDICATOR);
+  lv_obj_set_style_bg_color(sv.bar, lv_color_hex(C_BAR), LV_PART_INDICATOR);  // UI-71 (was orange)
   lv_obj_set_style_radius(sv.bar, 5, LV_PART_MAIN);
   lv_obj_set_style_radius(sv.bar, 5, LV_PART_INDICATOR);
   lv_obj_add_flag(sv.bar, LV_OBJ_FLAG_HIDDEN);

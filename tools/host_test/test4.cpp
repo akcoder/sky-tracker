@@ -262,7 +262,10 @@ int main() {
   sat_host_now = T0;
   // REAL_SKY=1: the real sky now, from CelesTrak data cached by ./fetch_celestrak.py (no checks)
   const bool real_sky = getenv("REAL_SKY") != nullptr;
-  if (real_sky) {
+  // RENDER_REAL=1: the whole run (and its renders) on the cached CelesTrak lists; checks made
+  // against the made-up test lists will fail, so this run is for the renders only (VER-3)
+  const bool render_real = getenv("RENDER_REAL") != nullptr;
+  if (real_sky || render_real) {
     const struct { const char *key, *file; } RS[] = {
         {"CATNR=25544&FORMAT=csv", "iss.csv"},         {"CATNR=48274&FORMAT=csv", "css.csv"},
         {"GROUP=visual&FORMAT=csv", "visual.csv"},     {"GROUP=starlink&FORMAT=csv", "starlink.csv"},
@@ -277,7 +280,8 @@ int main() {
       }
       host_http_bodies[r.key] = body;
     }
-    sat_host_now = (double) time(nullptr);
+    if (real_sky)
+      sat_host_now = (double) time(nullptr);
   }
   sat::setup(c, w);
   sat::tick();  // queues the element download
@@ -496,6 +500,7 @@ int main() {
   // error: CelesTrak refuses; the old data stays and the status says so
   {
     sat::net::sats_loaded = sat::net::iss_loaded = sat::net::starlink_loaded = sat_host_now - 13 * 3600;
+    const std::string iss_body = host_http_bodies["CATNR=25544&FORMAT=csv"];
     host_http_bodies["CATNR=25544&FORMAT=csv"] = "HTTP403";
     sat::ui.next_elem = 0;
     sat_host_now += 2; sat::tick(); run_jobs();
@@ -507,6 +512,13 @@ int main() {
     lv_obj_invalidate(lv_screen_active());
     lv_refr_now(disp);
     save_ppm(OUT_DIR "/renders/r4_error.ppm");
+    if (render_real) {  // VER-3: the later renders show CelesTrak answering again, no error line
+      host_http_bodies["CATNR=25544&FORMAT=csv"] = iss_body;
+      sat::net::status.error[0] = 0;
+      sat::net::status.next_try = 0;
+      sat::live.status.error[0] = 0;
+      sat::live.status.loaded = sat_host_now;
+    }
   }
   // offline: no downloads, positions continue
   {
@@ -783,6 +795,7 @@ int main() {
     // a changed satellite group drops the satellites but keeps the ISS
     cfg.sat_group = "stations"; sats.clear(); cache_load();
     CHECK(sats.empty() && have_iss, "group change: sats %zu", sats.size());
+    cfg.sat_group = "visual"; cache_load();  // back to the group everything else is served for
     // DATA-12: a 403 hold survives a reboot
     status.next_try = 0; hold_save(sat_host_now + 7200); status.next_try = 0; cache_load();
     CHECK(status.next_try == sat_host_now + 7200, "hold not carried over: %f", status.next_try);
@@ -2045,7 +2058,7 @@ int main() {
     lab(128, Y + 224, "\xF3\xB0\x96\x94", &mdi20, 0xFF6B6B);  // weather-night
     swi(232, Y + 220, false);
     lv_refr_now(disp);
-    save_ppm(OUT_DIR "/renders/r17_tz.ppm");
+    // (its picture is drawn from the real settings page: docs/comps/settings_display*.png)
     lv_dropdown_open(dd);
     if (lv_obj_t *list = lv_dropdown_get_list(dd)) {
       lv_obj_set_style_text_font(list, &mono16, 0);
@@ -2055,7 +2068,7 @@ int main() {
       lv_obj_set_style_max_height(list, 300, 0);
     }
     lv_refr_now(disp);
-    save_ppm(OUT_DIR "/renders/r17_tz_open.ppm");
+
     lv_dropdown_close(dd);
     lv_screen_load(page1);
     lv_obj_delete(scr);
