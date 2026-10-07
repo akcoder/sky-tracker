@@ -55,3 +55,13 @@ disc_jpg("region_test.jpg", 500, (60, 100, 70), r_frac=0.7, land=True)
 disc_jpg("venus_test.jpg", 500, (225, 205, 160))
 disc_jpg("jupiter_test.jpg", 500, (200, 170, 130))
 disc_jpg("saturn_test.jpg", 500, (215, 190, 140), r_frac=0.22, rings=True)
+
+# The real pictures (and JPL's comet list), when fetch_images.py has cached them, replace the
+# stand-ins above: the tests and renders then show the actual Sun, Moon, Earth and planets.
+import shutil
+real = os.path.join("cache", "images")
+for name in ("suvi_good.png", "moon_test.jpg", "earth_test.jpg", "region_test.jpg", "venus_test.jpg",
+             "jupiter_test.jpg", "saturn_test.jpg", "comet_real.json"):
+    if os.path.exists(os.path.join(real, name)):
+        shutil.copyfile(os.path.join(real, name), os.path.join("fixtures", name))
+        print(name, "real")

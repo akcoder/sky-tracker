@@ -4,7 +4,10 @@
 # renders (out/renders, into docs/comps/renders). Needs Pillow.
 set -euo pipefail
 cd "$(dirname "$0")"
+./fetch_images.py >/dev/null || true   # the real Sun, Moon, Earth, planets (and comets)
+python3 gen_fixtures.py >/dev/null
 ./build.sh >/dev/null
+BOOT_GIF=1 ./t4 > out/t4.log 2>&1 || { tail -20 out/t4.log; exit 1; }   # the renders and the boot launch
 CF="-O2 -w -DLV_CONF_INCLUDE_SIMPLE -I. -Ideps -Ideps/lvgl -I../../components/sky_tracker"
 for f in mono12 mono15; do
   [ -f build/$f.c ] || npx --yes lv_font_conv --font deps/RobotoMono.ttf -r 0x20-0x7E,0xB0 --size ${f#mono} --bpp 4 \

@@ -404,6 +404,7 @@ struct Ui {
   bool aurora_alerts = true, planet_alerts = true, sky_alerts = true;
   bool station_alerts = true, launch_alerts = true, event_alerts = true;  // UI-41e
   bool lunar_alerts = true;  // UI-41f: full Moon, Moon near a planet or star, lunar eclipses
+  bool comet_alerts = true;  // UI-41g: a comet bright enough to see (the layer must be on too)
   bool stations_on = true;  // UI-52b: ISS and Tiangong drawn on the map
   // UI-52 Tiangong
   Marker css;
@@ -2765,6 +2766,7 @@ inline void set_alerts(bool aurora, bool planet) {
 }
 inline void set_sky_alerts(bool on) { ui.sky_alerts = on; }  // UI-47..51 (and UI-41b)
 inline void set_lunar_alerts(bool on) { ui.lunar_alerts = on; }  // UI-41f
+inline void set_comet_alerts(bool on) { ui.comet_alerts = on; }  // UI-41g
 inline void set_alert_kinds(bool stations, bool launches, bool events) {  // UI-41e
   ui.station_alerts = stations;
   ui.launch_alerts = launches;
@@ -3390,7 +3392,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
           a->kind = K_PLANET, a->id = p, snprintf(a->text, sizeof(a->text), "%s visible - %s, %.0f° up", planets::name(p),
                    compass(ui.planet_azel[p].az), ui.planet_azel[p].el);
   // UI-63 a comet bright enough to see (Sky Event Alerts)
-  if (ui.comets_on && ui.sky_alerts)
+  if (ui.comets_on && ui.comet_alerts)  // UI-41g (was Sky events)
     for (int k = 0; k < Ui::MAX_COMETS; k++)
       if (ui.comet_idx[k] >= 0 && ui.comet_visible[k])
         if (Alert *a = add(C_COMET, ICON_COMET, nullptr))

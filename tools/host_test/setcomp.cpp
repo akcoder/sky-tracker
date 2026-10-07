@@ -138,7 +138,7 @@ int main(int argc, char **argv) {
     row(pn, 58, "Sky events", "\xF3\xB0\x96\x94", 0xA8D8FF, true, "Stations", "\xF3\xB1\x8E\x83", 0xFF8A1F, true);
     static lv_image_dsc_t align = pic(sat::picons::ALIGN_PX, sat::picons::BIG);
     image(pn, &align, 372, 18);  // settings_planet_icon(..., pnl_alerts, 372, 18)
-    row(pn, 146, "Lunar", "\xF3\xB0\xBD\xA2", 0xDCE2EE, true, nullptr, nullptr, 0, false);
+    row(pn, 146, "Lunar", "\xF3\xB0\xBD\xA2", 0xDCE2EE, true, "Comets", "\xF3\xB0\x98\xA9", 0xA8F0E0, true);
     row(pn, 102, "Launch", "\xF3\xB1\x93\x9E", 0xFFC46B, true, "Dockings", "\xF3\xB1\x98\x96", 0x8FD3FF, true);
   }
   button(p, 362, 440, 110, 34, 0x1A2547, "About");

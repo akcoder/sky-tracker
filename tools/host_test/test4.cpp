@@ -689,10 +689,27 @@ int main() {
                sat::ui.comet_visible[k], sat::ui.comet_x[k], sat::ui.comet_y[k], sat::ui.comet_tx[k], sat::ui.comet_ty[k]);
         shown += sat::ui.comet_shown[k];
       }
-      CHECK(sat::live.comet_list.size() == 39 && host_last_url.find("sbdb_query.api") != std::string::npos &&
+      CHECK(sat::live.comet_list.size() >= 2 && host_last_url.find("sbdb_query.api") != std::string::npos &&
             host_last_url.find("%7CRG%7C") != std::string::npos, "comet list (%zu)", sat::live.comet_list.size());
       CHECK(shown == 1 && sat::ui.comet_idx[1] < 0 && !strcmp(sat::live.comet_list[sat::ui.comet_idx[0]].tag, "Testfield"),
             "one bright comet on the map");
+      {  // UI-41g: its alert follows Comet Alerts (no longer Sky events)
+        auto comet_alerts = [&]() {
+          static sat::Alert xa[sat::MAX_ALERTS];
+          const int nx = sat::collect_alerts(sat_host_now, xa, sat::MAX_ALERTS);
+          int c = 0;
+          for (int i = 0; i < nx; i++) c += strstr(xa[i].text, "Comet ") != nullptr;
+          return c;
+        };
+        const int c0 = comet_alerts();
+        sat::set_sky_alerts(false);
+        const int c1 = comet_alerts();
+        sat::set_sky_alerts(true);
+        sat::set_comet_alerts(false);
+        const int c2 = comet_alerts();
+        sat::set_comet_alerts(true);
+        CHECK(c0 == 1 && c1 == 1 && c2 == 0, "comet alert switch %d %d %d", c0, c1, c2);
+      }
       printf("mw spans %zu bands %zu cells %zu\n", sat::ui.mw_spans.size(), sat::ui.mw_band.size(), sat::ui.mw_cells.size());
       CHECK(sat::ui.mw_spans.size() > 200, "milky way spans");
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
@@ -1595,7 +1612,7 @@ int main() {
     {
       const int64_t hr = (int64_t) floor(sat_host_now / 3600) * 3600;
       char key[48];
-      { time_t tt = (time_t) hr; struct tm g; gmtime_r(&tt, &g); strftime(key, sizeof(key), "api/dialamoon/%Y-%m-%dT%H:00", &g); }
+      { time_t tt = (time_t) hr; struct tm g; gmtime_r(&tt, &g); strftime(key, sizeof(key), "api/dialamoon/%Y-%m-%dT%H:00", &g); } printf("moon view asks %s\n", key);
       host_http_bodies[key] = "{\"image\":{\"id\":1,\"url\":\"https://svs.gsfc.nasa.gov/vis/a000000/a005500/a005587/frames/730x730_1x1_30p/moon.6501.jpg\","
                               "\"width\":730,\"height\":730},\"image_highres\":{\"url\":\"x.tif\"},\"su_image\":{\"url\":\"https://svs.gsfc.nasa.gov/vis/a000000/a005500/a005588/frames/730x730_1x1_30p/moon.6501.jpg\"},"
                               "\"time\":\"2026-09-28T20:00\",\"phase\":94.27,\"obscuration\":0,\"age\":17.69,\"diameter\":1923.2,\"distance\":372667,\"posangle\":340.21}";
