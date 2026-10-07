@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
   lv_label_set_text(lbl_cone, "80\xC2\xB0");
   for (lv_obj_t *o : {sw_sats, sw_starlink, sw_meo, sw_trails, sw_stations, sw_stars, sw_dusk, sw_planets, sw_comets,
                       sw_milky_way, sw_aur_alerts, sw_pl_alerts, sw_sky_alerts, sw_station_alerts, sw_launch_alerts,
-                      sw_event_alerts, sw_lunar_alerts, sw_comet_alerts, sw_autob})
+                      sw_event_alerts, sw_lunar_alerts, sw_comet_alerts, sw_splash_alerts, sw_autob})
     on(o, true);
   for (lv_obj_t *o : {sw_geo, sw_debris, sw_miles, sw_night, sw_dms, sw_24h})
     on(o, false);

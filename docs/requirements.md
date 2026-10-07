@@ -1,7 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.24 (queued): the settings header names the open tab (DISPLAY, LOCATION, CELESTIAL, SATELLITES, ALERTS) instead of SETTINGS (UI-16a). Settings icons clear their labels: on Display and Location the icon column is at x 140 (was 128), on Celestial, Satellites and Alerts the left icons at 130 and switches at 156 (were 122 and 150). Every progress bar uses the same colours (UI-71; the picture loader's was orange). A Comets alert switch (UI-41g): the visible-comet alert follows it instead of Sky events. A Lunar alert switch (Settings > Alerts and Home Assistant): the full Moon, the Moon near a planet or bright star, and lunar eclipses now follow it instead of Sky events (UI-41f). "Launches" reads "Launch".
+- 4.6.25 (queued): pictures work again (the Sun, Moon, Earth and planet photos failed in 4.6.22-4.6.24: the orbital lists were reserved at their caps before the picture buffers and left 0.2 MB of PSRAM; the buffers are now taken first and the lists sized to what they hold, FAIL-12b). A splashdown animation: a capsule on four parachutes comes down to the ocean, splashes and bobs (UI-69m), with a Play Splashdown Animation button and a Splashdowns alert switch (UI-41h). Launch, splashdown and docking alerts show the country's flag (UI-54d). The whole header left of the counts is the alert's tap zone (UI-41d). The launch card's distance follows Miles.
+- 4.6.24 (installed): the settings header names the open tab (DISPLAY, LOCATION, CELESTIAL, SATELLITES, ALERTS) instead of SETTINGS (UI-16a). Settings icons clear their labels: on Display and Location the icon column is at x 140 (was 128), on Celestial, Satellites and Alerts the left icons at 130 and switches at 156 (were 122 and 150). Every progress bar uses the same colours (UI-71; the picture loader's was orange). A Comets alert switch (UI-41g): the visible-comet alert follows it instead of Sky events. A Lunar alert switch (Settings > Alerts and Home Assistant): the full Moon, the Moon near a planet or bright star, and lunar eclipses now follow it instead of Sky events (UI-41f). "Launches" reads "Launch".
 - 4.6.23 (installed): Settings tabs are icons only, with a fifth, Alerts (bell-ring): Aurora, Planets and Sky events moved there from Celestial, plus new Space station, Launch and Docking alert switches (UI-41e). A Space stations switch on the Satellites tab shows or hides the ISS and Tiangong (UI-52b). Each new switch is also a Home Assistant switch.
 - 4.6.22 (installed over USB to end a 4.6.21 boot loop): fixes a crash (abort) when satellite lists downloaded while layers were switched: downloads freed and reallocated lists of up to 1 MB until PSRAM was in pieces too small for the next one. The lists are now reserved once at start and refilled in place (FAIL-12). Crash records survive (their flash sector moved off the launch list's, which overwrote them) and the Last Crash sensor carries the backtrace (FAIL-10).
 - 4.6.21 (installed): alerts change once a minute (were every 6 s); no aurora alert for a faint one (Kp under 3.5) unless NOAA's nowcast says likely (UI-38b); a changed status line is drawn just after the panel's scan has passed it, so it no longer tears (PERF-14).
@@ -638,7 +639,8 @@ UI-41  Status-line alerts, when the status line would be all-is-well or empty
        below the status line's position; icons 2 px above the text. Alignment
        alerts show only within 3 days of the event (ALIGN_ALERT_S); the scan
        still looks 60 days ahead.
-UI-41d A tap on the status line while an alert shows opens that alert's details: its object's
+UI-41d A tap on the header's left part (400 x 56 from the top left: icon, text and around them,
+       clear of the counts and the sky disc) while an alert shows opens that alert's details: its object's
        card where there is one (the ISS or Tiangong overhead, a planet, comet, meteor shower,
        the Moon for full Moon and Moon-near alerts), else a details card (K_INFO) built from
        the live data, in the alert's colour and icon, no Find button: launch (mission, local
@@ -659,6 +661,12 @@ UI-41g Comet Alerts (on by default): a comet bright enough to see (UI-63). The C
        (Celestial) must be on too: a comet not on the map raises no alert.
 UI-71  Every progress bar (picture downloads, internet and microSD updates) uses C_BAR 0x2D5BD0 on
        C_BAR_BG 0x1A2547.
+UI-41h Splashdown Alerts (on by default): Launch Library "Spacecraft Landing" events whose name
+       says splashdown; other events stay with Docking Alerts. Their alert has the parachute icon.
+UI-54d Launch, splashdown and docking alerts show the country's 16x12 flag between the icon and
+       the text: a launch's pad country (Kourou: ESA, Baikonur: Russia; RocketLaunch.Live by the
+       country's name), an event's from the spacecraft in its name (Dragon, Cygnus: USA; Soyuz,
+       Progress: Russia; Shenzhou, Tianzhou: China; HTV: Japan).
 UI-41c Alert icon placement: after the text is set, the icon (glyph or picture) is placed so
        its ink is centred on the text, from the first line's cap top to the last line's
        baseline, from the fonts' glyph metrics (lv_font_get_glyph_dsc).
@@ -1032,6 +1040,11 @@ UI-69k At the end of setup, with Launch Animation on, the launch plays once over
        (Wi-Fi status) screen: no banner, and the smoke translucent (true colours at the
        puff's strength) so the logo and text show through as it thins; on the map the smoke
        stays opaque and pre-mixed (PERF-9). A switch to the map mid-flight lets it finish.
+UI-69m Splashdown (7 s, with Launch Animation on, at a splashdown's time, or the Play Splashdown
+       Animation button): an ocean band across the bottom of the sky disc (drawn once, clipped to
+       the disc), a capsule on four orange-and-white mains falling steadily with a slow sway, a
+       burst of spray at 4.2 s, the chutes released downwind, the capsule bobbing with the water
+       line over its base. Pictures drawn at boot, 4x4 supersampled.
 UI-69h Load probes in the animation log: a 100,000-step integer loop and a 64 KB PSRAM read
        (one byte per cache line), timed before the animation and 2 s into it; and each smoke
        update's LVGL calls (size, position, colour, show) averaged.
@@ -1341,6 +1354,12 @@ FAIL-12 PSRAM is never asked for a large block after start-up. The four element 
        list (and the Starlink scan's list) aborted once downloads had cut PSRAM into pieces
        of 60-240 KB with 2.5 MB free. Checked with TEST-1: 79 layer switches over 8 rounds
        of every list downloading each minute, no abort (4.6.21: abort within 9-69).
+FAIL-12b The picture buffers (JPEG 768 KB, sums 777 KB) are taken first, before the orbital
+       lists. The lists are reserved at what the cache holds plus a margin (satellites +48,
+       GNSS +24, GEO +48, Starlink +800) and only for layers that are on, and grow by a quarter
+       (one_more/push_room) only while PSRAM has the block; the per-job position lists grow to
+       the most they have needed. 4.6.22-4.6.24 reserved every list at its cap (~3.4 MB with
+       the job lists) ahead of the picture buffers: 0.2 MB was left and every picture failed.
 FAIL-10 Crash capture (sky_diag.h): ESPHome's crash handler keeps the last panic in
        no-init RAM, logs it at boot and to the first API client, then clears it. At
        on_boot 600 (before the API) the record is replayed through a logger callback,

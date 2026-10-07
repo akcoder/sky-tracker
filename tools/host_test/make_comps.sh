@@ -9,8 +9,8 @@ python3 gen_fixtures.py >/dev/null
 ./build.sh >/dev/null
 ./fetch_celestrak.py >/dev/null || true   # the real orbital lists (fake data where CelesTrak refuses)
 ./t4 > out/t4.log 2>&1 || { tail -20 out/t4.log; exit 1; }   # the checks, on the test data
-rm -rf out/renders/* out/bgif
-RENDER_REAL=1 BOOT_GIF=1 ./t4 > out/t4_real.log 2>&1 || true   # the renders, on the cached CelesTrak lists
+rm -rf out/renders/* out/bgif out/sgif
+RENDER_REAL=1 BOOT_GIF=1 SPLASH_GIF=1 ./t4 > out/t4_real.log 2>&1 || true   # the renders, on the cached CelesTrak lists
 ./render_settings.py   # the settings tabs, from the firmware's own widget code (docs/comps/settings_*.png)
 python3 - <<'PY'
 from PIL import Image
@@ -25,6 +25,15 @@ if fs:
     sheet.save(f"{out}/boot_launch_strip.png")
     fr = [Image.open(f).convert("P", palette=Image.ADAPTIVE, colors=128) for f in fs[::2]]
     fr[0].save(f"{out}/boot_launch.gif", save_all=True, append_images=fr[1:], duration=66, loop=0, optimize=True)
+fs = sorted(glob.glob("out/sgif/f*.ppm"))  # UI-69m the splashdown
+if fs:
+    pick = [fs[int(len(fs) * k)] for k in (0.2, 0.5, 0.62, 0.85)]
+    sheet = Image.new("RGB", (480 * 4 + 30, 480), (30, 30, 30))
+    for i, f in enumerate(pick):
+        sheet.paste(Image.open(f), (i * 490, 0))
+    sheet.save(f"{out}/splashdown_strip.png")
+    fr = [Image.open(f).convert("P", palette=Image.ADAPTIVE, colors=128) for f in fs[::2]]
+    fr[0].save(f"{out}/splashdown.gif", save_all=True, append_images=fr[1:], duration=66, loop=0, optimize=True)
 os.makedirs(f"{out}/renders", exist_ok=True)
 n = 0
 for f in sorted(glob.glob("out/renders/*.ppm")):  # the test suite's screens (./t4)

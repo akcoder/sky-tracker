@@ -101,7 +101,27 @@ template<class T> using pvector = std::vector<T, PsramAlloc<T>>;
 // never allocate again. room_for() is the guard: a list without room is grown only if PSRAM
 // has a free block that size (plus 32 KB); otherwise the caller skips, keeping what it has.
 // (4.6.21 aborted building the GEO list after Starlink: 2.5 MB free, none of it in one piece.)
-template<class T, class A> inline bool room_for(std::vector<T, A> &v, size_t n, const char *what, bool quiet = false) {
+template<class T, class A> inline bool room_for(std::vector<T, A> &v, size_t n, const char *what, bool quiet = false);
+// FAIL-12b: room for one more row in a list being filled in place: grows by a quarter (from at
+// least `start`) when PSRAM has the block, else no (the row is dropped)
+template<class T, class A> inline bool one_more(std::vector<T, A> &v, size_t cap, size_t start, const char *what) {
+  if (v.size() >= cap)
+    return false;
+  if (v.size() < v.capacity())
+    return true;
+  return room_for(v, std::min(cap, std::max(start, v.capacity() + v.capacity() / 4 + 16)), what, true);
+}
+// FAIL-12b: append, growing the vector only by a margin and only when PSRAM has the block
+// (room_for); without it the item is dropped. Buffers grow to the most they have needed and stay.
+template<class T, class A> inline bool push_room(std::vector<T, A> &v, const T &x, size_t cap, const char *what) {
+  if (v.size() >= cap)
+    return false;
+  if (v.size() == v.capacity() && !room_for(v, std::min(cap, v.capacity() + v.capacity() / 4 + 16), what, true))
+    return false;
+  v.push_back(x);
+  return true;
+}
+template<class T, class A> inline bool room_for(std::vector<T, A> &v, size_t n, const char *what, bool quiet) {
   if (v.capacity() >= n)
     return true;
   const size_t need = n * sizeof(T), big = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -209,7 +229,6 @@ constexpr double RETRY_403_S = 2 * 3600.0;       // CelesTrak 403s repeat downlo
 constexpr size_t JSON_BUF = 96 * 1024;          // SATCAT owner list (~52 KB)
 constexpr size_t SAT_CAP = 400;                 // element sets kept for the satellite layer
 constexpr size_t STARLINK_CAP = 16000;
-constexpr size_t STARLINK_ROOM = 13000;  // FAIL-12: reserved at start (~11,100 today); grown later only if PSRAM allows
 constexpr size_t MEO_CAP = 200;                  // UI-28: GNSS lists, ~130 today
 constexpr size_t GEO_CAP = 740;                  // geosynchronous, ~560 today (cache region D)          // ~11,000 today
 constexpr size_t STARLINK_PUB_CAP = 700;        // DATA-3: published per scan (whole sky)
@@ -243,6 +262,7 @@ struct LaunchRec {
   char rocket[24] = "";   // "Falcon 9"
   char where[48] = "";    // pad location
   char status[8] = "";    // "Go", "TBD", "Hold", "Success"...
+  char cc[4] = "";        // UI-54d: the launching country (ISO 3166 alpha-3, from the pad; "ESA" for Kourou)
   double net = 0;         // UTC seconds
   float lat = NAN, lon = NAN;
 };
@@ -253,7 +273,41 @@ struct EventRec {
   double t = 0;           // UTC seconds
   bool exact = false;     // time known to the hour or better
   bool iss = false;       // UI-69f: at the International Space Station (its "location")
+  char cc[4] = "";        // UI-54d: the spacecraft's country, from its name (Dragon -> USA...)
 };
+// UI-54d: the country a flag is shown for. A launch: its pad's country, but the launching
+// nation where the site is someone else's (Kourou: ESA; Baikonur: Russia). An event: from the
+// spacecraft in its name (Launch Library gives events no agency in list or normal mode).
+inline const char *launch_cc(const char *pad) {
+  if (!strcmp(pad, "GUF"))
+    return "ESA";
+  if (!strcmp(pad, "KAZ"))
+    return "RUS";
+  return pad;
+}
+inline const char *rll_cc(const char *country) {  // RocketLaunch.Live gives the country's name
+  static const struct { const char *name, *cc; } C[] = {
+      {"United States", "USA"}, {"China", "CHN"}, {"Russia", "RUS"}, {"Kazakhstan", "RUS"}, {"French Guiana", "ESA"},
+      {"India", "IND"}, {"Japan", "JPN"}, {"New Zealand", "NZL"}, {"South Korea", "KOR"}, {"Iran", "IRN"},
+      {"North Korea", "PRK"}, {"Israel", "ISR"}, {"Australia", "AUS"}, {"United Kingdom", "GBR"}, {"Norway", "NOR"},
+      {"Brazil", "BRA"}, {"Sweden", "SWE"}};
+  for (const auto &c : C)
+    if (!strcmp(country, c.name))
+      return c.cc;
+  return "";
+}
+inline const char *event_cc(const char *name) {
+  static const struct { const char *word, *cc; } W[] = {
+      {"Dragon", "USA"}, {"SpaceX", "USA"}, {"Crew-", "USA"}, {"Cygnus", "USA"}, {"Starliner", "USA"}, {"Dream Chaser", "USA"},
+      {"Axiom", "USA"}, {"Ax-", "USA"}, {"NG-", "USA"}, {"Orion", "USA"}, {"Artemis", "USA"},
+      {"Soyuz", "RUS"}, {"Progress", "RUS"},
+      {"Shenzhou", "CHN"}, {"Tianzhou", "CHN"}, {"Mengzhou", "CHN"}, {"Tiangong", "CHN"},
+      {"HTV", "JPN"}, {"Kounotori", "JPN"}, {"Gaganyaan", "IND"}};
+  for (const auto &w : W)
+    if (strstr(name, w.word))
+      return w.cc;
+  return "";
+}
 // UI-58: NOAA OVATION aurora nowcast at the observer (percent chance of visible aurora)
 struct AuroraChance {
   double obs = 0, fc = 0;  // UTC seconds: model input time, the time it forecasts (0 = none)
@@ -1279,15 +1333,28 @@ inline double hold_load() {
   return h.until;
 }
 
-inline void reserve_lists() {  // FAIL-12: at task start, before PSRAM is cut up
-  sats.reserve(SAT_CAP);
-  meo_sats.reserve(MEO_CAP);
-  geo_sats.reserve(GEO_CAP);
-  starlink.reserve(STARLINK_ROOM);
+// FAIL-12b: what each list holds in the cache (0 if none), so it is reserved at its real size
+inline uint32_t cache_count(uint32_t off, uint32_t rec) {
+  CacheHdr h;
+  return cache_part && cache_header(off, rec, h) ? h.n : 0;
+}
+inline void reserve_lists() {  // FAIL-12: at task start, before PSRAM is cut up; the layers that are on,
+  // at what the cache holds plus a margin (a list switched on later grows through room_for)
+  auto room = [](size_t have, size_t margin, size_t cap, size_t none) {
+    return std::min(cap, have ? have + margin : none);
+  };
+  if (cfg.sats_on || cfg.debris_on)
+    sats.reserve(room(cache_count(CACHE_A_OFF, sizeof(SgpSat)), 48, SAT_CAP, 200));
+  if (cfg.meo_on)
+    meo_sats.reserve(room(cache_count(CACHE_C_OFF, sizeof(SgpSat)), 24, MEO_CAP, 160));
+  if (cfg.geo_on)
+    geo_sats.reserve(room(cache_count(CACHE_D_OFF, sizeof(SgpSat)), 48, GEO_CAP, 600));
+  if (cfg.starlink_on)
+    starlink.reserve(room(cache_count(CACHE_B_OFF, sizeof(SlElem)), 800, STARLINK_CAP, 12000));
 }
 inline void cache_load() {
-  reserve_lists();
   cache_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, (esp_partition_subtype_t) 0x40, "skydata");
+  reserve_lists();
   if (cache_part == nullptr) {
     ESP_LOGW(TAG, "cache: no skydata partition (flash the new partition table over USB); cache off");
     return;
@@ -1872,6 +1939,7 @@ inline void launches_rll(char *buf, double now) {
                                           : exact    ? "Go"
                                                      : "TBD");
     rll_pad(loc, l.lat, l.lon);
+    copy_cstr(l.cc, sizeof(l.cc), rll_cc(r["pad"]["location"]["country"] | ""));  // UI-54d
     out.push_back(l);
   }
   if (!out.empty())
@@ -1899,6 +1967,7 @@ inline void do_launches(double now) {
   f["status"]["abbrev"] = true;
   f["pad"]["latitude"] = true;
   f["pad"]["longitude"] = true;
+  f["pad"]["country"]["alpha_3_code"] = true;  // UI-54d
   f["pad"]["location"]["name"] = true;
   f["rocket"]["configuration"]["name"] = true;
   JsonDocument doc(&psram_alloc);
@@ -1920,6 +1989,7 @@ inline void do_launches(double now) {
     copy_cstr(l.rocket, sizeof(l.rocket), r["rocket"]["configuration"]["name"] | "");
     copy_cstr(l.where, sizeof(l.where), r["pad"]["location"]["name"] | "");
     copy_cstr(l.status, sizeof(l.status), r["status"]["abbrev"] | "");
+    copy_cstr(l.cc, sizeof(l.cc), launch_cc(r["pad"]["country"]["alpha_3_code"] | ""));  // UI-54d
     if (!parse_epoch(r["net"] | "", l.net))
       continue;
     l.lat = num(r["pad"]["latitude"]);
@@ -2018,6 +2088,7 @@ inline void do_events(double now) {
     copy_cstr(e.name, sizeof(e.name), r["name"] | "");
     copy_cstr(e.type, sizeof(e.type), r["type"]["name"] | "");
     e.iss = strstr(r["location"] | "", "International Space Station") != nullptr;
+    copy_cstr(e.cc, sizeof(e.cc), event_cc(e.name));  // UI-54d
     if (!parse_epoch_min(r["date"] | "", e.t))
       continue;
     const char *pr = r["date_precision"]["abbrev"] | "";
@@ -2808,11 +2879,11 @@ inline void do_elements() {
     char url[128];
     snprintf(url, sizeof(url), "%s/NORAD/elements/gp.php?GROUP=%s&FORMAT=csv", celestrak_base.c_str(), jc.sat_group.c_str());
     // FAIL-12: refilled in place (capacity kept); a failed download restores it from the cache
-    if (room_for(sats, SAT_CAP, "satellites")) {
+    {
       sats.clear();
       if (download(url, "satellite", [&](const Omm &o) {
-            if (sats.size() >= SAT_CAP || o.id == 25544 || o.id == CSS_ID || o.id == CSS_WENTIAN ||
-                o.id == CSS_MENGTIAN || now - o.epoch > MAX_ELEM_AGE_S)
+            if (o.id == 25544 || o.id == CSS_ID || o.id == CSS_WENTIAN || o.id == CSS_MENGTIAN ||
+                now - o.epoch > MAX_ELEM_AGE_S || !one_more(sats, SAT_CAP, 200, "satellites"))
               return;
             sats.emplace_back();
             if (!make_sgp(o, sats.back()))
@@ -2828,16 +2899,16 @@ inline void do_elements() {
     }
   }
   if (!failed && jc.starlink_on && jc.starlink_radius > 0 && (starlink.empty() || due(starlink_loaded))) {
-    // FAIL-12: refilled in place; past its capacity (STARLINK_ROOM at start) the rest is
+    // FAIL-12: refilled in place; it grows (one_more) only while PSRAM has the block, else the rest is
     // dropped, never reallocated
-    if (room_for(starlink, STARLINK_ROOM, "Starlink")) {
+    {
       starlink.clear();
       size_t dropped = 0;
       if (download(ct_url("/NORAD/elements/gp.php?GROUP=starlink&FORMAT=csv").c_str(), "Starlink",
                    [&](const Omm &o) {
                      if (now - o.epoch > MAX_ELEM_AGE_S)
                        return;
-                     if (starlink.size() >= starlink.capacity() || starlink.size() >= STARLINK_CAP) {
+                     if (!one_more(starlink, STARLINK_CAP, 12000, "Starlink")) {
                        dropped++;
                        return;
                      }
@@ -2863,9 +2934,7 @@ inline void do_elements() {
   bool mem_skip = false;  // the last group_list had no room and was skipped (not an error)
   auto group_list = [&](const char *const *groups, int ng, const char *what, size_t cap, pvector<SgpSat> &dst,
                         double &loaded, uint32_t c_off, uint32_t c_max) -> bool {
-    mem_skip = !room_for(dst, cap, what);
-    if (mem_skip)
-      return true;
+    mem_skip = false;
     pvector<SgpSat> &staging = dst;
     staging.clear();
     std::unordered_map<int32_t, bool> ids;
@@ -2873,7 +2942,7 @@ inline void do_elements() {
       char url[128];
       snprintf(url, sizeof(url), "%s/NORAD/elements/gp.php?GROUP=%s&FORMAT=csv", celestrak_base.c_str(), groups[g]);
       if (!download(url, what, [&](const Omm &o) {
-            if (staging.size() >= cap || ids.count(o.id) || now - o.epoch > MAX_ELEM_AGE_S)
+            if (ids.count(o.id) || now - o.epoch > MAX_ELEM_AGE_S || !one_more(staging, cap, 64, what))
               return;
             breathe((uint32_t) staging.size(), 32);
             staging.emplace_back();
@@ -2972,9 +3041,8 @@ inline void do_above() {
   const geo::Observer o = observer();
   // FAIL-12: persistent, at full size: swapped with pending (and the UI's live copy), so all
   // three buffers settle at this capacity and the 2 s job stops allocating in PSRAM
-  static pvector<SatRec> staging;
+  static pvector<SatRec> staging;  // FAIL-12b: grows to the most it has needed, then stays
   staging.clear();
-  room_for(staging, SAT_CAP + MEO_CAP, "satellite positions", true);  // pushes stop at capacity
   int total = 0;
   auto wanted = [&](uint8_t cls) {
     return cls == C_CLS_LEO ? jc.sats_on : cls == C_CLS_GEO ? false : jc.meo_on;  // GEO handled below
@@ -2994,8 +3062,7 @@ inline void do_above() {
     r.kind = K_SAT;
     owner_of(s.id, r.cc);
     r.launched = launched_of(s.id);
-    if (staging.size() < staging.capacity())  // never reallocates (FAIL-12)
-      staging.push_back(r);
+    push_room(staging, r, SAT_CAP + MEO_CAP, "satellite positions");
     total += el >= 0;
   };
   std::unordered_map<int32_t, bool> seen;
@@ -3022,7 +3089,7 @@ inline void do_above() {
   if (jc.geo_on && t >= geo_next) {
     geo_next = t + GEO_EVERY_S;
     geo_done = true;
-    room_for(geo, GEO_CAP, "GEO positions", true);
+
     auto take_geo = [&](SgpSat &s) {
       if (s.debris && !jc.debris_on)  // UI-35
         return;
@@ -3033,8 +3100,7 @@ inline void do_above() {
       r.kind = K_GEO;
       owner_of(s.id, r.cc);
     r.launched = launched_of(s.id);
-      if (geo.size() < geo.capacity())
-        geo.push_back(r);
+      push_room(geo, r, GEO_CAP, "GEO positions");
       geo_total++;
     };
     std::unordered_map<int32_t, bool> gseen;
@@ -3076,14 +3142,14 @@ inline void do_starlink() {
   };
   static std::vector<Cand, PsramAlloc<Cand>> cand;  // FAIL-12: persistent, grows to the most seen once
   cand.clear();
-  room_for(cand, 6000, "Starlink candidates", true);  // ~1/3 of the catalogue is above the horizon
+
   for (uint32_t i = 0; i < starlink.size(); i++) {
     breathe(i, 1000);
     double x[3] = {0, 0, 0};
     sl_ecef(starlink[i], t, x);
     const float el = azel_of(o, x).el;
-    if (el >= RISING_EL && cand.size() < cand.capacity())  // never reallocates (FAIL-12)
-      cand.push_back({el, i});
+    if (el >= RISING_EL)
+      push_room(cand, Cand{el, i}, 8000, "Starlink candidates");
   }
   if (cand.size() > STARLINK_PUB_CAP) {
     std::partial_sort(cand.begin(), cand.begin() + STARLINK_PUB_CAP, cand.end(),
@@ -3092,7 +3158,7 @@ inline void do_starlink() {
   }
   static pvector<SatRec> staging;  // FAIL-12: persistent at STARLINK_PUB_CAP (see do_above)
   staging.clear();
-  room_for(staging, STARLINK_PUB_CAP, "Starlink positions", true);
+
   int total = 0;
   for (const auto &c : cand) {
     const SlElem &s = starlink[c.i];
@@ -3113,9 +3179,8 @@ inline void do_starlink() {
     r.incl_deg = s.incl * 180.0f / (float) M_PI;
     r.speed_kms = sqrtf(398600.4418f / s.a_km);
     make_fix(x0, x1, t, r);
-    if (staging.size() >= staging.capacity())
+    if (!push_room(staging, r, STARLINK_PUB_CAP, "Starlink positions"))
       break;
-    staging.push_back(r);
     total += c.el >= 0;
   }
   xSemaphoreTake(mutex, portMAX_DELAY);
@@ -3304,13 +3369,14 @@ inline void run_job(uint8_t job) {
 inline std::atomic<uint32_t> queued{0};
 
 inline void task_main(void *) {
+  // the two big picture buffers (768 KB JPEG, 777 KB sums) are taken first, before the orbital
+  // lists, while PSRAM is still in one piece, and kept (4.6.22-4.6.24 took them after reserving
+  // the lists at their caps and every picture failed)
+  if (img_jpg() == nullptr || fit_acc() == nullptr)
+    ESP_LOGW(TAG, "pictures: PSRAM buffers not available");
   cache_load();         // DATA-10
   launch_cache_load();  // UI-54a
   event_cache_load();   // UI-54c
-  // the two big picture buffers (768 KB JPEG, 777 KB sums) are taken first, while PSRAM is
-  // still in one piece, and kept: taken later they can fail on a fragmented heap
-  if (img_jpg() == nullptr || fit_acc() == nullptr)
-    ESP_LOGW(TAG, "pictures: PSRAM buffers not available");
   ESP_LOGI(TAG, "PSRAM free %u KB", (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));  // no heap walk (FAIL-9)
   for (;;) {
     uint8_t job;

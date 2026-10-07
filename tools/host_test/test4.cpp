@@ -1200,9 +1200,9 @@ int main() {
     char t1[32], t2[32], t3[32];
     iso(sat_host_now + 5 * 3600, t1); iso(sat_host_now + 40 * 60, t2); iso(sat_host_now - 3 * 3600, t3);
     snprintf(lj, sizeof(lj), "{\"count\":3,\"results\":["
-      "{\"name\":\"Minotaur IV | NROL-174\",\"net\":\"%s\",\"status\":{\"abbrev\":\"Go\"},\"pad\":{\"latitude\":\"57.435\",\"longitude\":\"-152.337\",\"location\":{\"name\":\"Pacific Spaceport Complex, Alaska, USA\"}},\"rocket\":{\"configuration\":{\"name\":\"Minotaur IV\"}},\"mission\":{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":{\"f\":{\"g\":{\"h\":[1]}}}}}}}}},"
-      "{\"name\":\"Falcon 9 | Starlink 12-5\",\"net\":\"%s\",\"status\":{\"abbrev\":\"Go\"},\"pad\":{\"latitude\":28.56,\"longitude\":-80.577,\"location\":{\"name\":\"Cape Canaveral SFS, FL, USA\"}},\"rocket\":{\"configuration\":{\"name\":\"Falcon 9\"}}},"
-      "{\"name\":\"Electron | Test\",\"net\":\"%s\",\"status\":{\"abbrev\":\"Success\"},\"pad\":{\"latitude\":-39.26,\"longitude\":177.86,\"location\":{\"name\":\"Mahia, NZ\"}},\"rocket\":{\"configuration\":{\"name\":\"Electron\"}}}]}", t1, t2, t3);
+      "{\"name\":\"Minotaur IV | NROL-174\",\"net\":\"%s\",\"status\":{\"abbrev\":\"Go\"},\"pad\":{\"latitude\":\"57.435\",\"longitude\":\"-152.337\",\"location\":{\"name\":\"Pacific Spaceport Complex, Alaska, USA\"},\"country\":{\"alpha_3_code\":\"USA\"}},\"rocket\":{\"configuration\":{\"name\":\"Minotaur IV\"}},\"mission\":{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":{\"f\":{\"g\":{\"h\":[1]}}}}}}}}},"
+      "{\"name\":\"Falcon 9 | Starlink 12-5\",\"net\":\"%s\",\"status\":{\"abbrev\":\"Go\"},\"pad\":{\"latitude\":28.56,\"longitude\":-80.577,\"location\":{\"name\":\"Cape Canaveral SFS, FL, USA\"},\"country\":{\"alpha_3_code\":\"USA\"}},\"rocket\":{\"configuration\":{\"name\":\"Falcon 9\"}}},"
+      "{\"name\":\"Electron | Test\",\"net\":\"%s\",\"status\":{\"abbrev\":\"Success\"},\"pad\":{\"latitude\":-39.26,\"longitude\":177.86,\"location\":{\"name\":\"Mahia, NZ\"},\"country\":{\"alpha_3_code\":\"NZL\"}},\"rocket\":{\"configuration\":{\"name\":\"Electron\"}}}]}", t1, t2, t3);
     host_http_bodies["launches/upcoming"] = lj;
     sat::net::wind_next = sat::net::launch_next = 0;
     sat::net::do_wind(sat_host_now);
@@ -1255,7 +1255,7 @@ int main() {
           lv_refr_now(disp);
           save_ppm(OUT_DIR "/renders/r16_event_alert.ppm");
           // UI-41d: a tap on the alert opens its details card
-          lv_obj_send_event(sat::ui.w.status, LV_EVENT_CLICKED, nullptr);
+          lv_obj_send_event(sat::alert_zone, LV_EVENT_CLICKED, nullptr);
           printf("event details: %s\n%s\n", lv_label_get_text(sat::ui.card_title), lv_label_get_text(sat::ui.card_body));
           CHECK(sat::ui.sel_kind == sat::K_INFO && strstr(lv_label_get_text(sat::ui.card_body), "SpaceX Crew-12 Crew Dragon Undocking") &&
                 strstr(lv_label_get_text(sat::ui.card_body), "International Space Station"), "event alert tap: details card");
@@ -1266,10 +1266,20 @@ int main() {
           break;
         }
       }
+      {  // UI-54d: launch and event alerts carry their country's flag
+        static sat::Alert fa[sat::MAX_ALERTS];
+        const int nf = sat::collect_alerts(sat_host_now, fa, sat::MAX_ALERTS);
+        int launch_flags = 0, event_flags = 0;
+        for (int i = 0; i < nf; i++) {
+          if (fa[i].info == sat::AI_LAUNCH && fa[i].flag == sat::card_flag_for("USA")) launch_flags++;
+          if (fa[i].info == sat::AI_EVENT && fa[i].flag == sat::card_flag_for("USA")) event_flags++;
+        }
+        CHECK(launch_flags >= 1 && event_flags >= 1, "alert flags: launches %d, events %d", launch_flags, event_flags);
+      }
       for (int k = 0; k < 12; k++) {  // and a launch alert
         sat::draw_hud(sat_host_now + k * sat::ALERT_ROTATE_S);
         if (strstr(lv_label_get_text(sat::ui.w.status), "launches in") || strstr(lv_label_get_text(sat::ui.w.status), " from ")) {
-          lv_obj_send_event(sat::ui.w.status, LV_EVENT_CLICKED, nullptr);
+          lv_obj_send_event(sat::alert_zone, LV_EVENT_CLICKED, nullptr);
           printf("launch details: %s\n%s\n", lv_label_get_text(sat::ui.card_title), lv_label_get_text(sat::ui.card_body));
           CHECK(sat::ui.sel_kind == sat::K_INFO && strstr(lv_label_get_text(sat::ui.card_body), "Status:") &&
                 strstr(lv_label_get_text(sat::ui.card_body), "From "), "launch alert tap: details card");
@@ -1289,11 +1299,11 @@ int main() {
         pa.kind = sat::K_PLANET, pa.id = shown_p < 0 ? 0 : shown_p, pa.col = 0xFFFFFF;
         sat::shown_alert = pa;
         sat::shown_alert_ok = true;
-        lv_obj_send_event(sat::ui.w.status, LV_EVENT_CLICKED, nullptr);
+        lv_obj_send_event(sat::alert_zone, LV_EVENT_CLICKED, nullptr);
         CHECK(shown_p < 0 || (sat::ui.sel_kind == sat::K_PLANET && sat::ui.sel_id == shown_p), "planet alert tap: planet card (%d)", shown_p);
         sat::deselect();
         sat::shown_alert_ok = false;
-        lv_obj_send_event(sat::ui.w.status, LV_EVENT_CLICKED, nullptr);
+        lv_obj_send_event(sat::alert_zone, LV_EVENT_CLICKED, nullptr);
         CHECK(!sat::card_open(), "no alert: tap ignored");
       }
       {  // UI-41e: launch and docking alerts each have their own switch
@@ -1311,6 +1321,12 @@ int main() {
         const int l2 = count("launches in") + count(" from "), e2 = count("Undocking");
         sat::set_alert_kinds(true, true, true);
         CHECK(l0 > 0 && e0 > 0 && l1 == 0 && e1 == e0 && l2 == l0 && e2 == 0, "alert kinds %d/%d %d/%d %d/%d", l0, e0, l1, e1, l2, e2);
+      }
+      {  // UI-41d: the tap zone covers the header's left part, not the counts or the map
+        auto hit = [&](int x, int y) { lv_point_t pt = {x, y}; return lv_indev_search_obj(lv_screen_active(), &pt); };
+        CHECK(sat::alert_zone && hit(10, 5) == sat::alert_zone && hit(390, 50) == sat::alert_zone &&
+              hit(30, 40) == sat::alert_zone && hit(240, 120) != sat::alert_zone && hit(460, 40) != sat::alert_zone,
+              "alert tap zone");
       }
       {  // UI-41f: the Moon's alerts follow Lunar, not Sky events
         auto counts = [&](int &moon, int &other) {
@@ -2166,6 +2182,29 @@ int main() {
         snprintf(fn, sizeof(fn), OUT_DIR "/rgif/f%03d.ppm", f);
         save_ppm(fn);
       }
+    }
+    {  // UI-69m: the splashdown plays over the map and cleans up after itself
+      const bool gif = getenv("SPLASH_GIF") != nullptr;
+      if (gif)
+        system("rm -rf " OUT_DIR "/sgif && mkdir -p " OUT_DIR "/sgif");
+      if (sat::ui.w.status)
+        lv_label_set_text(sat::ui.w.status, "Crew-12 Splashdown now");
+      rk::play_splash_now();
+      CHECK(rk::playing() && rk::st.splash && rk::st.sea && rk::st.chutes, "splashdown plays");
+      int frames = 0;
+      for (int f = 0; rk::playing() && f < 400; f++) {
+        sat_host_now += 0.033;
+        lv_refr_now(disp);
+        if (!rk::playing())
+          break;
+        frames++;
+        if (gif) {
+          char fn[80];
+          snprintf(fn, sizeof(fn), OUT_DIR "/sgif/f%03d.ppm", f);
+          save_ppm(fn);
+        }
+      }
+      CHECK(!rk::playing() && rk::st.sea == nullptr && rk::st.chutes == nullptr && frames > 150, "splashdown ends (%d frames)", frames);
     }
     if (getenv("BOOT_GIF")) {  // UI-69k: the launch over a mock of the boot screen (wifi_page)
       lv_obj_t *old = lv_screen_active();

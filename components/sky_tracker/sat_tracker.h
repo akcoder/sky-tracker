@@ -406,6 +406,7 @@ struct Ui {
   bool station_alerts = true, launch_alerts = true, event_alerts = true;  // UI-41e
   bool lunar_alerts = true;  // UI-41f: full Moon, Moon near a planet or star, lunar eclipses
   bool comet_alerts = true;  // UI-41g: a comet bright enough to see (the layer must be on too)
+  bool splash_alerts = true;  // UI-41h: capsules splashing down (Launch Library "Spacecraft Landing")
   bool stations_on = true;  // UI-52b: ISS and Tiangong drawn on the map
   // UI-52 Tiangong
   Marker css;
@@ -1957,12 +1958,19 @@ struct Alert {
   int32_t id;
   uint8_t info;
   int16_t idx;
+  const lv_image_dsc_t *flag;  // UI-54d: the country's flag after the icon (launches, events)
 };
+// UI-41h / UI-69m: a capsule splashing down (not a landing on land or the Moon)
+inline bool is_splashdown(const net::EventRec &e) {
+  return strstr(e.type, "Landing") != nullptr && (strstr(e.name, "plashdown") || strstr(e.name, "plash Down"));
+}
 enum AlertInfo : uint8_t { AI_NONE, AI_ISS_PASS, AI_CSS_PASS, AI_AURORA, AI_WIND, AI_LAUNCH, AI_EVENT, AI_CONJ, AI_PARADE,
                            AI_ECLIPSE, AI_SEASON };
 inline Alert shown_alert;          // UI-41d the alert on the status line now
 inline bool shown_alert_ok = false;
 inline Alert info_alert;           // the one whose details card is open (K_INFO)
+inline lv_obj_t *alert_zone = nullptr;  // the alert's tap zone (UI-41d)
+inline lv_obj_t *alert_flag = nullptr;  // UI-54d: the country flag on the status line
 inline lv_obj_t *card_find_btn = nullptr;  // the card's Find button (hidden on K_INFO)
 inline void alert_click_cb(lv_event_t *e);
 constexpr int MAX_ALERTS = 12;
@@ -2034,10 +2042,16 @@ inline void draw_hud(double t) {
       base_x = lv_obj_get_x(ui.w.status);
       base_y = lv_obj_get_y(ui.w.status);
       status_font = lv_obj_get_style_text_font(ui.w.status, LV_PART_MAIN);
-      // UI-41d a tap on an alert opens its details; anything else still reaches the page
-      lv_obj_add_flag(ui.w.status, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE));
-      lv_obj_set_ext_click_area(ui.w.status, 8);
-      lv_obj_add_event_cb(ui.w.status, alert_click_cb, LV_EVENT_CLICKED, nullptr);
+      // UI-41d a tap on an alert opens its details; anything else still reaches the page.
+      // The tap zone is the header's left part above the map (icon, both text lines and the
+      // space round them): 400 x 56 from the top left, clear of the counts and the sky disc
+      lv_obj_t *zone = alert_zone = lv_obj_create(lv_obj_get_parent(ui.w.status));
+      lv_obj_remove_style_all(zone);
+      lv_obj_set_pos(zone, 0, 0);
+      lv_obj_set_size(zone, 400, 56);
+      lv_obj_add_flag(zone, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE));
+      lv_obj_remove_flag(zone, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_add_event_cb(zone, alert_click_cb, LV_EVENT_CLICKED, nullptr);
     }
     lv_obj_t *parent = lv_obj_get_parent(ui.w.status);
     if (ui.aurora_icon == nullptr && ui.w.card_icon_font) {  // glyph slot (aurora, ISS)
@@ -2048,16 +2062,29 @@ inline void draw_hud(double t) {
       lv_obj_set_pos(ui.aurora_icon, base_x, base_y + ALERT_DY - 2);
       lv_obj_add_flag(ui.aurora_icon, LV_OBJ_FLAG_HIDDEN);
     }
+    if (alert_flag == nullptr) {  // UI-54d: the flag slot, after the icon
+      alert_flag = lv_image_create(parent);
+      lv_obj_remove_style_all(alert_flag);
+      lv_obj_add_flag(alert_flag, LV_OBJ_FLAG_HIDDEN);
+    }
     if (ui.alert_img == nullptr) {  // picture slot (planets, alignments)
       ui.alert_img = lv_image_create(parent);
       lv_obj_remove_style_all(ui.alert_img);
       lv_obj_set_pos(ui.alert_img, base_x, base_y + ALERT_DY - 2);
       lv_obj_add_flag(ui.alert_img, LV_OBJ_FLAG_HIDDEN);
     }
-    static const void *shown_icon = nullptr;
+    static const void *shown_icon = nullptr, *shown_flag = nullptr;
     const void *want_icon = al ? (al->img ? (const void *) al->img : (const void *) al->glyph) : nullptr;
-    if (want_icon != shown_icon) {
+    const void *want_flag = al ? (const void *) al->flag : nullptr;
+    if (want_icon != shown_icon || want_flag != shown_flag) {
       shown_icon = want_icon;
+      shown_flag = want_flag;
+      if (al && al->flag) {
+        lv_image_set_src(alert_flag, al->flag);
+        lv_obj_remove_flag(alert_flag, LV_OBJ_FLAG_HIDDEN);
+      } else {
+        lv_obj_add_flag(alert_flag, LV_OBJ_FLAG_HIDDEN);
+      }
       const bool glyph = al && !al->img && al->glyph && ui.aurora_icon;
       const bool img = al && al->img;
       if (glyph) {
@@ -2074,7 +2101,9 @@ inline void draw_hud(double t) {
         lv_obj_add_flag(ui.alert_img, LV_OBJ_FLAG_HIDDEN);
       }
       const bool icon = glyph || img;
-      lv_obj_set_x(ui.w.status, base_x + (icon ? 24 : 0));  // text clears the icon
+      const int fx = base_x + (icon ? 24 : 0);  // UI-54d: the flag, then the text
+      lv_obj_set_x(alert_flag, fx);
+      lv_obj_set_x(ui.w.status, fx + (al && al->flag ? flags::CARD_W + 5 : 0));  // text clears the icon (and flag)
       // UI-41: every alert in one font (mono15; mono14 without it), ALERT_DY lower than
       // the status line, which keeps its own font
       const lv_font_t *af = ui.w.alert_font ? ui.w.alert_font : ui.w.card_font;
@@ -2108,6 +2137,11 @@ inline void draw_hud(double t) {
                                                 : cap_top - ink_off;
       if (lv_obj_get_y(icon) != y)
         lv_obj_set_y(icon, y);
+      if (al->flag) {  // centred where the icon is
+        const int32_t fy = y + ink_off + ink_h / 2 - flags::CARD_H / 2;
+        if (lv_obj_get_y(alert_flag) != fy)
+          lv_obj_set_y(alert_flag, fy);
+      }
     }
   }
   if (col != status_col && ui.w.status) {
@@ -2768,6 +2802,7 @@ inline void set_alerts(bool aurora, bool planet) {
 inline void set_sky_alerts(bool on) { ui.sky_alerts = on; }  // UI-47..51 (and UI-41b)
 inline void set_lunar_alerts(bool on) { ui.lunar_alerts = on; }  // UI-41f
 inline void set_comet_alerts(bool on) { ui.comet_alerts = on; }  // UI-41g
+inline void set_splash_alerts(bool on) { ui.splash_alerts = on; }  // UI-41h
 inline void set_alert_kinds(bool stations, bool launches, bool events) {  // UI-41e
   ui.station_alerts = stations;
   ui.launch_alerts = launches;
@@ -3299,7 +3334,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
     a->glyph = glyph;
     a->img = img;
     a->text[0] = 0;
-    a->kind = -1, a->id = 0, a->info = AI_NONE, a->idx = -1;
+    a->kind = -1, a->id = 0, a->info = AI_NONE, a->idx = -1, a->flag = nullptr;
     return a;
   };
   // ISS: a visible pass soon or in progress (UI-9's yellow line, promoted)
@@ -3356,6 +3391,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
       const bool near = km < LAUNCH_NEAR_KM;
       if (Alert *a = add(C_LAUNCH, "\xF3\xB1\x93\x9E", nullptr)) {  // rocket-launch
         a->info = AI_LAUNCH, a->idx = (int16_t) li;
+        a->flag = l.cc[0] ? card_flag_for(l.cc) : nullptr;  // UI-54d
         char cd[24];
         countdown(l.net - t, cd, sizeof(cd));
         if (near)
@@ -3368,12 +3404,16 @@ inline int collect_alerts(double t, Alert *out, int max) {
       }
     }
     shown = 0;
-    for (int ei = 0; ei < (int) live.events.size() && ui.event_alerts; ei++) {
+    for (int ei = 0; ei < (int) live.events.size(); ei++) {
       const auto &e = live.events[ei];
+      const bool splash = is_splashdown(e);  // UI-41h: splashdowns have their own switch
+      if (splash ? !ui.splash_alerts : !ui.event_alerts)
+        continue;
       if (shown >= 2 || !e.exact || e.t < t - 600 || e.t - t > LAUNCH_AHEAD_S)
         continue;
-      if (Alert *a = add(C_EVENT, "\xF3\xB1\x8E\x83", nullptr)) {  // space-station
+      if (Alert *a = add(C_EVENT, splash ? "\xF3\xB0\xB2\xB4" : "\xF3\xB1\x8E\x83", nullptr)) {  // parachute / space-station
         a->info = AI_EVENT, a->idx = (int16_t) ei;
+        a->flag = e.cc[0] ? card_flag_for(e.cc) : nullptr;  // UI-54d
         char cd[24];
         if (e.t > t) {
           countdown(e.t - t, cd, sizeof(cd));
@@ -4162,7 +4202,7 @@ inline void info_card_update(double t) {
       float brg;
       const float km = launch_km(l, &brg);
       if (!std::isnan(km))
-        snprintf(far, sizeof(far), "\n%.0f km away, to the %s", km, compass(brg));
+        snprintf(far, sizeof(far), "\n%.0f %s away, to the %s", dist(km), dist_unit(), compass(brg));  // UI-29
       snprintf(body, sizeof(body), "%s\n%s %s (%s%s)\nFrom %s\nStatus: %s%s", mission, d0, h0, l.net > t ? "in " : "",
                cd, l.where, l.status[0] ? l.status : "unknown", far);
       break;

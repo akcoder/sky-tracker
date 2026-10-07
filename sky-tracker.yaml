@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.24"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.25"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -107,6 +107,7 @@ esphome:
             sat::set_stations(id(show_stations).state);  // UI-52b
             sat::set_lunar_alerts(id(lunar_alerts).state);  // UI-41f
             sat::set_comet_alerts(id(comet_alerts).state);  // UI-41g
+            sat::set_splash_alerts(id(splash_alerts).state);  // UI-41h
             sat::set_night(id(night_mode).state);      // UI-45
             sat::setup(c, w);
             sat::vs::install(id(main_display));  // PERF-14: status-line changes drawn behind the scan
@@ -456,7 +457,7 @@ font:
     # monitor, map-marker, weather-night (UI-16a settings tabs); star-shooting, star-four-points,
     # weather-sunset-down (UI-33 Sat Trails, Stars, After dusk)
     # moon-full (UI-48/49 alerts, 4.5.15)
-    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F1BB9", "\U000F0379", "\U000F034E", "\U000F0594", "\U000F1741", "\U000F0AE2", "\U000F059B", "\U000F0F62", "\U000F018C", "\U000F14DE", "\U000F0629", "\U000F00B8", "\U000F0150", "\U000F00DF", "\U000F00E1", "\U000F08F0", "\U000F0F57", "\U000F0F5A", "\U000F1382", "\U000F009E", "\U000F1616", "\U000F0937"]  # moon-full, compass-outline, rocket-launch, meteor (UI-63), blur-radial (UI-64); settings row icons (UI-16a, 4.5.38): clock-outline, brightness-6, brightness-auto, map-marker-distance; latitude, longitude, compass-rose
+    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F1BB9", "\U000F0379", "\U000F034E", "\U000F0594", "\U000F1741", "\U000F0AE2", "\U000F059B", "\U000F0F62", "\U000F018C", "\U000F14DE", "\U000F0629", "\U000F00B8", "\U000F0150", "\U000F00DF", "\U000F00E1", "\U000F08F0", "\U000F0F57", "\U000F0F5A", "\U000F1382", "\U000F009E", "\U000F1616", "\U000F0937", "\U000F0CB4"]  # moon-full, compass-outline, rocket-launch, meteor (UI-63), blur-radial (UI-64); settings row icons (UI-16a, 4.5.38): clock-outline, brightness-6, brightness-auto, map-marker-distance; latitude, longitude, compass-rose
   - file:
       type: web
       url: https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf
@@ -465,7 +466,7 @@ font:
     bpp: 4
     # UI-30 (4.5.5): details-card icons at the Moon picture's size: space-station, satellite-uplink,
     # satellite-variant, earth, crosshairs-gps, trash-can, weather-sunny, star-four-points
-    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F0AE2", "\U000F1741", "\U000F0629", "\U000F14DE", "\U000F1BB9", "\U000F0F62"]  # + star-shooting (UI-47 shower card), meteor (UI-63 comet card), rocket-launch, aurora, moon-full (UI-41d alert cards)
+    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F0AE2", "\U000F1741", "\U000F0629", "\U000F14DE", "\U000F1BB9", "\U000F0F62", "\U000F0CB4"]  # + star-shooting (UI-47 shower card), meteor (UI-63 comet card), rocket-launch, aurora, moon-full (UI-41d alert cards)
   - file: "gfonts://Roboto@300"
     id: setup_title
     size: 34
@@ -1362,6 +1363,19 @@ switch:
       - lambda: sat::set_comet_alerts(true);
     on_turn_off:
       - lambda: sat::set_comet_alerts(false);
+  - platform: template           # UI-41h: capsules splashing down
+    id: splash_alerts
+    name: Splashdown Alerts
+    web_server:
+      sorting_group_id: grp_celestial
+      sorting_weight: 16
+    icon: mdi:parachute
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_splash_alerts(true);
+    on_turn_off:
+      - lambda: sat::set_splash_alerts(false);
   - platform: template           # UI-54: launch alerts
     id: launch_alerts
     name: Launch Alerts
@@ -1499,6 +1513,15 @@ button:
     icon: mdi:space-station
     on_press:
       - lambda: sat::rocket::play_undock_now();
+  - platform: template           # UI-69m: shows the splashdown animation now
+    id: btn_play_splash
+    name: Play Splashdown Animation
+    web_server:
+      sorting_group_id: grp_display
+      sorting_weight: 9
+    icon: mdi:parachute
+    on_press:
+      - lambda: sat::rocket::play_splash_now();
   - platform: template           # UI-68b: the Settings Upgrade Check, from the web UI and HA
     id: btn_upgrade_check
     name: Upgrade Check
@@ -2179,6 +2202,7 @@ lvgl:
             set(id(sw_event_alerts), id(event_alerts).state);
             set(id(sw_lunar_alerts), id(lunar_alerts).state);  // UI-41f
             set(id(sw_comet_alerts), id(comet_alerts).state);  // UI-41g
+            set(id(sw_splash_alerts), id(splash_alerts).state);  // UI-41h
             set(id(sw_stations), id(show_stations).state);  // UI-52b
             set(id(sw_milky_way), id(show_milky_way).state);  // UI-64
             set(id(sw_comets), id(show_comets).state);        // UI-63
@@ -2268,6 +2292,7 @@ lvgl:
                         sw(id(sw_event_alerts), id(event_alerts));
                         sw(id(sw_lunar_alerts), id(lunar_alerts));  // UI-41f
                         sw(id(sw_comet_alerts), id(comet_alerts));  // UI-41g
+                        sw(id(sw_splash_alerts), id(splash_alerts));  // UI-41h
                         sw(id(sw_stations), id(show_stations));  // UI-52b
                         sw(id(sw_milky_way), id(show_milky_way));  // UI-64
                         sw(id(sw_comets), id(show_comets));        // UI-63
@@ -3436,6 +3461,23 @@ lvgl:
                   id: sw_comet_alerts
                   x: 400
                   y: 146
+                  width: 56
+                  height: 28
+              - label:                 # UI-41h
+                  x: 16
+                  y: 196
+                  text: "Splashdowns"
+                  text_font: mono16
+              - label:
+                  x: 130
+                  y: 194
+                  text: "\U000F0CB4"   # parachute
+                  text_font: mdi_card20
+                  text_color: 0xE8743B
+              - switch:
+                  id: sw_splash_alerts
+                  x: 156
+                  y: 190
                   width: 56
                   height: 28
         - button:                # UI-67: About (version, device, credits), lower right

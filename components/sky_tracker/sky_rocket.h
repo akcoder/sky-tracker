@@ -25,6 +25,7 @@ void play_now();  // the button: the next launch's name (or a generic one)
 void play_undock_now();  // UI-69f button: the next ISS undocking's name (or a generic one)
 bool active();    // playing now (sat::tick pauses, UI-69b)
 void play_boot();  // UI-69k on the boot screen: no banner, smoke over black
+void play_splash_now();  // UI-69m button: the next splashdown's name (or a generic one)
 }  // namespace rocket
 }  // namespace sat
 #else
@@ -96,6 +97,13 @@ constexpr int CAP_W = 26, CAP_H = 40;       // capsule image; its nose (bottom) 
 constexpr int PORT_X = 240, PORT_Y = 176;   // the forward port, top of the module stack
 constexpr float UNDOCK_S = 6.0f;            // the scene's length
 constexpr float UNDOCK_GO = 1.0f;           // docked until then, then the hooks let go
+// UI-69m splashdown: a capsule on four parachutes comes down over a band of ocean (drawn once,
+// clipped to the sky disc), splashes, lets the chutes go and bobs
+constexpr float SPLASH_S = 7.0f, SPLASH_HIT = 4.2f;  // the scene's length; when it meets the water
+constexpr int SEA_Y = 360, SEA_X0 = 56, SEA_W = 368, SEA_H = 70;  // the ocean band (screen coordinates)
+constexpr int CAP2_W = 24, CAP2_H = 28;   // the returning capsule, nose up
+constexpr int CHUTE_W = 76, CHUTE_H = 58; // four mains and their lines, meeting at the capsule's nose
+constexpr uint32_t C_SEA = 0x1C4E80, C_SEA_LIGHT = 0x3F7FB8;
 constexpr double LATE_S = 120;       // a launch is "now" for 2 min after T-0 (refresh lag)
 
 struct St {
@@ -143,6 +151,12 @@ struct St {
   bool boot = false;        // UI-69k on the boot screen (black page, no banner)
   lv_draw_buf_t *capsule_buf = nullptr;
   lv_obj_t *iss[ISS_PARTS] = {};
+  // UI-69m
+  bool splash = false;
+  lv_draw_buf_t *sea_buf = nullptr, *cap2_buf = nullptr, *chute_buf = nullptr;
+  lv_obj_t *sea = nullptr, *chutes = nullptr, *sea_front = nullptr;  // sea_front: water over the floating capsule's base
+  uint32_t splash_key = 0;  // the last splashdown shown
+  bool splashed = false;
   uint32_t undock_key = 0;  // the last undocking shown
 };
 inline St st;
@@ -291,7 +305,7 @@ inline void smoke_at(int k, int x, int y, int r, int a, uint32_t col) {
   p.calls++;
   const uint32_t t0 = now_us();
   const int dx = x - MAP_CX, dy = y - MAP_CY;
-  const uint32_t bg = dx * dx + dy * dy <= MAP_R * MAP_R ? SKY_BG : PAGE_BG;
+  const uint32_t bg = st.splash && y >= SEA_Y ? C_SEA : dx * dx + dy * dy <= MAP_R * MAP_R ? SKY_BG : PAGE_BG;
   St::Disc n;
   n.x = (int16_t) x, n.y = (int16_t) y, n.r = (int16_t) r, n.on = true;
   const uint32_t aa = (uint32_t) std::min(255, std::max(0, a));
@@ -377,8 +391,14 @@ inline void stop() {
       lv_obj_delete(o);
       o = nullptr;
     }
+  for (lv_obj_t **o : {&st.sea, &st.chutes, &st.sea_front})
+    if (*o) {
+      lv_obj_delete(*o);
+      *o = nullptr;
+    }
   st.label = nullptr;
   st.boot = false;
+  st.splash = false;
 }
 inline bool playing() { return st.anim != nullptr; }
 bool active() { return playing(); }
@@ -512,6 +532,74 @@ inline lv_draw_buf_t *draw_capsule() {
   }
   return db;
 }
+// UI-69m pictures, drawn once at boot, 4x4 supersampled like the rocket
+inline lv_draw_buf_t *draw_pic(int w, int h, uint32_t (*sample)(float, float)) {
+  lv_draw_buf_t *db = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_ARGB8888, 0);
+  if (db == nullptr)
+    return nullptr;
+  for (int py = 0; py < h; py++) {
+    ui_feed_wdt();  // FAIL-11
+    uint8_t *row = (uint8_t *) db->data + (size_t) py * db->header.stride;
+    for (int px = 0; px < w; px++) {
+      uint32_t r = 0, g = 0, b = 0, a = 0;
+      for (int sy = 0; sy < 4; sy++)
+        for (int sx = 0; sx < 4; sx++) {
+          const uint32_t c = sample(px + (sx + 0.5f) / 4, py + (sy + 0.5f) / 4);
+          if (c >> 24)
+            r += (c >> 16) & 255, g += (c >> 8) & 255, b += c & 255, a += c >> 24;
+        }
+      const uint32_t n = a ? a : 1;
+      row[px * 4 + 0] = (uint8_t) std::min<uint32_t>(255, b * 255 / n);
+      row[px * 4 + 1] = (uint8_t) std::min<uint32_t>(255, g * 255 / n);
+      row[px * 4 + 2] = (uint8_t) std::min<uint32_t>(255, r * 255 / n);
+      row[px * 4 + 3] = (uint8_t) (a / 16);
+    }
+  }
+  return db;
+}
+// the returning capsule, heat shield down: a white cone, two windows, the dark shield
+inline uint32_t capsule2_sample(float x, float y) {
+  if (y >= CAP2_H - 4)
+    return (x >= 0.5f && x < CAP2_W - 0.5f && y < CAP2_H - 0.5f) ? 0xFF4A3A30 : 0;  // heat shield (scorched)
+  const float f = y / (CAP2_H - 4), l = 7 - 6.5f * f, r = CAP2_W - 7 + 6.5f * f;
+  if (y < 2 || x < l || x >= r)
+    return (y >= 0 && y < 2 && x >= 9 && x < 15) ? 0xFFB0B4BC : 0;  // the nose cap
+  const float wy = y - 12;
+  if (wy > -1.6f && wy < 1.6f && (std::fabs(x - 8.5f) < 1.4f || std::fabs(x - 15.5f) < 1.4f))
+    return 0xFF283250;  // windows
+  return x < CAP2_W / 2 ? 0xFFEEF0F5 : 0xFFD9DCE4;  // white, shaded right
+}
+// four orange-and-white mains on lines meeting at the nose (bottom middle)
+inline uint32_t chute_sample(float x, float y) {
+  static const float CX[4] = {11, 29, 47, 65}, CY[4] = {16, 9, 9, 16};
+  for (int i = 0; i < 4; i++) {  // the canopies: half-ellipses, striped
+    const float dx = (x - CX[i]) / 10.5f, dy = (y - CY[i]) / 8.0f;
+    if (dy <= 0 && dx * dx + dy * dy <= 1)
+      return ((int) ((x - CX[i] + 20) / 3.5f) & 1) ? 0xFFF4F6FA : 0xFFE8743B;
+    if (dy > 0 && dy < 0.22f && std::fabs(dx) <= 1)
+      return 0xFFC75A2A;  // the canopy's rim
+  }
+  const float ax = CHUTE_W / 2.0f, ay = CHUTE_H - 0.5f;  // the lines: rim edges to the nose
+  for (int i = 0; i < 4; i++)
+    for (int side = -1; side <= 1; side += 2) {
+      const float x0 = CX[i] + side * 10.0f, y0 = CY[i] + 1.5f;
+      const float vx = ax - x0, vy = ay - y0, t = std::max(0.0f, std::min(1.0f, ((x - x0) * vx + (y - y0) * vy) / (vx * vx + vy * vy)));
+      const float ex = x0 + t * vx - x, ey = y0 + t * vy - y;
+      if (ex * ex + ey * ey < 0.18f)
+        return 0xB0D8DCE6;
+    }
+  return 0;
+}
+// the ocean band, clipped to the sky disc: deep blue, lighter swell lines
+inline uint32_t sea_sample(float x, float y) {
+  const float gx = SEA_X0 + x - MAP_CX, gy = SEA_Y + y - MAP_CY;
+  if (gx * gx + gy * gy > (MAP_R - 1.0f) * (MAP_R - 1.0f))
+    return 0;
+  const float wave = std::sin(x * 0.11f + y * 0.7f) + std::sin(x * 0.047f - y * 0.3f);
+  if (y < 1.5f || (((int) y % 9) == 4 && wave > 1.1f))
+    return 0xFF000000 | C_SEA_LIGHT;
+  return 0xFF000000 | C_SEA;
+}
 // capsule position (top-left of its image) at ts seconds into the scene
 inline void capsule_at(float ts, float &x, float &y) {
   const float u = std::max(0.0f, ts - UNDOCK_GO);
@@ -555,9 +643,63 @@ inline void frame_undock() {
   }
 }
 
+// UI-69m: down under the chutes with a slow sway, the splash, the chutes let go, a gentle bob
+inline void frame_splash() {
+  const float ts = (now_ms() - st.t0) / 1000.0f;
+  if (ts > SPLASH_S) {
+    stop();
+    return;
+  }
+  const float rest = SEA_Y - CAP2_H + 7;  // floating: the shield and a little of the body under water
+  const float sway = 7.0f * std::sin(ts * 1.4f) * std::max(0.0f, 1 - ts / SPLASH_HIT);
+  const float cx = MAP_CX + sway;
+  float y;
+  if (ts < SPLASH_HIT)
+    y = -CAP2_H + (rest + CAP2_H) * (ts / SPLASH_HIT);  // a steady fall: the chutes are open
+  else
+    y = rest + 2.0f * std::sin((ts - SPLASH_HIT) * 4.0f) * std::exp(-(ts - SPLASH_HIT) * 0.6f);
+  lv_obj_set_pos(st.img, (int32_t) std::lround(cx - CAP2_W / 2.0f), (int32_t) std::lround(y));
+  if (st.sea_front && ts >= SPLASH_HIT) {  // the shield and the bottom of the body under water
+    lv_obj_set_pos(st.sea_front, (int32_t) std::lround(cx - CAP2_W / 2.0f - 6), SEA_Y);
+    if (lv_obj_has_flag(st.sea_front, LV_OBJ_FLAG_HIDDEN))
+      lv_obj_remove_flag(st.sea_front, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (st.chutes) {
+    const float u = std::max(0.0f, ts - SPLASH_HIT - 0.3f);  // let go: they drift off downwind
+    const float chx = cx - CHUTE_W / 2.0f + 34.0f * u, chy = y - CHUTE_H + 2 + 14.0f * u * u;
+    if (u > 0 && chy > SEA_Y - CHUTE_H / 2)
+      lv_obj_add_flag(st.chutes, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_set_pos(st.chutes, (int32_t) std::lround(chx), (int32_t) std::lround(chy));
+  }
+  if (ts >= SPLASH_HIT && !st.splashed) {  // the splash: spray thrown out both ways
+    st.splashed = true;
+    static const float DX[8] = {-14, 14, -26, 26, -8, 8, -36, 36}, DY[8] = {-6, -6, -2, -2, -12, -12, 0, 0};
+    for (int k = 0; k < 8; k++) {
+      const int i = st.puff_next++ % PUFFS;
+      st.puff_x[i] = cx + DX[k], st.puff_y[i] = SEA_Y + DY[k], st.puff_t[i] = ts, st.puff_step[i] = -1;
+    }
+  }
+  for (int i = 0; i < PUFFS && i < st.puff_next; i++) {
+    const int step = (int) ((ts - st.puff_t[i]) / 0.08f);
+    if (step == st.puff_step[i])
+      continue;
+    st.puff_step[i] = (int8_t) std::min(step, 127);
+    const float age = step * 0.08f;
+    const int a = (int) (230 - 170 * age);
+    if (a <= 40) {
+      hide(PADS + i);
+      continue;
+    }
+    smoke_at(PADS + i, (int) st.puff_x[i], (int) (st.puff_y[i] - 10 * age), (int) (4 + 9 * age), a, 0xF4F6FA);
+  }
+}
+
 inline void frame() {
   st.last_frame = now_ms();
-  if (st.undock)
+  if (st.splash)
+    frame_splash();
+  else if (st.undock)
     frame_undock();
   else
     frame_launch();
@@ -628,12 +770,15 @@ inline void banner_text(const char *name, char *b, size_t n) {
   b[k] = 0;
 }
 
-inline void play_scene(bool undock, const char *name, bool boot = false) {
+inline void play_scene(bool undock, const char *name, bool boot = false, bool splash = false) {
   stop();
-  if (!st.img_buf[0] || (undock && !st.capsule_buf))
+  if (!st.img_buf[0] || (undock && !st.capsule_buf) || (splash && (!st.sea_buf || !st.cap2_buf || !st.chute_buf)))
     return;
-  st.undock = undock;
-  st.boot = boot && !undock;
+  st.undock = undock && !splash;
+  st.splash = splash;
+  st.splashed = false;
+  undock = st.undock;
+  st.boot = boot && !undock && !splash;
   // a transparent full-screen layer: any tap skips
   st.catcher = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(st.catcher);
@@ -657,11 +802,35 @@ inline void play_scene(bool undock, const char *name, bool boot = false) {
       st.iss[k] = o;
     }
   }
+  if (splash) {  // UI-69m: the ocean under the spray, the chutes over it
+    st.sea = lv_image_create(lv_layer_top());
+    lv_image_set_src(st.sea, st.sea_buf);
+    lv_obj_set_pos(st.sea, SEA_X0, SEA_Y);
+    lv_obj_remove_flag(st.sea, LV_OBJ_FLAG_CLICKABLE);
+  }
   smoke_create();  // over the ISS, under the rocket and the banner
+  if (splash) {
+    st.chutes = lv_image_create(lv_layer_top());
+    lv_image_set_src(st.chutes, st.chute_buf);
+    lv_obj_set_pos(st.chutes, -200, -200);
+    lv_obj_remove_flag(st.chutes, LV_OBJ_FLAG_CLICKABLE);
+  }
   st.img = lv_image_create(lv_layer_top());
-  lv_image_set_src(st.img, undock ? st.capsule_buf : st.img_buf[0]);
-  if (!undock)
+  lv_image_set_src(st.img, splash ? st.cap2_buf : undock ? st.capsule_buf : st.img_buf[0]);
+  if (!undock && !splash)
     lv_image_set_pivot(st.img, PX, PY);
+  if (splash) {  // the water line in front of the floating capsule (shown once it is down)
+    st.sea_front = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(st.sea_front);
+    lv_obj_set_size(st.sea_front, CAP2_W + 12, 9);
+    lv_obj_set_style_bg_color(st.sea_front, lv_color_hex(C_SEA), 0);
+    lv_obj_set_style_bg_opa(st.sea_front, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_side(st.sea_front, LV_BORDER_SIDE_TOP, 0);
+    lv_obj_set_style_border_color(st.sea_front, lv_color_hex(C_SEA_LIGHT), 0);
+    lv_obj_set_style_border_width(st.sea_front, 2, 0);
+    lv_obj_remove_flag(st.sea_front, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(st.sea_front, LV_OBJ_FLAG_HIDDEN);
+  }
   lv_obj_remove_flag(st.img, LV_OBJ_FLAG_CLICKABLE);
   char b[96] = "";
   if (!st.boot) {  // UI-69k: no banner on the boot screen
@@ -683,7 +852,7 @@ inline void play_scene(bool undock, const char *name, bool boot = false) {
     lv_obj_set_width(st.label, 336);
     lv_label_set_long_mode(st.label, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_style_text_align(st.label, LV_TEXT_ALIGN_CENTER, 0);
-    banner_text(name && *name ? name : undock ? "Undocking from the ISS" : "Rocket launch", b, sizeof(b));
+    banner_text(name && *name ? name : splash ? "Splashdown" : undock ? "Undocking from the ISS" : "Rocket launch", b, sizeof(b));
     lv_label_set_text(st.label, b);
     // A long name wraps to two lines (no more: dots after that); the banner grows upward to hold
     // them, its bottom staying put (a fixed 46 px banner let the second line spill over the
@@ -729,7 +898,7 @@ inline void play_scene(bool undock, const char *name, bool boot = false) {
       },
       40, nullptr);
   frame();
-  ESP_LOGI("rocket", "%s animation: %s", undock ? "undocking" : st.boot ? "boot" : "launch", b);
+  ESP_LOGI("rocket", "%s animation: %s", splash ? "splashdown" : undock ? "undocking" : st.boot ? "boot" : "launch", b);
 }
 inline void play(const char *name) { play_scene(false, name); }
 
@@ -760,6 +929,16 @@ inline void check() {
     play_scene(true, e.name);
     return;
   }
+  for (const auto &e : live.events) {  // UI-69m: a capsule coming home
+    if (!e.exact || !is_splashdown(e) || e.t > t || t - e.t > LATE_S)
+      continue;
+    const uint32_t k = key_of(e.name, e.t);
+    if (k == st.splash_key)
+      continue;
+    st.splash_key = k;
+    play_scene(false, e.name, false, true);
+    return;
+  }
 }
 
 void init(const lv_font_t *banner) {
@@ -767,6 +946,9 @@ void init(const lv_font_t *banner) {
   for (int i = 0; i < FLAMES; i++)
     st.img_buf[i] = draw_rocket(FLAME[i]);
   st.capsule_buf = draw_capsule();
+  st.cap2_buf = draw_pic(CAP2_W, CAP2_H, capsule2_sample);  // UI-69m
+  st.chute_buf = draw_pic(CHUTE_W, CHUTE_H, chute_sample);
+  st.sea_buf = draw_pic(SEA_W, SEA_H, sea_sample);
   lv_timer_create([](lv_timer_t *) { check(); }, 1000, nullptr);
 }
 void set_enabled(bool on) {
@@ -778,6 +960,15 @@ void play_boot() {
   if (!st.enabled)
     return;
   play_scene(false, nullptr, true);
+}
+void play_splash_now() {  // UI-69m
+  const double t = clock_valid() ? clock_now() : 0;
+  for (const auto &e : live.events)
+    if (is_splashdown(e) && e.t > t - LATE_S) {
+      play_scene(false, e.name, false, true);
+      return;
+    }
+  play_scene(false, "Splashdown", false, true);
 }
 void play_undock_now() {
   const double t = clock_valid() ? clock_now() : 0;
