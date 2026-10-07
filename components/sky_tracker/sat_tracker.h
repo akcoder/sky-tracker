@@ -1958,7 +1958,7 @@ struct Alert {
   int32_t id;
   uint8_t info;
   int16_t idx;
-  const lv_image_dsc_t *flag;  // UI-54d: the country's flag after the icon (launches, events)
+  const lv_image_dsc_t *flag;  // UI-54d: the country's flag, shown on the alert's details card
 };
 // UI-41h / UI-69m: a capsule splashing down (not a landing on land or the Moon)
 inline bool is_splashdown(const net::EventRec &e) {
@@ -1970,7 +1970,6 @@ inline Alert shown_alert;          // UI-41d the alert on the status line now
 inline bool shown_alert_ok = false;
 inline Alert info_alert;           // the one whose details card is open (K_INFO)
 inline lv_obj_t *alert_zone = nullptr;  // the alert's tap zone (UI-41d)
-inline lv_obj_t *alert_flag = nullptr;  // UI-54d: the country flag on the status line
 inline lv_obj_t *card_find_btn = nullptr;  // the card's Find button (hidden on K_INFO)
 inline void alert_click_cb(lv_event_t *e);
 constexpr int MAX_ALERTS = 12;
@@ -2062,29 +2061,16 @@ inline void draw_hud(double t) {
       lv_obj_set_pos(ui.aurora_icon, base_x, base_y + ALERT_DY - 2);
       lv_obj_add_flag(ui.aurora_icon, LV_OBJ_FLAG_HIDDEN);
     }
-    if (alert_flag == nullptr) {  // UI-54d: the flag slot, after the icon
-      alert_flag = lv_image_create(parent);
-      lv_obj_remove_style_all(alert_flag);
-      lv_obj_add_flag(alert_flag, LV_OBJ_FLAG_HIDDEN);
-    }
     if (ui.alert_img == nullptr) {  // picture slot (planets, alignments)
       ui.alert_img = lv_image_create(parent);
       lv_obj_remove_style_all(ui.alert_img);
       lv_obj_set_pos(ui.alert_img, base_x, base_y + ALERT_DY - 2);
       lv_obj_add_flag(ui.alert_img, LV_OBJ_FLAG_HIDDEN);
     }
-    static const void *shown_icon = nullptr, *shown_flag = nullptr;
+    static const void *shown_icon = nullptr;
     const void *want_icon = al ? (al->img ? (const void *) al->img : (const void *) al->glyph) : nullptr;
-    const void *want_flag = al ? (const void *) al->flag : nullptr;
-    if (want_icon != shown_icon || want_flag != shown_flag) {
+    if (want_icon != shown_icon) {
       shown_icon = want_icon;
-      shown_flag = want_flag;
-      if (al && al->flag) {
-        lv_image_set_src(alert_flag, al->flag);
-        lv_obj_remove_flag(alert_flag, LV_OBJ_FLAG_HIDDEN);
-      } else {
-        lv_obj_add_flag(alert_flag, LV_OBJ_FLAG_HIDDEN);
-      }
       const bool glyph = al && !al->img && al->glyph && ui.aurora_icon;
       const bool img = al && al->img;
       if (glyph) {
@@ -2101,9 +2087,7 @@ inline void draw_hud(double t) {
         lv_obj_add_flag(ui.alert_img, LV_OBJ_FLAG_HIDDEN);
       }
       const bool icon = glyph || img;
-      const int fx = base_x + (icon ? 24 : 0);  // UI-54d: the flag, then the text
-      lv_obj_set_x(alert_flag, fx);
-      lv_obj_set_x(ui.w.status, fx + (al && al->flag ? flags::CARD_W + 5 : 0));  // text clears the icon (and flag)
+      lv_obj_set_x(ui.w.status, base_x + (icon ? 24 : 0));  // text clears the icon
       // UI-41: every alert in one font (mono15; mono14 without it), ALERT_DY lower than
       // the status line, which keeps its own font
       const lv_font_t *af = ui.w.alert_font ? ui.w.alert_font : ui.w.card_font;
@@ -2137,11 +2121,7 @@ inline void draw_hud(double t) {
                                                 : cap_top - ink_off;
       if (lv_obj_get_y(icon) != y)
         lv_obj_set_y(icon, y);
-      if (al->flag) {  // centred where the icon is
-        const int32_t fy = y + ink_off + ink_h / 2 - flags::CARD_H / 2;
-        if (lv_obj_get_y(alert_flag) != fy)
-          lv_obj_set_y(alert_flag, fy);
-      }
+
     }
   }
   if (col != status_col && ui.w.status) {
@@ -3391,7 +3371,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
       const bool near = km < LAUNCH_NEAR_KM;
       if (Alert *a = add(C_LAUNCH, "\xF3\xB1\x93\x9E", nullptr)) {  // rocket-launch
         a->info = AI_LAUNCH, a->idx = (int16_t) li;
-        a->flag = l.cc[0] ? card_flag_for(l.cc) : nullptr;  // UI-54d
+        a->flag = l.cc[0] ? card_flag_for(l.cc) : nullptr;  // UI-54d: shown on its details card
         char cd[24];
         countdown(l.net - t, cd, sizeof(cd));
         if (near)
@@ -3413,7 +3393,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
         continue;
       if (Alert *a = add(C_EVENT, splash ? "\xF3\xB0\xB2\xB4" : "\xF3\xB1\x8E\x83", nullptr)) {  // parachute / space-station
         a->info = AI_EVENT, a->idx = (int16_t) ei;
-        a->flag = e.cc[0] ? card_flag_for(e.cc) : nullptr;  // UI-54d
+        a->flag = e.cc[0] ? card_flag_for(e.cc) : nullptr;  // UI-54d: shown on its details card
         char cd[24];
         if (e.t > t) {
           countdown(e.t - t, cd, sizeof(cd));
@@ -4289,8 +4269,20 @@ inline void info_card_update(double t) {
   set_text_if(ui.card_body, body);
   if (ui.card_moon)
     lv_obj_add_flag(ui.card_moon, LV_OBJ_FLAG_HIDDEN);
-  if (ui.card_flag)
-    lv_obj_add_flag(ui.card_flag, LV_OBJ_FLAG_HIDDEN);
+  if (ui.card_flag) {  // UI-54d: the launch's or spacecraft's country, after the title (as UI-34)
+    if (al.flag) {
+      if (lv_image_get_src(ui.card_flag) != al.flag)
+        lv_image_set_src(ui.card_flag, al.flag);
+      lv_point_t sz;
+      lv_text_get_size(&sz, title, lv_obj_get_style_text_font(ui.card_title, LV_PART_MAIN), 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+      lv_obj_update_layout(ui.card);
+      const int room = lv_obj_get_content_width(ui.card_title) - flags::CARD_W - 6;
+      lv_obj_align_to(ui.card_flag, ui.card_title, LV_ALIGN_LEFT_MID, std::min((int) sz.x, room) + 6, 0);
+      lv_obj_remove_flag(ui.card_flag, LV_OBJ_FLAG_HIDDEN);
+    } else {
+      lv_obj_add_flag(ui.card_flag, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
   if (ui.card_icon) {
     if (al.glyph) {
       set_text_if(ui.card_icon, al.glyph);

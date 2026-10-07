@@ -1283,6 +1283,8 @@ int main() {
           printf("launch details: %s\n%s\n", lv_label_get_text(sat::ui.card_title), lv_label_get_text(sat::ui.card_body));
           CHECK(sat::ui.sel_kind == sat::K_INFO && strstr(lv_label_get_text(sat::ui.card_body), "Status:") &&
                 strstr(lv_label_get_text(sat::ui.card_body), "From "), "launch alert tap: details card");
+          CHECK(sat::ui.card_flag && !lv_obj_has_flag(sat::ui.card_flag, LV_OBJ_FLAG_HIDDEN) &&
+                lv_image_get_src(sat::ui.card_flag) == sat::card_flag_for("USA"), "launch card flag");
           lv_obj_invalidate(lv_screen_active());
           lv_refr_now(disp);
           save_ppm(OUT_DIR "/renders/r16_launch_details.ppm");
