@@ -1266,6 +1266,28 @@ int main() {
         lv_obj_send_event(sat::ui.w.status, LV_EVENT_CLICKED, nullptr);
         CHECK(!sat::card_open(), "no alert: tap ignored");
       }
+      {  // UI-41e: launch and docking alerts each have their own switch
+        auto count = [&](const char *what) {
+          static sat::Alert xa[sat::MAX_ALERTS];
+          const int nx = sat::collect_alerts(sat_host_now, xa, sat::MAX_ALERTS);
+          int c = 0;
+          for (int i = 0; i < nx; i++) c += strstr(xa[i].text, what) != nullptr;
+          return c;
+        };
+        const int l0 = count("launches in") + count(" from "), e0 = count("Undocking");
+        sat::set_alert_kinds(true, false, true);
+        const int l1 = count("launches in") + count(" from "), e1 = count("Undocking");
+        sat::set_alert_kinds(true, true, false);
+        const int l2 = count("launches in") + count(" from "), e2 = count("Undocking");
+        sat::set_alert_kinds(true, true, true);
+        CHECK(l0 > 0 && e0 > 0 && l1 == 0 && e1 == e0 && l2 == l0 && e2 == 0, "alert kinds %d/%d %d/%d %d/%d", l0, e0, l1, e1, l2, e2);
+      }
+      {  // UI-52b: Space stations off hides both stations and their list rows
+        sat::set_stations(false);
+        CHECK(!sat::ui.iss.up && !sat::ui.css.up && !sat::ui.iss.shown, "stations hidden");
+        sat::set_stations(true);
+        CHECK(sat::ui.iss.id < 0 || sat::ui.iss.up || sat::ui.iss_azel.el < 0, "ISS back");
+      }
       if (getenv("ALERT_INV")) {  // what an alert switch redraws
         static std::vector<lv_area_t> inv;
         lv_display_add_event_cb(disp, [](lv_event_t *e) {

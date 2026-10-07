@@ -402,6 +402,8 @@ struct Ui {
   bool night_on = false, night_active = false;
   // UI-41a alert switches (UI-47..51: sky events)
   bool aurora_alerts = true, planet_alerts = true, sky_alerts = true;
+  bool station_alerts = true, launch_alerts = true, event_alerts = true;  // UI-41e
+  bool stations_on = true;  // UI-52b: ISS and Tiangong drawn on the map
   // UI-52 Tiangong
   Marker css;
   double css_pass_retry_at = 0;
@@ -931,7 +933,8 @@ inline void draw_marker(Marker &m, const SatRec *fresh, int px_size, double t, b
     m.offx = m.offy = 0;
 
   const geo::AzEl a = geo::azel(ui.obs, geo::sat_ecef(m.rec, t));
-  const bool up = a.el >= min_el;  // UI-7: hide, never clamp (min_el > 0: Starlink cone, UI-4)
+  const bool station = &m == &ui.iss || &m == &ui.css;  // UI-52b: the stations can be switched off
+  const bool up = a.el >= min_el && (!station || ui.stations_on);  // UI-7: hide, never clamp (min_el > 0: Starlink cone, UI-4)
   set_shown(m.dot, m.shown, up);
   m.up = up;
   if (!up) {
@@ -2300,15 +2303,18 @@ inline void draw_list(double t) {
   if (ui.iss_valid) {
     fmt_pos(ui.iss_azel);
     snprintf(alt, sizeof(alt), "%.0f %s", dist(live.iss.alt_km), dist_unit());
-    add(RK_ISS, ICON_ISS, "ISS", "ISS", "LEO", dir, el, alt);
+    if (ui.stations_on)  // UI-52b
+      add(RK_ISS, ICON_ISS, "ISS", "ISS", "LEO", dir, el, alt);
   } else {
-    add(RK_ISS, ICON_ISS, "ISS", "", "", "no data", "", "");
+    if (ui.stations_on)  // UI-52b
+      add(RK_ISS, ICON_ISS, "ISS", "", "", "no data", "", "");
   }
   if (ui.css.id >= 0 && ui.css.up) {  // UI-52: Tiangong while it is above the horizon
     const geo::AzEl a = geo::azel(ui.obs, geo::sat_ecef(ui.css.rec, t));
     fmt_pos(a);
     snprintf(alt, sizeof(alt), "%.0f %s", dist(ui.css.rec.alt_km), dist_unit());
-    add(RK_CSS, ICON_ISS, "Tiangong", "CN", "LEO", dir, el, alt);
+    if (ui.stations_on)  // UI-52b
+      add(RK_CSS, ICON_ISS, "Tiangong", "CN", "LEO", dir, el, alt);
   }
   fmt_pos(ui.sm.sun);
   snprintf(alt, sizeof(alt), "%.2f AU", planets::sun_dist_au(astro::jd(t)));  // UI-36b
@@ -2757,6 +2763,27 @@ inline void set_alerts(bool aurora, bool planet) {
     lv_obj_invalidate(ui.w.sky);
 }
 inline void set_sky_alerts(bool on) { ui.sky_alerts = on; }  // UI-47..51 (and UI-41b)
+inline void set_alert_kinds(bool stations, bool launches, bool events) {  // UI-41e
+  ui.station_alerts = stations;
+  ui.launch_alerts = launches;
+  ui.event_alerts = events;
+}
+inline void deselect();
+inline void set_stations(bool on) {  // UI-52b
+  if (ui.stations_on == on)
+    return;
+  ui.stations_on = on;
+  if (!ui.ready)
+    return;
+  const double t = clock_now();
+  if (ui.iss.id >= 0)
+    draw_marker(ui.iss, nullptr, ISS_PX, t, false);
+  if (ui.css.id >= 0)
+    draw_marker(ui.css, nullptr, ISS_PX, t, false);
+  if (!on && (ui.sel_kind == K_ISS || ui.sel_kind == K_CSS))
+    deselect();
+  draw_list(t);
+}
 inline void set_planets(bool on) {
   if (ui.planets_on == on)
     return;
@@ -3271,7 +3298,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
     return a;
   };
   // ISS: a visible pass soon or in progress (UI-9's yellow line, promoted)
-  if (const Pass *p = next_pass(t); p && p->visible && t >= p->start - ISS_ALERT_S && t <= p->end) {
+  if (const Pass *p = next_pass(t); ui.station_alerts && p && p->visible && t >= p->start - ISS_ALERT_S && t <= p->end) {
     if (Alert *a = add(C_ISS, "\xF3\xB1\x8E\x83", nullptr)) {  // space-station
       if (t < p->start) {
         char hm[16];
@@ -3313,9 +3340,9 @@ inline int collect_alerts(double t, Alert *out, int max) {
                std::isnan(live.wind.speed) ? 0.0f : live.wind.speed);
   // UI-54 launches: the next three within 3 days (a nearby one says which way to look);
   // UI-54c then space events (dockings, undockings, releases, EVAs) within 3 days
-  if (ui.sky_alerts) {
+  {
     int shown = 0;
-    for (int li = 0; li < (int) live.launches.size(); li++) {
+    for (int li = 0; li < (int) live.launches.size() && ui.launch_alerts; li++) {
       const auto &l = live.launches[li];
       if (shown >= 3 || !launch_pending(l) || l.net < t - 900 || l.net - t > LAUNCH_AHEAD_S)
         continue;
@@ -3336,7 +3363,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
       }
     }
     shown = 0;
-    for (int ei = 0; ei < (int) live.events.size(); ei++) {
+    for (int ei = 0; ei < (int) live.events.size() && ui.event_alerts; ei++) {
       const auto &e = live.events[ei];
       if (shown >= 2 || !e.exact || e.t < t - 600 || e.t - t > LAUNCH_AHEAD_S)
         continue;
@@ -3386,7 +3413,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
       }
   }
   // UI-52 Tiangong: a visible pass soon or in progress, like the ISS
-  if (ui.css.id >= 0)
+  if (ui.css.id >= 0 && ui.station_alerts)
     for (int pi = 0; pi < (int) live.css_passes.size(); pi++) {
       const auto &p = live.css_passes[pi];
       if (p.end <= t)
@@ -6480,11 +6507,11 @@ inline void cone_label(lv_obj_t *lbl, int v) {
 }
 // UI-16a: settings tabs. which 0 = Display, 1 = Location, 2 = Celestial
 constexpr uint32_t C_TAB_ON = 0x2D5BD0, C_TAB_OFF = 0x1A2547;
-// UI-16a: four tabs (Display, Location, Celestial, Satellites), each a panel; one shown
-inline void settings_tab(int which, lv_obj_t *p0, lv_obj_t *p1, lv_obj_t *p2, lv_obj_t *p3, lv_obj_t *t0, lv_obj_t *t1,
-                         lv_obj_t *t2, lv_obj_t *t3) {
-  lv_obj_t *const P[4] = {p0, p1, p2, p3}, *const T[4] = {t0, t1, t2, t3};
-  for (int k = 0; k < 4; k++) {
+// UI-16a: five icon-only tabs (Display, Location, Celestial, Satellites, Alerts), each a panel; one shown
+inline void settings_tab(int which, lv_obj_t *p0, lv_obj_t *p1, lv_obj_t *p2, lv_obj_t *p3, lv_obj_t *p4, lv_obj_t *t0,
+                         lv_obj_t *t1, lv_obj_t *t2, lv_obj_t *t3, lv_obj_t *t4) {
+  lv_obj_t *const P[5] = {p0, p1, p2, p3, p4}, *const T[5] = {t0, t1, t2, t3, t4};
+  for (int k = 0; k < 5; k++) {
     if (k == which)
       lv_obj_remove_flag(P[k], LV_OBJ_FLAG_HIDDEN);
     else
@@ -6493,7 +6520,7 @@ inline void settings_tab(int which, lv_obj_t *p0, lv_obj_t *p1, lv_obj_t *p2, lv
   }
 }
 // UI-40: the Planets switch gets Saturn's picture (MDI 7.4 has no planet glyph)
-inline void settings_planet_icon(lv_obj_t *parent, int x, int y) {
+inline void settings_planet_icon(lv_obj_t *parent, int x, int y, lv_obj_t *alerts, int ax, int ay) {
   static lv_obj_t *img = nullptr;
   if (img != nullptr || parent == nullptr)
     return;
@@ -6501,10 +6528,10 @@ inline void settings_planet_icon(lv_obj_t *parent, int x, int y) {
   lv_obj_remove_style_all(img);
   lv_image_set_src(img, planet_dsc(planets::SATURN, true));
   lv_obj_set_pos(img, x, y);
-  lv_obj_t *al = lv_image_create(parent);  // UI-41a: Planet alerts gets the alignment picture
+  lv_obj_t *al = lv_image_create(alerts ? alerts : parent);  // UI-41a: Planet alerts gets the alignment picture
   lv_obj_remove_style_all(al);
   lv_image_set_src(al, align_dsc());
-  lv_obj_set_pos(al, 372, y + 44);
+  lv_obj_set_pos(al, ax, ay);
 }
 
 inline void set_heading(float deg) {

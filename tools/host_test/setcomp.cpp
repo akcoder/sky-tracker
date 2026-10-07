@@ -1,6 +1,6 @@
 // Comps of the Settings page with four tabs (Display, Location, Celestial, Satellites).
 //   ./setcomp A|B celestial|satellites  -> out/setcomp_<opt>_<tab>.ppm
-// A: icon and text side by side (mono15); B: icon above text (mono16), taller tabs.
+// C (4.6.23): five icon-only tabs, Alerts tab.
 #include "lvgl.h"
 #include <cstdio>
 #include <cstdint>
@@ -52,13 +52,15 @@ static void row(lv_obj_t *p, int y, const char *l1, const char *i1, uint32_t c1,
   L(p, 16, y + 6, l1, &mono16, T);
   if (i1) L(p, 122, y + 4, i1, &mdi20, c1);
   S(p, 150, y, s1);
+  if (!l2) return;
   L(p, RX, y + 6, l2, &mono16, T);
   if (i2) L(p, 372, y + 4, i2, &mdi20, c2);
   S(p, 400, y, s2);
 }
 int main(int argc, char **argv) {
-  const bool stacked = argc > 1 && argv[1][0] == 'B';
-  const bool sats = argc > 2 && !strcmp(argv[2], "satellites");
+  // ./setcomp C celestial|satellites|alerts: the 4.6.23 layout, five icon-only tabs
+  const char *tab = argc > 2 ? argv[2] : "satellites";
+  const int sel = !strcmp(tab, "celestial") ? 2 : !strcmp(tab, "alerts") ? 4 : 3;
   lv_init();
   lv_tick_set_cb(tick);
   alignas(LV_DRAW_BUF_ALIGN) static uint16_t buf[480 * 60];
@@ -73,36 +75,23 @@ int main(int argc, char **argv) {
   L(p, 16, 16, "SETTINGS", &mono16, 0xFF8A1F);
   button(p, 240, 6, 110, 38, 0x1A2547, "Cancel");
   button(p, 360, 6, 110, 38, 0x2D5BD0, "Save");
-  // tabs: 4 x 115 px, 4 px apart
-  const char *ICON[4] = {"\xF3\xB0\x8D\xB9", "\xF3\xB0\x8D\x8E", "\xF3\xB0\x96\x94", "\xF3\xB0\x91\xB1"};  // monitor, map-marker, weather-night, satellite-variant
-  const char *NAME[4] = {"Display", "Location", "Celestial", "Satellites"};
-  const int sel = sats ? 3 : 2, th_ = stacked ? 58 : 40;
-  for (int k = 0; k < 4; k++) {
-    lv_obj_t *b = button(p, 4 + k * 119, 52, 115, th_, k == sel ? 0x2D5BD0 : 0x1A2547, nullptr);
+  // tabs: 5 x 91 px, 4 px apart, icon only
+  const char *ICON[5] = {"\xF3\xB0\x8D\xB9", "\xF3\xB0\x8D\x8E", "\xF3\xB0\x96\x94", "\xF3\xB0\x91\xB1",
+                         "\xF3\xB0\x82\x9E"};  // monitor, map-marker, weather-night, satellite-variant, bell-ring
+  for (int k = 0; k < 5; k++) {
+    lv_obj_t *b = button(p, 4 + k * 95, 52, 91, 44, k == sel ? 0x2D5BD0 : 0x1A2547, nullptr);
     lv_obj_set_style_radius(b, 8, 0);
-    lv_obj_set_style_pad_all(b, 0, 0);
-    lv_obj_t *c = lv_obj_create(b);
-    lv_obj_remove_style_all(c);
-    lv_obj_set_size(c, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_center(c);
-    lv_obj_set_flex_flow(c, stacked ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(c, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(c, 4, 0);
-    lv_obj_set_style_pad_row(c, 1, 0);
-    lv_obj_t *i = lv_label_create(c);
+    lv_obj_t *i = lv_label_create(b);
     lv_label_set_text(i, ICON[k]);
     lv_obj_set_style_text_font(i, &mdi20, 0);
     lv_obj_set_style_text_color(i, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_t *t = lv_label_create(c);
-    lv_label_set_text(t, NAME[k]);
-    lv_obj_set_style_text_font(t, stacked ? &mono16 : &mono15, 0);
-    lv_obj_set_style_text_color(t, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_center(i);
   }
   lv_obj_t *pn = lv_obj_create(p);  // the tab's panel
   lv_obj_remove_style_all(pn);
-  lv_obj_set_pos(pn, 0, stacked ? 118 : 100);
-  lv_obj_set_size(pn, 480, stacked ? 322 : 340);
-  if (sats) {
+  lv_obj_set_pos(pn, 0, 104);
+  lv_obj_set_size(pn, 480, 336);
+  if (sel == 3) {
     L(pn, 16, 14, "LEO cone", &mono16, 0xE6EAF5);
     lv_obj_t *sl = lv_slider_create(pn);
     lv_obj_set_pos(sl, 150, 18);
@@ -114,19 +103,24 @@ int main(int argc, char **argv) {
     row(pn, 64, "LEO", "\xF3\xB0\x91\xB1", 0xF1F4FF, true, "Starlink", "\xF3\xB0\xA4\x89", 0x8FA8F0, true);
     row(pn, 108, "MEO", "\xF3\xB0\x86\xA4", 0x4FD1C5, true, "GEO", "\xF3\xB0\x87\xA7", 0xF6B93B, false);
     row(pn, 152, "Debris", "\xF3\xB0\xA9\xB9", 0xB39B7D, false, "Sat Trails", "\xF3\xB1\x9D\x81", 0x9FB2EA, true);
+    row(pn, 196, "Stations", "\xF3\xB1\x8E\x83", 0xFF8A1F, true, nullptr, nullptr, 0, false);
+  } else if (sel == 2) {
+    row(pn, 14, "Stars", "\xF3\xB0\xAB\xA2", 0xFFF1B8, true, "After dusk", "\xF3\xB0\x96\x9B", 0xF2A65A, true);
+    RX = 246;
+    row(pn, 58, "Planets", nullptr, 0, true, "Comets", "\xF3\xB0\x98\xA9", 0xA8F0E0, true);
+    row(pn, 102, "Milky Way", "\xF3\xB0\x82\xB8", 0xB4C4F0, true, nullptr, nullptr, 0, false);
   } else {
     RX = 246;
-    row(pn, 14, "Stars", "\xF3\xB0\xAB\xA2", 0xFFF1B8, true, "After dusk", "\xF3\xB0\x96\x9B", 0xF2A65A, true);
-    row(pn, 58, "Planets", nullptr, 0, true, "Aurora alert", "\xF3\xB1\xAE\xB9", 0x7EE0B0, true);
-    row(pn, 102, "Sky events", "\xF3\xB0\x96\x94", 0xA8D8FF, true, "Planet alert", nullptr, 0, true);
-    row(pn, 146, "Milky Way", "\xF3\xB0\x82\xB8", 0xB4C4F0, true, "Comets", "\xF3\xB0\x98\xA9", 0xA8F0E0, true);
+    row(pn, 14, "Aurora", "\xF3\xB1\xAE\xB9", 0x7EE0B0, true, "Planets", nullptr, 0, true);
+    row(pn, 58, "Sky events", "\xF3\xB0\x96\x94", 0xA8D8FF, true, "Stations", "\xF3\xB1\x8E\x83", 0xFF8A1F, true);
+    row(pn, 102, "Launches", "\xF3\xB1\x93\x9E", 0xFFC46B, true, "Dockings", "\xF3\xB1\x98\x96", 0x8FD3FF, true);
   }
   button(p, 362, 440, 110, 34, 0x1A2547, "About");
   tick_ms += 1000;
   lv_timer_handler();
   lv_refr_now(d);
   char fn[64];
-  snprintf(fn, sizeof(fn), "out/setcomp_%c_%s.ppm", stacked ? 'B' : 'A', sats ? "satellites" : "celestial");
+  snprintf(fn, sizeof(fn), "out/setcomp_C_%s.ppm", tab);
   FILE *f = fopen(fn, "wb");
   fprintf(f, "P6 480 480 255\n");
   for (int i = 0; i < 480 * 480; i++) {
