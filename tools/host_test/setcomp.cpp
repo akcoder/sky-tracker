@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <cstring>
+#include "sky_picons.h"  // the firmware's planet and alignment pictures
 extern "C" const lv_font_t mdi20, mono12, mono15, mono16;
 static uint16_t fb[480 * 480];
 static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px) {
@@ -45,6 +46,24 @@ static lv_obj_t *button(lv_obj_t *p, int x, int y, int w, int h, uint32_t bg, co
   return b;
 }
 // a row: label, icon, switch on the left half; the same on the right
+// the device's planet pictures (sat::make_dsc) at the spots settings_planet_icon uses
+static lv_image_dsc_t pic(const uint32_t *px, int w) {
+  lv_image_dsc_t d;
+  memset(&d, 0, sizeof(d));
+  d.header.magic = LV_IMAGE_HEADER_MAGIC;
+  d.header.cf = LV_COLOR_FORMAT_ARGB8888;
+  d.header.w = d.header.h = w;
+  d.header.stride = w * 4;
+  d.data_size = w * w * 4;
+  d.data = (const uint8_t *) px;
+  return d;
+}
+static void image(lv_obj_t *parent, const lv_image_dsc_t *d, int x, int y) {
+  lv_obj_t *i = lv_image_create(parent);
+  lv_obj_remove_style_all(i);
+  lv_image_set_src(i, d);
+  lv_obj_set_pos(i, x, y);
+}
 static int RX = 250;  // right-hand labels (the Celestial panel uses 246)
 static void row(lv_obj_t *p, int y, const char *l1, const char *i1, uint32_t c1, bool s1, const char *l2, const char *i2,
                 uint32_t c2, bool s2) {
@@ -109,10 +128,14 @@ int main(int argc, char **argv) {
     RX = 246;
     row(pn, 58, "Planets", nullptr, 0, true, "Comets", "\xF3\xB0\x98\xA9", 0xA8F0E0, true);
     row(pn, 102, "Milky Way", "\xF3\xB0\x82\xB8", 0xB4C4F0, true, nullptr, nullptr, 0, false);
+    static lv_image_dsc_t saturn = pic(sat::picons::BIG_PX[4], sat::picons::BIG);
+    image(pn, &saturn, 122, 62);  // settings_planet_icon(pnl_celestial, 122, 62, ...)
   } else {
     RX = 246;
     row(pn, 14, "Aurora", "\xF3\xB1\xAE\xB9", 0x7EE0B0, true, "Planets", nullptr, 0, true);
     row(pn, 58, "Sky events", "\xF3\xB0\x96\x94", 0xA8D8FF, true, "Stations", "\xF3\xB1\x8E\x83", 0xFF8A1F, true);
+    static lv_image_dsc_t align = pic(sat::picons::ALIGN_PX, sat::picons::BIG);
+    image(pn, &align, 372, 18);  // settings_planet_icon(..., pnl_alerts, 372, 18)
     row(pn, 102, "Launches", "\xF3\xB1\x93\x9E", 0xFFC46B, true, "Dockings", "\xF3\xB1\x98\x96", 0x8FD3FF, true);
   }
   button(p, 362, 440, 110, 34, 0x1A2547, "About");
