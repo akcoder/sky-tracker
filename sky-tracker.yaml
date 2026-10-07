@@ -2170,7 +2170,7 @@ lvgl:
             set(id(sw_planets), id(show_planets).state);  // UI-40
             set(id(sw_autob), id(auto_bright).state);     // UI-44
             set(id(sw_night), id(night_mode).state);      // UI-45
-            sat::settings_planet_icon(id(pnl_celestial), 122, 62, id(pnl_alerts), 372, 18);
+            sat::settings_planet_icon(id(pnl_celestial), 130, 62, id(pnl_alerts), 372, 18);
             set(id(sw_aur_alerts), id(aurora_alerts).state);  // UI-41a
             set(id(sw_pl_alerts), id(planet_alerts).state);
             set(id(sw_sky_alerts), id(sky_alerts).state);  // UI-47..51
@@ -2398,7 +2398,7 @@ lvgl:
                   text: "Time zone"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
-                  x: 128
+                  x: 140
                   y: 14
                   text: "\U000F01E7"   # earth
                   text_font: mdi_card20
@@ -2451,7 +2451,7 @@ lvgl:
                   text: "Time format"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
-                  x: 128
+                  x: 140
                   y: 56
                   text: "\U000F0150"   # clock-outline
                   text_font: mdi_card20
@@ -2478,7 +2478,7 @@ lvgl:
                   text: "Brightness"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
-                  x: 128
+                  x: 140
                   y: 98
                   text: "\U000F00DF"   # brightness-6
                   text_font: mdi_card20
@@ -2509,7 +2509,7 @@ lvgl:
                   text: "Miles"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
-                  x: 128
+                  x: 140
                   y: 182
                   text: "\U000F08F0"   # map-marker-distance
                   text_font: mdi_card20
@@ -2526,7 +2526,7 @@ lvgl:
                   text: "Auto bright"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
-                  x: 128
+                  x: 140
                   y: 140
                   text: "\U000F00E1"   # brightness-auto
                   text_font: mdi_card20
@@ -2549,7 +2549,7 @@ lvgl:
                   text: "Night mode"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
-                  x: 128
+                  x: 140
                   y: 224
                   text: "\U000F0594"   # weather-night
                   text_font: mdi_card20
@@ -2587,7 +2587,7 @@ lvgl:
                   text: "Heading"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
-                  x: 128
+                  x: 140
                   y: 14
                   text: "\U000F1382"   # compass-rose (heading)
                   text_font: mdi_card20
@@ -2624,7 +2624,7 @@ lvgl:
                   text: "Coordinates"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
-                  x: 128
+                  x: 140
                   y: 54
                   text: "\U000F01A4"   # crosshairs-gps
                   text_font: mdi_card20
@@ -2655,7 +2655,7 @@ lvgl:
                   text: "Latitude"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
-                  x: 128
+                  x: 140
                   y: 94
                   text: "\U000F0F57"   # latitude
                   text_font: mdi_card20
@@ -2810,7 +2810,7 @@ lvgl:
                   text: "Longitude"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
-                  x: 128
+                  x: 140
                   y: 136
                   text: "\U000F0F5A"   # longitude
                   text_font: mdi_card20
@@ -2966,7 +2966,7 @@ lvgl:
                   text: "Compass"
                   text_font: mono16
               - label:
-                  x: 128
+                  x: 140
                   y: 188
                   text: "\U000F018C"   # compass-outline
                   text_font: mdi_card20
@@ -3024,14 +3024,14 @@ lvgl:
                   text_font: mono16
               - label:
                   id: ico_stars
-                  x: 122
+                  x: 130
                   y: 18
                   text: "\U000F0AE2"   # star-four-points
                   text_font: mdi_card20
                   text_color: 0xFFF1B8
               - switch:
                   id: sw_stars
-                  x: 150
+                  x: 156
                   y: 14
                   width: 56
                   height: 28
@@ -3061,7 +3061,7 @@ lvgl:
                   text_font: mono16
               - switch:
                   id: sw_planets
-                  x: 150
+                  x: 156
                   y: 58
                   width: 56
                   height: 28
@@ -3088,14 +3088,14 @@ lvgl:
                   text: "Milky Way"
                   text_font: mono16
               - label:
-                  x: 122
+                  x: 130
                   y: 106
                   text: "\U000F00B8"   # blur-radial
                   text_font: mdi_card20
                   text_color: 0xB4C4F0
               - switch:
                   id: sw_milky_way
-                  x: 150
+                  x: 156
                   y: 102
                   width: 56
                   height: 28
@@ -3121,16 +3121,16 @@ lvgl:
                   text_font: mono16
               - label:
                   id: ico_cone
-                  x: 122
+                  x: 130
                   y: 18
                   text: "\U000F0937"   # angle-acute
                   text_font: mdi_card20
                   text_color: 0x9FB2EA
               - slider:
                   id: sl_cone
-                  x: 150
+                  x: 156
                   y: 18
-                  width: 230
+                  width: 224
                   height: 14
                   min_value: 15
                   max_value: 90
@@ -3143,7 +3143,7 @@ lvgl:
                   text: "80°"
                   text_font: mono16
               - label:
-                  x: 150
+                  x: 156
                   y: 36
                   text: "degrees from overhead"
                   text_font: mono12
@@ -3153,7 +3153,7 @@ lvgl:
               # UI-33: icons beside the layer switches (not Sat Trails, Miles, Stars, After dusk)
               - label:
                   id: ico_leo
-                  x: 122
+                  x: 130
                   y: 68
                   text: "\U000F0471"   # satellite-variant
                   text_font: mdi_card20
@@ -3169,7 +3169,7 @@ lvgl:
                     text_color: 0x3A4566   # dimmed while LEO is off
               - label:
                   id: ico_meo
-                  x: 122
+                  x: 130
                   y: 112
                   text: "\U000F01A4"   # crosshairs-gps
                   text_font: mdi_card20
@@ -3183,7 +3183,7 @@ lvgl:
                   text_color: 0xF6B93B
               - label:
                   id: ico_debris
-                  x: 122
+                  x: 130
                   y: 156
                   text: "\U000F0A79"   # trash-can
                   text_font: mdi_card20
@@ -3202,7 +3202,7 @@ lvgl:
                   text_font: mono16
               - switch:
                   id: sw_sats
-                  x: 150
+                  x: 156
                   y: 64
                   width: 56
                   height: 28
@@ -3238,7 +3238,7 @@ lvgl:
                   text_font: mono16
               - switch:
                   id: sw_meo
-                  x: 150
+                  x: 156
                   y: 108
                   width: 56
                   height: 28
@@ -3260,7 +3260,7 @@ lvgl:
                   text_font: mono16
               - switch:
                   id: sw_debris
-                  x: 150
+                  x: 156
                   y: 152
                   width: 56
                   height: 28
@@ -3282,14 +3282,14 @@ lvgl:
                   text_font: mono16
               - label:
                   id: ico_stations
-                  x: 122
+                  x: 130
                   y: 200
                   text: "\U000F1383"   # space-station
                   text_font: mdi_card20
                   text_color: 0xFF8A1F
               - switch:
                   id: sw_stations
-                  x: 150
+                  x: 156
                   y: 196
                   width: 56
                   height: 28
@@ -3314,14 +3314,14 @@ lvgl:
                   text: "Aurora"
                   text_font: mono16
               - label:
-                  x: 122
+                  x: 130
                   y: 18
                   text: "\U000F1BB9"   # aurora
                   text_font: mdi_card20
                   text_color: 0x7EE0B0
               - switch:
                   id: sw_aur_alerts
-                  x: 150
+                  x: 156
                   y: 14
                   width: 56
                   height: 28
@@ -3342,14 +3342,14 @@ lvgl:
                   text: "Sky events"
                   text_font: mono16
               - label:
-                  x: 122
+                  x: 130
                   y: 62
                   text: "\U000F0594"   # weather-night
                   text_font: mdi_card20
                   text_color: 0xA8D8FF
               - switch:
                   id: sw_sky_alerts
-                  x: 150
+                  x: 156
                   y: 58
                   width: 56
                   height: 28
@@ -3376,14 +3376,14 @@ lvgl:
                   text: "Launch"
                   text_font: mono16
               - label:
-                  x: 122
+                  x: 130
                   y: 106
                   text: "\U000F14DE"   # rocket-launch
                   text_font: mdi_card20
                   text_color: 0xFFC46B
               - switch:
                   id: sw_launch_alerts
-                  x: 150
+                  x: 156
                   y: 102
                   width: 56
                   height: 28
@@ -3410,14 +3410,14 @@ lvgl:
                   text: "Lunar"
                   text_font: mono16
               - label:
-                  x: 122
+                  x: 130
                   y: 150
                   text: "\U000F0F62"   # moon-full
                   text_font: mdi_card20
                   text_color: 0xDCE2EE
               - switch:
                   id: sw_lunar_alerts
-                  x: 150
+                  x: 156
                   y: 146
                   width: 56
                   height: 28

@@ -70,7 +70,7 @@ int main(int argc, char **argv) {
   for (lv_obj_t *o : {sw_geo, sw_debris, sw_miles, sw_night, sw_dms, sw_24h})
     on(o, false);
   static lv_image_dsc_t saturn = pic(sat::picons::BIG_PX[4], sat::picons::BIG), align = pic(sat::picons::ALIGN_PX, sat::picons::BIG);
-  image(pnl_celestial, &saturn, 122, 62);  // settings_planet_icon(pnl_celestial, 122, 62, pnl_alerts, 372, 18)
+  image(pnl_celestial, &saturn, 130, 62);  // settings_planet_icon(pnl_celestial, 130, 62, pnl_alerts, 372, 18)
   image(pnl_alerts, &align, 372, 18);
   lv_obj_t *const P[5] = {pnl_display, pnl_location, pnl_celestial, pnl_satellites, pnl_alerts};
   lv_obj_t *const T[5] = {tab_display, tab_location, tab_celestial, tab_satellites, tab_alerts};
