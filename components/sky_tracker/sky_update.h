@@ -23,6 +23,7 @@ void check_quiet(const char *why);  // NET-13a: hourly, at boot, the web/HA butt
 void set_source(const char *url);   // the manifest URL, for the log
 void set_button(lv_obj_t *b);  // the map page's update icon, beside the gear
 void offer_now();              // that icon tapped
+void idle_close();             // UI-72: after a minute untouched, the screen closes (not while installing)
 // UI-68b the internet install's own callbacks (begin, progress %, end, error): the download
 // blocks the main loop, so the screen is updated and redrawn from here
 void ota_begin();
@@ -301,6 +302,13 @@ void ota_end(bool ok) {
   if (ok)
     lv_bar_set_value(ui_.bar, 100, LV_ANIM_OFF);
   lv_refr_now(nullptr);
+}
+void idle_close() {  // UI-72: "Update available" counts as Not now; an install is never closed
+  if (ui_.mode == M_NONE || ui_.mode == M_INSTALLING)
+    return;
+  if (ui_.mode == M_AVAILABLE)
+    declined = latest();
+  close();
 }
 // every 500 ms (lv_timer): follow the entity
 inline void tick() {

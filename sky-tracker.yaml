@@ -712,6 +712,20 @@ interval:
     then:
       - lambda: sat::tick();
       - lambda: |-
+          // UI-72: a minute untouched closes whatever is open and goes back to the map: Settings
+          // as Cancel (nothing saved), the other pages, and what is open over the map. Not the
+          // boot / Wi-Fi page, an animation, or an install in progress.
+          if (lv_display_get_inactive_time(nullptr) >= 60000 && !sat::rocket::active() && !id(wifi_page)->is_showing()) {
+            if (id(settings_page)->is_showing())
+              lv_obj_send_event(id(btn_settings_cancel), LV_EVENT_CLICKED, nullptr);
+            else if (id(list_page)->is_showing() || id(debug_page)->is_showing() || id(debug2_page)->is_showing() ||
+                     id(about_page)->is_showing())
+              id(lvgl_comp)->show_page(id(sky_page)->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
+            sat::idle_close();
+            sat::upd::idle_close();
+            sat::sdfw::idle_close();
+          }
+      - lambda: |-
           // NET-2b: Wi-Fi status page (layout modelled on espcontrol's boot screen).
           // The map is not shown until Wi-Fi connects; after that, 10 s without Wi-Fi
           // brings the status page back (never over the settings page).
@@ -2231,6 +2245,7 @@ lvgl:
             text_font: mono16
             text_color: 0xFF8A1F
         - button:
+            id: btn_settings_cancel   # UI-72: pressed after a minute untouched
             x: 240
             y: 6
             width: 110

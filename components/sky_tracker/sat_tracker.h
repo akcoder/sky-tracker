@@ -5769,6 +5769,23 @@ inline void select_object(int kind, int32_t id) {
 }
 
 inline bool card_open() { return ui.sel_kind >= 0; }  // UI-24
+// UI-72: after a minute untouched, what is open over the map closes (the picture viewer, Find,
+// the time scrubber, a details card); the pages are handled in the YAML
+inline void finder_close();
+inline void img_view_close();
+inline bool finder_open();
+inline bool img_view_open();
+inline void scrub_close();
+inline void idle_close() {
+  if (img_view_open())
+    img_view_close();
+  if (finder_open())
+    finder_close();
+  if (ui.scrub_on)
+    scrub_close();
+  if (card_open())
+    deselect();
+}
 
 inline void moon_icon_click_cb(lv_event_t *e) {  // UI-36
   if (card_open())

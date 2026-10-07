@@ -1324,6 +1324,14 @@ int main() {
         sat::set_alert_kinds(true, true, true);
         CHECK(l0 > 0 && e0 > 0 && l1 == 0 && e1 == e0 && l2 == l0 && e2 == 0, "alert kinds %d/%d %d/%d %d/%d", l0, e0, l1, e1, l2, e2);
       }
+      {  // UI-72: after a minute untouched, a card and the picture viewer close
+        sat::select_object(sat::K_MOON, 0);
+        sat::idle_close();
+        CHECK(!sat::card_open(), "idle closes the card");
+        sat::img_view_open_now(0);
+        sat::idle_close();
+        CHECK(!sat::img_view_open(), "idle closes the picture viewer");
+      }
       {  // UI-41d: the tap zone covers the header's left part, not the counts or the map
         auto hit = [&](int x, int y) { lv_point_t pt = {x, y}; return lv_indev_search_obj(lv_screen_active(), &pt); };
         CHECK(sat::alert_zone && hit(10, 5) == sat::alert_zone && hit(390, 50) == sat::alert_zone &&
@@ -2197,8 +2205,13 @@ int main() {
       const bool gif = getenv("SPLASH_GIF") != nullptr;
       if (gif)
         system("rm -rf " OUT_DIR "/sgif && mkdir -p " OUT_DIR "/sgif");
-      if (sat::ui.w.status)
-        lv_label_set_text(sat::ui.w.status, "Crew-12 Splashdown now");
+      static sat::Alert sa = {};  // a real splashdown alert on the line: parachute icon, centred by draw_hud
+      snprintf(sa.text, sizeof(sa.text), "SpaceX Crew-12 Crew Dragon Splashdown now");
+      sa.col = sat::C_EVENT;
+      sa.glyph = "\xF3\xB0\xB2\xB4";  // parachute
+      sa.kind = -1;
+      sat::alert_override = &sa;
+      sat::draw_hud(sat_host_now);
       rk::play_splash_now();
       CHECK(rk::playing() && rk::st.splash && rk::st.sea && rk::st.chutes, "splashdown plays");
       int frames = 0;
@@ -2215,6 +2228,7 @@ int main() {
         }
       }
       CHECK(!rk::playing() && rk::st.sea == nullptr && rk::st.chutes == nullptr && frames > 150, "splashdown ends (%d frames)", frames);
+      sat::alert_override = nullptr;
     }
     if (getenv("BOOT_GIF")) {  // UI-69k: the launch over a mock of the boot screen (wifi_page)
       lv_obj_t *old = lv_screen_active();

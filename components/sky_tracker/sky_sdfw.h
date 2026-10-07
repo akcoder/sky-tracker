@@ -21,6 +21,7 @@ namespace sat {
 namespace sdfw {
 void init(const char *version, const lv_font_t *title, const lv_font_t *body, const lv_font_t *small);
 void boot_probe();
+void idle_close();  // UI-72: after a minute untouched, an offer or failure closes (as Not now / Close)
 }  // namespace sdfw
 }  // namespace sat
 #else
@@ -508,6 +509,13 @@ void init(const char *version, const lv_font_t *title, const lv_font_t *body, co
 }
 // on_boot priority 1100, before the panel is touched: look for a card once
 void boot_probe() { probe(); }
+void idle_close() {  // UI-72: never while flashing or restarting
+  if (sui.root == nullptr || (sui.mode != S_OFFER && sui.mode != S_FAILED))
+    return;
+  declined = offer.key;
+  state = S_CARD;
+  close_ui();
+}
 }  // namespace sdfw
 }  // namespace sat
 #endif  // SKY_IMPL
