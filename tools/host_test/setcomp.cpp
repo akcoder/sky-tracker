@@ -91,7 +91,8 @@ int main(int argc, char **argv) {
   lv_display_set_theme(d, th);
   lv_obj_t *p = lv_screen_active();
   lv_obj_set_style_bg_color(p, lv_color_hex(0x070B18), 0);
-  L(p, 16, 16, "SETTINGS", &mono16, 0xFF8A1F);
+  static const char *const NAME[5] = {"DISPLAY", "LOCATION", "CELESTIAL", "SATELLITES", "ALERTS"};
+  L(p, 16, 16, NAME[sel], &mono16, 0xFF8A1F);  // the open tab's name
   button(p, 240, 6, 110, 38, 0x1A2547, "Cancel");
   button(p, 360, 6, 110, 38, 0x2D5BD0, "Save");
   // tabs: 5 x 91 px, 4 px apart, icon only

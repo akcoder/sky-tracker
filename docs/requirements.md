@@ -1,7 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.23 (queued): Settings tabs are icons only, with a fifth, Alerts (bell-ring): Aurora, Planets and Sky events moved there from Celestial, plus new Space station, Launch and Docking alert switches (UI-41e). A Space stations switch on the Satellites tab shows or hides the ISS and Tiangong (UI-52b). Each new switch is also a Home Assistant switch.
+- 4.6.24 (queued): the settings header names the open tab (DISPLAY, LOCATION, CELESTIAL, SATELLITES, ALERTS) instead of SETTINGS (UI-16a).
+- 4.6.23 (installed): Settings tabs are icons only, with a fifth, Alerts (bell-ring): Aurora, Planets and Sky events moved there from Celestial, plus new Space station, Launch and Docking alert switches (UI-41e). A Space stations switch on the Satellites tab shows or hides the ISS and Tiangong (UI-52b). Each new switch is also a Home Assistant switch.
 - 4.6.22 (installed over USB to end a 4.6.21 boot loop): fixes a crash (abort) when satellite lists downloaded while layers were switched: downloads freed and reallocated lists of up to 1 MB until PSRAM was in pieces too small for the next one. The lists are now reserved once at start and refilled in place (FAIL-12). Crash records survive (their flash sector moved off the launch list's, which overwrote them) and the Last Crash sensor carries the backtrace (FAIL-10).
 - 4.6.21 (installed): alerts change once a minute (were every 6 s); no aurora alert for a faint one (Kp under 3.5) unless NOAA's nowcast says likely (UI-38b); a changed status line is drawn just after the panel's scan has passed it, so it no longer tears (PERF-14).
 - 4.6.20 (installed): a rocket launches across the boot screen (UI-69k). Settings gains a Satellites tab (LEO cone, LEO, Starlink, MEO, GEO, Debris, Sat Trails moved from Celestial), tabs with the icon above the text (UI-16a). A tap on an alert opens its details (UI-41d): the card of its object (ISS or Tiangong overhead, planet, comet, meteor shower, Moon), or a details card for launches, space events, passes to come, aurora, solar wind, alignments, eclipses and seasons. Alert icons centred on the whole text, one or two lines (UI-41c mode 2). The internet update screen's bar and percentage move during the download (UI-68b); installs started from the web page or HA show that screen too.
@@ -515,7 +516,7 @@ UI-25  Header status line (replaces the countdown), coloured OK/warn/bad:
 UI-26  Motion trails: each moving marker leaves 3 fading segments covering the
        last 30 s. HA/settings switch "Show Motion Trails" (default on).
 
-UI-16a Settings tabs: under the header (SETTINGS, Cancel, Save) five icon-only tab buttons,
+UI-16a Settings tabs: under the header (the open tab's name, Cancel, Save) five icon-only tab buttons,
        91x44 at y 52 (x 4, 99, 194, 289, 384): Display (MDI monitor), Location (map-marker),
        Celestial (weather-night), Satellites (satellite-variant), Alerts (bell-ring); the
        active tab is 0x2D5BD0, the others 0x1A2547. Each tab is a panel (y 104, 336 high);
