@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.26 (queued): the screen comes up ~2.7 s sooner: the animation pictures are drawn after the display starts, 10 ms at a time, and the boot launch plays when they are ready (UI-69n). A tap on an alert's icon opens the alert too (the picture icon took the tap). The splashdown's sea rises into view, and each splashdown lands in its own spot with its own sway and chute drift (UI-69m).
+- 4.6.26 (queued): at power-on the boot screen shows the logo and "Loading" before the slow start-up, then the Wi-Fi status (BOOT-2). The screen comes up ~2.7 s sooner: the animation pictures are drawn after the display starts, 10 ms at a time, and the boot launch plays when they are ready (UI-69n). A tap on an alert's icon opens the alert too (the picture icon took the tap). The splashdown's sea rises into view, and each splashdown lands in its own spot with its own sway and chute drift (UI-69m).
 - 4.6.25 (installed): pictures work again (the Sun, Moon, Earth and planet photos failed in 4.6.22-4.6.24: the orbital lists were reserved at their caps before the picture buffers and left 0.2 MB of PSRAM; the buffers are now taken first and the lists sized to what they hold, FAIL-12b). A splashdown animation: a capsule on four parachutes comes down to the ocean, splashes and bobs (UI-69m), with a Play Splashdown Animation button and a Splashdowns alert switch (UI-41h). The details card of a launch, splashdown or docking alert shows the country's flag after its title (UI-54d). The whole header left of the counts is the alert's tap zone (UI-41d). The launch card's distance follows Miles.
 - 4.6.24 (installed): the settings header names the open tab (DISPLAY, LOCATION, CELESTIAL, SATELLITES, ALERTS) instead of SETTINGS (UI-16a). Settings icons clear their labels: on Display and Location the icon column is at x 140 (was 128), on Celestial, Satellites and Alerts the left icons at 130 and switches at 156 (were 122 and 150). Every progress bar uses the same colours (UI-71; the picture loader's was orange). A Comets alert switch (UI-41g): the visible-comet alert follows it instead of Sky events. A Lunar alert switch (Settings > Alerts and Home Assistant): the full Moon, the Moon near a planet or bright star, and lunar eclipses now follow it instead of Sky events (UI-41f). "Launches" reads "Launch".
 - 4.6.23 (installed): Settings tabs are icons only, with a fifth, Alerts (bell-ring): Aurora, Planets and Sky events moved there from Celestial, plus new Space station, Launch and Docking alert switches (UI-41e). A Space stations switch on the Satellites tab shows or hides the ISS and Tiangong (UI-52b). Each new switch is also a Home Assistant switch.
@@ -1049,6 +1049,10 @@ UI-69m Splashdown (7 s, with Launch Animation on, at a splashdown's time, or the
        the bottom; a surface line follows the disc's chord). Each splashdown has its own landing
        spot (within 60 px of the centre), sway (3-12 px, 0.9-2 rad/s, random phase) and chute
        drift direction. Pictures 4x4 supersampled (UI-69n).
+BOOT-2 The boot screen (wifi_page: logo, "Loading") is drawn with lv_refr_now() at the start of
+       the start-up lambda, before the slow work (marker pools, cache, data task); LVGL draws
+       nothing on its own until setup ends. The title reads "Loading" until start-up is done,
+       then "Connecting to Wi-Fi" (and the usual Wi-Fi status).
 UI-69n The animation pictures (5 rocket flames, two capsules, the chutes, the sea) are drawn after
        setup, by a 25 ms LVGL timer spending up to 10 ms a call, so the display starts without
        them (drawn in setup they kept it dark ~2.7 s). No scene plays until they are ready; a boot

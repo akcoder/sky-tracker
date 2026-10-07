@@ -63,6 +63,10 @@ esphome:
     - priority: -100
       then:
         - lambda: |-
+            // BOOT-2: the boot screen (logo, "Loading") on the panel before the slow start-up below;
+            // LVGL draws nothing until setup ends, so one frame is forced now
+            sat::logo_show(id(boot_logo), 200);   // UI-65
+            lv_refr_now(nullptr);
             sat::Config c;
             c.lat = std::isnan(id(obs_lat).state) ? ${observer_lat} : id(obs_lat).state;
             c.lon = std::isnan(id(obs_lon).state) ? ${observer_lon} : id(obs_lon).state;
@@ -122,7 +126,6 @@ esphome:
             sat::hw::set_bus(id(bus_b));
             sat::hw::set_calibration(id(cal_cx), id(cal_cy), id(cal_sx), id(cal_sy), id(cal_ok));
             sat::hw::gps_diag.pin = ${gps_rx_pin};  // HW-8a: shown in GPS Diagnostic
-            sat::logo_show(id(boot_logo), 200);   // UI-65
             sat::logo_show(id(about_logo), 112);  // UI-67
             {
               char d[24], b[64];
@@ -139,6 +142,7 @@ esphome:
             sat::rocket::init(id(mono18)->get_lv_font());  // UI-69
             sat::rocket::set_enabled(id(launch_anim).state);
             sat::rocket::play_boot();  // UI-69k: a launch over the boot screen (Launch Animation on)
+            lv_label_set_text(id(wifi_title), "Connecting to Wi-Fi");  // BOOT-2: start-up done
             sat::tz::init();  // UI-70
 
 esp32:
@@ -1723,7 +1727,7 @@ lvgl:
                   pad_bottom: 8
               - label:
                   id: wifi_title
-                  text: "Connecting to Wi-Fi"
+                  text: "Loading"            # BOOT-2: until start-up ends; then the Wi-Fi status
                   text_font: setup_body
                   text_color: 0xFFFFFF
                   width: 380
