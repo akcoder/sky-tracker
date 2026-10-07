@@ -475,7 +475,7 @@ int main() {
   sat::tick();
   lv_obj_invalidate(lv_screen_active());
   lv_refr_now(disp);
-  save_ppm(HOST_DIR "/r4_map.ppm");
+  save_ppm(OUT_DIR "/renders/r4_map.ppm");
   CHECK(!strcmp(lv_label_get_text(sat::ui.card_icon), "\xF3\xB0\x91\xB1"), "card icon (satellite-variant)");
   for (auto &m : sat::ui.sats)
     if (m.id >= 0 && m.up && m.rec.cls == sat::C_CLS_LEO) {
@@ -483,14 +483,14 @@ int main() {
       sat::select_object(sat::K_SAT, m.id);
       CHECK(!strcmp(lv_label_get_text(sat::ui.card_icon), "\xF3\xB0\xA9\xB9"), "debris card icon");
       lv_refr_now(disp);
-      save_ppm(HOST_DIR "/r4_debris.ppm");
+      save_ppm(OUT_DIR "/renders/r4_debris.ppm");
       break;
     }
   sat::deselect();
   sat::draw_list(sat_host_now);
   lv_screen_load(page2);
   lv_refr_now(disp);
-  save_ppm(HOST_DIR "/r4_list.ppm");
+  save_ppm(OUT_DIR "/renders/r4_list.ppm");
   lv_screen_load(page1);
 
   // error: CelesTrak refuses; the old data stays and the status says so
@@ -506,7 +506,7 @@ int main() {
     CHECK(sat::net::have_iss && !sat::net::sats.empty(), "old data dropped");
     lv_obj_invalidate(lv_screen_active());
     lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r4_error.ppm");
+    save_ppm(OUT_DIR "/renders/r4_error.ppm");
   }
   // offline: no downloads, positions continue
   {
@@ -603,7 +603,7 @@ int main() {
         printf("sat card:\n%s\n", lv_label_get_text(sat::ui.card_body));
         CHECK(strstr(lv_label_get_text(sat::ui.card_body), "Launched 3 Jan 2024") != nullptr, "sat launch line");
         lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-        save_ppm(HOST_DIR "/r5_satcard.ppm");
+        save_ppm(OUT_DIR "/renders/r5_satcard.ppm");
         sat::deselect();
       }
     }
@@ -614,7 +614,7 @@ int main() {
       sat::live.status.error[0] = 0;
       sat::tick(); sat::draw_hud(sat_host_now);
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-      snprintf(fn, sizeof(fn), HOST_DIR "/r5_alert%d.ppm", k);
+      snprintf(fn, sizeof(fn), OUT_DIR "/renders/r5_alert%d.ppm", k);
       save_ppm(fn);
       printf("status %d: %s\n", k, lv_label_get_text(sat::ui.w.status));
     }
@@ -626,7 +626,7 @@ int main() {
       printf("planet card %s:\n%s\n", sat::planets::name(pc), lv_label_get_text(sat::ui.card_body));
       CHECK(strstr(lv_label_get_text(sat::ui.card_body), "Greek") != nullptr, "planet card");
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-      save_ppm(HOST_DIR "/r5_planetcard.ppm");
+      save_ppm(OUT_DIR "/renders/r5_planetcard.ppm");
       sat::deselect();
     }
     // UI-46: a constellation card
@@ -635,14 +635,14 @@ int main() {
       printf("constellation card %s:\n%s\n", sat::sky::NAMES[nt.idx].text, lv_label_get_text(sat::ui.card_body));
       CHECK(strstr(lv_label_get_text(sat::ui.card_body), "Brightest:") != nullptr, "constellation card");
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-      save_ppm(HOST_DIR "/r5_constcard.ppm");
+      save_ppm(OUT_DIR "/renders/r5_constcard.ppm");
       for (const char *want : {"Orion", "Ursa Major", "Cassiopeia", "Cygnus", "Andromeda", "Lyra"})
         for (int q = 0; q < sat::sky::N_NAMES; q++) if (!strcmp(sat::sky::NAMES[q].text, want)) {
           sat::select_object(sat::K_CONST, q);
           lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-          char fn[96]; snprintf(fn, sizeof(fn), HOST_DIR "/r5_cc_%c%c.ppm", want[0], want[1]); save_ppm(fn); { lv_area_t cc; lv_obj_get_coords(sat::ui.card,&cc); printf("CCBOX %c%c %d %d %d\n", want[0], want[1], (int)cc.x1,(int)cc.y1,(int)cc.x2); }
+          char fn[96]; snprintf(fn, sizeof(fn), OUT_DIR "/renders/r5_cc_%c%c.ppm", want[0], want[1]); save_ppm(fn); { lv_area_t cc; lv_obj_get_coords(sat::ui.card,&cc); printf("CCBOX %c%c %d %d %d\n", want[0], want[1], (int)cc.x1,(int)cc.y1,(int)cc.x2); }
         }
-      sat::select_object(sat::K_MOON, 0); lv_refr_now(disp); save_ppm(HOST_DIR "/r5_moonafter.ppm");
+      sat::select_object(sat::K_MOON, 0); lv_refr_now(disp); save_ppm(OUT_DIR "/renders/r5_moonafter.ppm");
       sat::select_object(sat::K_CONST, nt.idx); lv_refr_now(disp);
       { lv_area_t c1,c2,c3; lv_obj_get_coords(sat::ui.card,&c1); lv_obj_get_coords(sat::ui.card_title,&c2); lv_obj_get_coords(sat::ui.card_icon,&c3);
         printf("card %d-%d title %d-%d icon %d-%d (%d)\n",(int)c1.x1,(int)c1.x2,(int)c2.x1,(int)c2.x2,(int)c3.x1,(int)c3.x2,(int)lv_obj_get_width(sat::ui.card_icon)); }
@@ -696,13 +696,13 @@ int main() {
       printf("mw spans %zu bands %zu cells %zu\n", sat::ui.mw_spans.size(), sat::ui.mw_band.size(), sat::ui.mw_cells.size());
       CHECK(sat::ui.mw_spans.size() > 200, "milky way spans");
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-      save_ppm(HOST_DIR "/r13_mw_comet.ppm");
+      save_ppm(OUT_DIR "/renders/r13_mw_comet.ppm");
       // tap the comet: its card
       sat::select_object(sat::K_COMET, sat::ui.comet_idx[0]);
       printf("comet card %s:\n%s\n", lv_label_get_text(sat::ui.card_title), lv_label_get_text(sat::ui.card_body));
       CHECK(strstr(lv_label_get_text(sat::ui.card_body), "Nearest the Sun") && sat::card_open(), "comet card");
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-      save_ppm(HOST_DIR "/r13_comet_card.ppm");
+      save_ppm(OUT_DIR "/renders/r13_comet_card.ppm");
       sat::deselect();
       sat::Alert al[sat::MAX_ALERTS];
       const int na = sat::collect_alerts(sat_host_now, al, sat::MAX_ALERTS);
@@ -713,7 +713,7 @@ int main() {
       sat::set_milky_way(false); sat_host_now += 1; sat::tick();
       CHECK(sat::ui.mw_spans.empty(), "milky way off");
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-      save_ppm(HOST_DIR "/r13_no_mw.ppm");
+      save_ppm(OUT_DIR "/renders/r13_no_mw.ppm");
       sat::set_milky_way(true); sat_host_now += 1; sat::tick();
       sat::set_comets(false);
       CHECK(!sat::ui.comet_shown[0], "comets off");
@@ -725,7 +725,7 @@ int main() {
     sat::tick();
     CHECK(sat::ui.night_active, "night mode not active in the dark");
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r5_night.ppm");
+    save_ppm(OUT_DIR "/renders/r5_night.ppm");
     sat::set_night(false);
     sat::tick();
     sat::live.passes = saved_passes;
@@ -821,7 +821,7 @@ int main() {
            sat::ui.sm.moon.el, sat::ui.sm.moon_illum);
     lv_obj_invalidate(lv_screen_active());
     lv_refr_now(disp);
-    save_ppm(HOST_DIR "/preview_icons.ppm");
+    save_ppm(OUT_DIR "/renders/preview_icons.ppm");
 
     // map Moon at several phases and Sun directions (UI-6), for the preview strip
     lv_obj_t *cv = lv_canvas_create(sat::ui.w.sky);
@@ -829,7 +829,7 @@ int main() {
     lv_canvas_set_draw_buf(cv, mb);
     const float ks[8] = {0.03f, 0.15f, 0.35f, 0.5f, 0.65f, 0.85f, 0.97f, 0.5f};
     const float angs[8] = {0, 0.3f, 0.6f, 1.57f, 2.4f, 3.14f, 3.6f, -0.8f};
-    FILE *f = fopen(HOST_DIR "/moon_map_strip.raw", "wb");
+    FILE *f = fopen(OUT_DIR "/renders/moon_map_strip.raw", "wb");
     for (int i = 0; i < 8; i++) {
       lv_draw_buf_clear(mb, nullptr);
       sat::render_moon(cv, ks[i], cosf(angs[i]), sinf(angs[i]));
@@ -856,7 +856,7 @@ int main() {
     printf("sun el %.2f az %.0f, centre %.1f px from zenith (ring %d)\n", sat::ui.sm.sun.el, sat::ui.sm.sun.az, d, sat::ui.radius);
     CHECK(d + sat::SUN_HALO_PX / 2 <= sat::ui.radius + 1.5f, "sun pokes out: %.1f", d);
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r4_sunedge.ppm");
+    save_ppm(OUT_DIR "/renders/r4_sunedge.ppm");
     sat_host_now = t0; sat::tick(); run_jobs(); sat::tick();
   }
   // HW-9a: declination from the location (WMM2025, checked against pygeomag)
@@ -901,7 +901,7 @@ int main() {
     CHECK(!strcmp(lv_label_get_text(sat::ui.card_title), "Sun"), "sun title");
     CHECK(sat::body.path.size() > 10 && !sat::body.ticks.empty(), "sun path %zu/%zu", sat::body.path.size(), sat::body.ticks.size());
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r4_suncard.ppm");
+    save_ppm(OUT_DIR "/renders/r4_suncard.ppm");
     { auto t0=std::chrono::steady_clock::now(); for(int q=0;q<50;q++){ sat::body.until=0; sat::body_info_update(sat::K_SUN, sat_host_now); }
       double us=std::chrono::duration<double,std::micro>(std::chrono::steady_clock::now()-t0).count()/50;
       auto t1=std::chrono::steady_clock::now(); for(int q=0;q<2000;q++){ volatile auto r=sat::astro::compute(sat_host_now+q*60, 61.6, -149.4, 100); (void)r; }
@@ -921,7 +921,7 @@ int main() {
     CHECK(strstr(mb, "days old") && strstr(mb, "Full") && strstr(mb, "Distance"), "moon card: %s", mb);
     CHECK(!lv_obj_has_flag(sat::ui.card_moon, LV_OBJ_FLAG_HIDDEN), "moon picture hidden");
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r4_mooncard.ppm");
+    save_ppm(OUT_DIR "/renders/r4_mooncard.ppm");
     lv_obj_send_event(sat::ui.w.moon_img, LV_EVENT_CLICKED, nullptr);  // a touch with the card up closes it
     CHECK(!sat::card_open(), "moon card still open");
     // phase times: new Moon 2026-09-11 03:27 UTC, full 2026-09-26 16:49 UTC (USNO)
@@ -958,7 +958,7 @@ int main() {
     CHECK(sat::ui.aurora_icon && !lv_obj_has_flag(sat::ui.aurora_icon, LV_OBJ_FLAG_HIDDEN), "aurora icon hidden");
     sat::tick(); run_jobs(); sat::tick();
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r4_aurora_likely.ppm");
+    save_ppm(OUT_DIR "/renders/r4_aurora_likely.ppm");
     for (auto &k : sat::live.kp) k.kp = 3.0f;  // low in the north only
     sat::alert_override = nullptr;
     sat::aur.until = 0; sat::draw_hud(tt);
@@ -966,7 +966,7 @@ int main() {
     printf("faint aurora alert: %s\n", aa ? aa->text : "(none)");
     CHECK(sat::aur.show && !sat::aur.likely && aa == nullptr, "UI-38b: no alert for a faint aurora (%s)", aa ? aa->text : "");
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r4_aurora_possible.ppm");
+    save_ppm(OUT_DIR "/renders/r4_aurora_possible.ppm");
     for (auto &k : sat::live.kp) k.kp = 0.3f;  // nothing
     sat::aur.until = 0; sat::draw_hud(tt);
     printf("Kp 0.3 line: %s\n", lv_label_get_text(sat::ui.w.status));
@@ -1006,12 +1006,12 @@ int main() {
       CHECK(!lv_obj_has_flag(sat::ui.card_flag, LV_OBJ_FLAG_HIDDEN), "no card flag for USA");
       lv_obj_invalidate(lv_screen_active());
       lv_refr_now(disp);
-      save_ppm(HOST_DIR "/r4_flagcard.ppm");
+      save_ppm(OUT_DIR "/renders/r4_flagcard.ppm");
       strcpy(mk->rec.cc, "ESA");  // ESA gets the EU flag
       sat::card_update(sat_host_now);
       CHECK(!lv_obj_has_flag(sat::ui.card_flag, LV_OBJ_FLAG_HIDDEN), "no flag for ESA");
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-      save_ppm(HOST_DIR "/r4_esacard.ppm");
+      save_ppm(OUT_DIR "/renders/r4_esacard.ppm");
       strcpy(mk->rec.cc, "ISS");  // multinational: no flag
       sat::card_update(sat_host_now);
       CHECK(lv_obj_has_flag(sat::ui.card_flag, LV_OBJ_FLAG_HIDDEN), "flag shown for ISS");
@@ -1058,23 +1058,23 @@ int main() {
       if (strstr(lv_label_get_text(sat::ui.w.status), "Geminids")) break;
     }
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r6_alert.ppm");
+    save_ppm(OUT_DIR "/renders/r6_alert.ppm");
     sat::live.status = st_save;
     CHECK(sat::ui.radiant == 7 && sat::ui.radiant_up, "radiant %d up %d", sat::ui.radiant, sat::ui.radiant_up);
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r6_radiant.ppm");
+    save_ppm(OUT_DIR "/renders/r6_radiant.ppm");
     sat::select_object(sat::K_SHOWER, 7);
     printf("shower card:\n%s\n", lv_label_get_text(sat::ui.card_body));
     CHECK(strstr(lv_label_get_text(sat::ui.card_body), "Phaethon") != nullptr, "shower card");
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r6_showercard.ppm");
+    save_ppm(OUT_DIR "/renders/r6_showercard.ppm");
     sat::deselect();
     // a bright star card (Capella is up on a December night)
     sat::select_object(sat::K_STAR, 3);
     printf("star card:\n%s\n", lv_label_get_text(sat::ui.card_body));
     CHECK(strstr(lv_label_get_text(sat::ui.card_body), "Auriga") != nullptr, "star card");
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r6_starcard.ppm");
+    save_ppm(OUT_DIR "/renders/r6_starcard.ppm");
     sat::deselect();
     // time scrub: +6 h
     sat::scrub_open();
@@ -1087,7 +1087,7 @@ int main() {
     printf("scrub: %s, markers shown %d\n", lv_label_get_text(sat::ui.scrub_label), shown);
     CHECK(shown == 0 && fabs(sat::ui.scrub_s - 6 * 3600) < 1, "scrub view");
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r6_scrub.ppm");
+    save_ppm(OUT_DIR "/renders/r6_scrub.ppm");
     sat::scrub_close();
     sat::tick();
     shown = 0;
@@ -1223,7 +1223,7 @@ int main() {
         if (strstr(lv_label_get_text(sat::ui.w.status), "Undocking")) {
           lv_obj_invalidate(lv_screen_active());
           lv_refr_now(disp);
-          save_ppm(HOST_DIR "/r16_event_alert.ppm");
+          save_ppm(OUT_DIR "/renders/r16_event_alert.ppm");
           // UI-41d: a tap on the alert opens its details card
           lv_obj_send_event(sat::ui.w.status, LV_EVENT_CLICKED, nullptr);
           printf("event details: %s\n%s\n", lv_label_get_text(sat::ui.card_title), lv_label_get_text(sat::ui.card_body));
@@ -1231,7 +1231,7 @@ int main() {
                 strstr(lv_label_get_text(sat::ui.card_body), "International Space Station"), "event alert tap: details card");
           lv_obj_invalidate(lv_screen_active());
           lv_refr_now(disp);
-          save_ppm(HOST_DIR "/r16_event_details.ppm");
+          save_ppm(OUT_DIR "/renders/r16_event_details.ppm");
           sat::deselect();
           break;
         }
@@ -1245,7 +1245,7 @@ int main() {
                 strstr(lv_label_get_text(sat::ui.card_body), "From "), "launch alert tap: details card");
           lv_obj_invalidate(lv_screen_active());
           lv_refr_now(disp);
-          save_ppm(HOST_DIR "/r16_launch_details.ppm");
+          save_ppm(OUT_DIR "/renders/r16_launch_details.ppm");
           sat::deselect();
           break;
         }
@@ -1371,7 +1371,7 @@ int main() {
       printf("DSO card: %s\n%s\n", lv_label_get_text(sat::ui.card_title), lv_label_get_text(sat::ui.card_body));
       CHECK(strstr(lv_label_get_text(sat::ui.card_title), "Andromeda Galaxy (M31)"), "dso card");
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-      save_ppm(HOST_DIR "/r7_dsocard.ppm");
+      save_ppm(OUT_DIR "/renders/r7_dsocard.ppm");
     }
     printf("DSO on the map: %zu\n", sat::ui.dso_pts.size());
     // UI-57 finder for Jupiter: heading pointing at it -> straight ahead
@@ -1383,11 +1383,11 @@ int main() {
     printf("finder: %s / %s\n", lv_label_get_text(sat::fnd.turn), lv_label_get_text(sat::fnd.up));
     CHECK(strstr(lv_label_get_text(sat::fnd.turn), "Turn right 60"), "finder turn");
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r7_finder.ppm");
+    save_ppm(OUT_DIR "/renders/r7_finder.ppm");
     sat::finder_update(az + 3);
     CHECK(strstr(lv_label_get_text(sat::fnd.turn), "Straight ahead"), "finder ahead");
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r7_finder_ahead.ppm");
+    save_ppm(OUT_DIR "/renders/r7_finder_ahead.ppm");
     sat::finder_close();
     sat::live.launches.clear();
     sat::live.wind = sat::net::SolarWind();
@@ -1491,7 +1491,7 @@ int main() {
     CHECK(strstr(lv_label_get_text(sat::ui.card_body), "Aurora chance ") && !lv_obj_has_flag(sat::ui.card_img_btn, LV_OBJ_FLAG_HIDDEN) &&
           !strcmp(lv_label_get_text(sat::ui.card_img_lbl), "Image") && sat::img_req[IMG_SUN].asked, "sun card chance + button");
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r8_suncard.ppm");
+    save_ppm(OUT_DIR "/renders/r8_suncard.ppm");
     // the viewer while the picture downloads (the host runs jobs at once: hold that state)
     auto hold_loading = [](int k, uint8_t stage, int32_t got, int32_t tot) {
       sat::img_req[k].asked = true;
@@ -1510,7 +1510,7 @@ int main() {
     printf("sun view (loading): \"%s\" bar %d\n", lv_label_get_text(sat::sv.msg), (int) lv_bar_get_value(sat::sv.bar));
     CHECK(strstr(lv_label_get_text(sat::sv.msg), "46%  -  520 of 1124 KB") && lv_bar_get_value(sat::sv.bar) == 46 &&
           !lv_obj_has_flag(sat::sv.bar, LV_OBJ_FLAG_HIDDEN), "sun view progress");
-    save_ppm(HOST_DIR "/r8_sunload.ppm");
+    save_ppm(OUT_DIR "/renders/r8_sunload.ppm");
     sat::net::img_stage = sat::net::STG_IDLE;
     // GOES SUVI 304: the frame list names each exposure; the newest that shows the Sun is used
     auto suvi_name = [](double t) { char b[96]; time_t tt = (time_t) t; struct tm g; gmtime_r(&tt, &g);
@@ -1542,7 +1542,7 @@ int main() {
     printf("sun view: \"%s\" / \"%s\"\n", lv_label_get_text(sat::sv.cap1), lv_label_get_text(sat::sv.cap2));
     CHECK(strstr(lv_label_get_text(sat::sv.cap1), "GOES-19 SUVI, 30.4 nm") && strstr(lv_label_get_text(sat::sv.cap2), "Taken ") &&
           !lv_obj_has_flag(sat::sv.img, LV_OBJ_FLAG_HIDDEN) && lv_obj_has_flag(sat::sv.bar, LV_OBJ_FLAG_HIDDEN), "sun view shows it");
-    save_ppm(HOST_DIR "/r8_sunview.ppm");
+    save_ppm(OUT_DIR "/renders/r8_sunview.ppm");
     // an update in progress: the caption says so
     hold_loading(IMG_SUN, sat::net::STG_DOWNLOAD, 30 * 1024, 70 * 1024);
     sat::img_view_update(sat_host_now);
@@ -1569,7 +1569,7 @@ int main() {
       printf("before: \"%s\"\n", lv_label_get_text(sat::sv.cap2));
       CHECK(sat::sv.show_prev && strstr(lv_label_get_text(sat::sv.cap2), "7m ago - earlier picture"), "flip to the one before");
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-      save_ppm(HOST_DIR "/r11_sunbefore.ppm");
+      save_ppm(OUT_DIR "/renders/r11_sunbefore.ppm");
       lv_obj_send_event(sat::sv.flip[0], LV_EVENT_CLICKED, nullptr);  // one more: from the list
       run_jobs();
       sat::tick();
@@ -1604,13 +1604,13 @@ int main() {
       CHECK(!lv_obj_has_flag(sat::ui.card_img_btn, LV_OBJ_FLAG_HIDDEN) && !strcmp(lv_label_get_text(sat::ui.card_img_lbl), "Image"),
             "moon card button");
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-      save_ppm(HOST_DIR "/r9_mooncard.ppm");
+      save_ppm(OUT_DIR "/renders/r9_mooncard.ppm");
       sat::deselect();
       sat::img_view_open_now(IMG_MOON);
       hold_loading(IMG_MOON, sat::net::STG_DOWNLOAD, 41 * 1024, 107 * 1024);
       sat::img_view_update(sat_host_now);
       lv_refr_now(disp);
-      save_ppm(HOST_DIR "/r9_moonload.ppm");
+      save_ppm(OUT_DIR "/renders/r9_moonload.ppm");
       sat::net::img_stage = sat::net::STG_IDLE;
       sat::net::do_image(IMG_MOON);
       sat::tick();
@@ -1624,7 +1624,7 @@ int main() {
       printf("moon view: \"%s\" / \"%s\"\n", lv_label_get_text(sat::sv.cap1), lv_label_get_text(sat::sv.cap2));
       CHECK(strstr(lv_label_get_text(sat::sv.cap1), "94% lit, 17.7 days old, 372,667 km away") && strstr(lv_label_get_text(sat::sv.cap2), "north up"),
             "moon view captions");
-      save_ppm(HOST_DIR "/r9_moonview.ppm");
+      save_ppm(OUT_DIR "/renders/r9_moonview.ppm");
       host_last_url.clear();
       sat::net::do_image(IMG_MOON);  // same hour: the JPEG is not fetched again
       CHECK(host_last_url.find("dialamoon") != std::string::npos, "moon repeat skipped (%s)", host_last_url.c_str());
@@ -1665,7 +1665,7 @@ int main() {
         const uint16_t cpx = sat::live.img_px[sat::net::IMG_EARTH][0];
         CHECK(cpx == (uint16_t) ((7 >> 3) << 11 | (11 >> 2) << 5 | (24 >> 3)), "earth corner masked (%04x)", cpx);
       }
-      save_ppm(HOST_DIR "/r10_earth.ppm");
+      save_ppm(OUT_DIR "/renders/r10_earth.ppm");
       const uint32_t sq = sat::live.img[sat::net::IMG_EARTH].seq;
       host_last_url.clear();
       const int opens0 = host_http_opens, inits0 = host_http_inits;
@@ -1712,7 +1712,7 @@ int main() {
       printf("region: ok %d err '%s' url %s cap \"%s\"\n", ri.ok, ri.err, host_last_url.c_str(), lv_label_get_text(sat::sv.cap1));
       CHECK(ri.ok && host_last_url.find("SECTOR/ak/GEOCOLOR/") != std::string::npos && host_last_url.find("-ak-GEOCOLOR-500x500.jpg") != std::string::npos &&
             strstr(lv_label_get_text(sat::sv.cap1), "Alaska: GOES-18 ") && sat::earth_kind() == sat::net::IMG_REGION, "region image");
-      save_ppm(HOST_DIR "/r10_region.ppm");
+      save_ppm(OUT_DIR "/renders/r10_region.ppm");
       sat::img_view_close();
     }
     // ---- UI-61 planets drawn on the device, opened from their cards
@@ -1747,7 +1747,7 @@ int main() {
               lv_label_get_text(sat::sv.credit)[0] && lv_obj_has_flag(sat::sv.cap2, LV_OBJ_FLAG_HIDDEN) &&
               sat::planet_src_of == p, "planet photo view");
       char fnp[64];
-      snprintf(fnp, sizeof(fnp), HOST_DIR "/r10_planet%d.ppm", p);
+      snprintf(fnp, sizeof(fnp), OUT_DIR "/renders/r10_planet%d.ppm", p);
       save_ppm(fnp);
       if (p <= sat::planets::MARS) {  // UI-61g: "Tonight's phase" off and on again
         CHECK(sat::sv.phase_mark && lv_obj_has_state(sat::sv.phase_mark, LV_STATE_CHECKED), "phase switch on");
@@ -1755,7 +1755,7 @@ int main() {
         lv_obj_send_event(sat::sv.phase_mark, LV_EVENT_VALUE_CHANGED, nullptr);
         lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
         CHECK(!sat::planet_phase, "phase off: full photo");
-        snprintf(fnp, sizeof(fnp), HOST_DIR "/r12_nophase%d.ppm", p);
+        snprintf(fnp, sizeof(fnp), OUT_DIR "/renders/r12_nophase%d.ppm", p);
         save_ppm(fnp);
         lv_obj_add_state(sat::sv.phase_mark, LV_STATE_CHECKED);
         lv_obj_send_event(sat::sv.phase_mark, LV_EVENT_VALUE_CHANGED, nullptr);
@@ -1817,7 +1817,7 @@ int main() {
       lv_obj_set_pos(box2, 12, 300);
       sat::logo_show(box2, 112);
       lv_refr_now(disp);
-      save_ppm(HOST_DIR "/r12_logo.ppm");
+      save_ppm(OUT_DIR "/renders/r12_logo.ppm");
     }
     namespace sd = sat::sdfw;
     sd::init("4.5.38", &mono16, &mono16, &mono16);
@@ -1845,7 +1845,7 @@ int main() {
           !strcmp(lv_label_get_text(sd::sui.l1), "On the card: 4.10.0") && !strcmp(lv_label_get_text(sd::sui.l2), "Installed: 4.5.38"),
           "card offers the newest firmware");
     lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r12_sd_prompt.ppm");
+    save_ppm(OUT_DIR "/renders/r12_sd_prompt.ppm");
     lv_obj_send_event(sd::sui.btn[0], LV_EVENT_CLICKED, nullptr);  // Not now
     probe();
     CHECK(!sd::sui.root && sd::declined == sd::offer.key, "not now: not asked again this boot");
@@ -1862,7 +1862,7 @@ int main() {
     sd::done_bytes = 180000;
     sd::ui_update();
     lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r12_sd_progress.ppm");
+    save_ppm(OUT_DIR "/renders/r12_sd_progress.ppm");
     printf("sd progress: \"%s\"\n", lv_label_get_text(sd::sui.l1));
     CHECK(strstr(lv_label_get_text(sd::sui.l1), "45%"), "progress shown");
     run_jobs();
@@ -1917,11 +1917,11 @@ int main() {
     CHECK(!up::ui_.root && !lv_obj_has_flag(ub, LV_OBJ_FLAG_HIDDEN), "hourly find: icon only");
     lv_obj_invalidate(page1);
     lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r15_update_icon.ppm");
+    save_ppm(OUT_DIR "/renders/r15_update_icon.ppm");
     up::offer_now();  // the icon tapped
     CHECK(up::ui_.mode == up::M_AVAILABLE && strstr(lv_label_get_text(up::ui_.l1), "4.6.1"), "icon opens the prompt");
     lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r13_update.ppm");
+    save_ppm(OUT_DIR "/renders/r13_update.ppm");
     lv_obj_send_event(up::ui_.btn[0], LV_EVENT_CLICKED, nullptr);  // Not now
     up::tick();
     CHECK(!up::ui_.root && !lv_obj_has_flag(ub, LV_OBJ_FLAG_HIDDEN), "not now: closed, the icon stays");
@@ -2028,7 +2028,7 @@ int main() {
     lab(128, Y + 224, "\xF3\xB0\x96\x94", &mdi20, 0xFF6B6B);  // weather-night
     swi(232, Y + 220, false);
     lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r17_tz.ppm");
+    save_ppm(OUT_DIR "/renders/r17_tz.ppm");
     lv_dropdown_open(dd);
     if (lv_obj_t *list = lv_dropdown_get_list(dd)) {
       lv_obj_set_style_text_font(list, &mono16, 0);
@@ -2038,7 +2038,7 @@ int main() {
       lv_obj_set_style_max_height(list, 300, 0);
     }
     lv_refr_now(disp);
-    save_ppm(HOST_DIR "/r17_tz_open.ppm");
+    save_ppm(OUT_DIR "/renders/r17_tz_open.ppm");
     lv_dropdown_close(dd);
     lv_screen_load(page1);
     lv_obj_delete(scr);
@@ -2087,7 +2087,7 @@ int main() {
       }
       lv_refr_now(disp);
       char fn[64];
-      snprintf(fn, sizeof(fn), HOST_DIR "/r14_rocket%d.ppm", f);
+      snprintf(fn, sizeof(fn), OUT_DIR "/renders/r14_rocket%d.ppm", f);
       save_ppm(fn);
     }
     sat_host_now += rk::DUR_S;

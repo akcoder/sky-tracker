@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Renders the design comps into docs/comps (PNG): the settings tabs (setcomp.cpp) and, when
-# ./t4 has written them, the boot-screen launch (BOOT_GIF=1 ./t4). Needs Pillow.
+# ./t4 has written them, the boot-screen launch (BOOT_GIF=1 ./t4) and the test suite's screen
+# renders (out/renders, into docs/comps/renders). Needs Pillow.
 set -euo pipefail
 cd "$(dirname "$0")"
 ./build.sh >/dev/null
@@ -28,5 +29,10 @@ if fs:
     sheet.save(f"{out}/boot_launch_strip.png")
     fr = [Image.open(f).convert("P", palette=Image.ADAPTIVE, colors=128) for f in fs[::2]]
     fr[0].save(f"{out}/boot_launch.gif", save_all=True, append_images=fr[1:], duration=66, loop=0, optimize=True)
-print("comps:", sorted(os.listdir(out)))
+os.makedirs(f"{out}/renders", exist_ok=True)
+n = 0
+for f in sorted(glob.glob("out/renders/*.ppm")):  # the test suite's screens (./t4)
+    Image.open(f).save(f"{out}/renders/" + os.path.basename(f)[:-4] + ".png", optimize=True)
+    n += 1
+print("comps:", sorted(os.listdir(out)), f"+ {n} renders")
 PY

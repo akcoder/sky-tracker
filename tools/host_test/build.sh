@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 DEPS=deps
-mkdir -p "$DEPS" out build/lvgl
+mkdir -p "$DEPS" out/renders build/lvgl
 [ -f fixtures/saturn_test.jpg ] || python3 gen_fixtures.py  # synthetic picture fixtures (needs Pillow)
 [ -d "$DEPS/lvgl" ] || git clone -q --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl "$DEPS/lvgl"
 [ -d "$DEPS/ArduinoJson" ] || git clone -q --depth 1 -b v7.4.3 https://github.com/bblanchon/ArduinoJson "$DEPS/ArduinoJson"

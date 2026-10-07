@@ -1351,7 +1351,8 @@ FAIL-10 Crash capture (sky_diag.h): ESPHome's crash handler keeps the last panic
 
 ## 9. Verification (VER)
 VER-3  Design comps live in docs/comps (PNG/GIF), rendered by tools/host_test/make_comps.sh
-       from the harness (settings tabs: setcomp.cpp; boot launch: BOOT_GIF=1 ./t4).
+       from the harness (settings tabs: setcomp.cpp; boot launch: BOOT_GIF=1 ./t4), with the
+       test suite's screen renders (./t4 writes them to out/renders) in docs/comps/renders.
 TEST-1 Download stress: tools/host_test/fetch_celestrak.py caches the CelesTrak files (at most
        one fetch per file per 2 h); tools/host_test/celestrak_server.py serves them on the
        firmware's paths. A debug build sets net::celestrak_base to that server (no CelesTrak
