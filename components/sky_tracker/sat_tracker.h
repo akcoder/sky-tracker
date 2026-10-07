@@ -194,7 +194,8 @@ constexpr float SNAP_DEG = 30.0f;   // MOTION-5
 constexpr int LIST_ROWS = 18;       // UI-10: table rows including the header
 
 // DATA-4: propagation cadence (on-board maths, no API limits) and the element check
-constexpr double SAT_PERIOD = 10, STARLINK_PERIOD = 30, STARLINK_OFFSET = 5, ISS_PERIOD = 5, ELEM_PERIOD = 300;
+constexpr double SAT_PERIOD = 10, STARLINK_PERIOD = 30, STARLINK_OFFSET = 5, ISS_PERIOD = 5;
+inline double ELEM_PERIOD = 300;  // TEST-1: shortened by a debug build
 constexpr double STATUS_OK_SHOW_S = 5 * 60.0;  // UI-25: how long "updated X ago" stays on screen
 constexpr double STALE_S = 3 * 86400.0;  // UI-25: warn when the orbit data was downloaded longer ago than this
 

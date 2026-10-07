@@ -3,7 +3,8 @@
 // PC, backtrace) in no-init RAM, logs it once at boot and to the first API client, then
 // clears it, so it is gone before anyone reads the log (the 4.3.9 pool crash). At boot
 // (on_boot 600, before the API) this copies those log lines, keeps them in one sector
-// of the skydata partition (0x0F1000, after the DATA-12 hold sector) and shows them on
+// of the skydata partition (0x0F3000, after the hold, launch and event sectors; until 4.6.22 it
+// shared 0x0F1000 with the launch list, which overwrote it) and shows them on
 // the debug page and as the "Last Crash" text sensor until the next crash replaces
 // them. The reset reason of every boot is reported too.
 
@@ -25,7 +26,7 @@
 namespace skydiag {
 
 static const char *const TAG = "sky_diag";
-constexpr uint32_t DIAG_OFF = 0x0F1000, DIAG_MAGIC = 0x43524153;  // "CRAS"
+constexpr uint32_t DIAG_OFF = 0x0F3000, DIAG_MAGIC = 0x43524153;  // "CRAS"
 constexpr size_t TEXT_MAX = 1400;
 struct Rec {
   uint32_t magic, len, crc;
@@ -106,7 +107,8 @@ inline void install(const char *fw_version) {
   }
 #endif
 }
-// "Last Crash" text sensor: the reason line and the fault PC
+// "Last Crash" text sensor: the reason line, the fault PC and the backtrace PCs (for
+// addr2line against the release's .elf, kept in the build artifact)
 inline std::string summary() {
   if (!have)
     return "none recorded";
@@ -129,8 +131,20 @@ inline std::string summary() {
   grab("PC:");
   if (s.empty())
     s = "crash (see debug page)";
-  if (s.size() > 200)
-    s.resize(200);
+  // the backtrace: "BTn: 0x4200ABCD  (backtrace)" lines, addresses only
+  std::string bt;
+  for (const char *p = strstr(t, "BT"); p != nullptr; p = strstr(p + 2, "BT")) {
+    const char *x = strstr(p, "0x");
+    const char *e = strchr(p, '\n');
+    if (x == nullptr || (e && x > e))
+      continue;
+    bt += bt.empty() ? " / BT" : "";
+    bt += " ";
+    bt.append(x, std::min<size_t>(10, strlen(x)));
+  }
+  s += bt;
+  if (s.size() > 230)  // HA keeps 255 characters
+    s.resize(230);
   return s + (fresh ? " (this boot)" : "");
 }
 // Debug page lines: reset reason, then the record (first lines)

@@ -93,6 +93,27 @@ template<class T> struct PsramAlloc {
   template<class U> bool operator!=(const PsramAlloc<U> &) const { return false; }
 };
 template<class T> using pvector = std::vector<T, PsramAlloc<T>>;
+// FAIL-12: PsramAlloc aborts when PSRAM has no block big enough, and a vector that grows needs
+// its new block while it still holds the old one. The four element lists (satellites, GNSS,
+// GEO, Starlink) are therefore reserved at their caps when the data task starts, while PSRAM
+// is in one piece, and then refilled in place: the cache is read straight into them and a
+// download clears and refills the list it replaces (the data task alone owns them), so they
+// never allocate again. room_for() is the guard: a list without room is grown only if PSRAM
+// has a free block that size (plus 32 KB); otherwise the caller skips, keeping what it has.
+// (4.6.21 aborted building the GEO list after Starlink: 2.5 MB free, none of it in one piece.)
+template<class T, class A> inline bool room_for(std::vector<T, A> &v, size_t n, const char *what, bool quiet = false) {
+  if (v.capacity() >= n)
+    return true;
+  const size_t need = n * sizeof(T), big = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (big < need + 32 * 1024) {
+    if (!quiet)
+      ESP_LOGW("sat_net", "%s: PSRAM has no free %u KB block (largest %u KB): skipped", what, (unsigned) (need / 1024),
+               (unsigned) (big / 1024));
+    return false;
+  }
+  v.reserve(n);
+  return true;
+}
 
 enum Layer : uint8_t { L_SAT = 1, L_STARLINK = 2, L_ISS = 4, L_PASS = 8, L_STATUS = 16, L_GEO = 32, L_KP = 64, L_EXTRA = 128 };  // L_EXTRA: solar wind, launches
 enum Job : uint8_t { JOB_ABOVE = 0, JOB_STARLINK = 1, JOB_ISS = 2, JOB_PASS = 3, JOB_ELEMENTS = 4, JOB_SUNIMG = 5, JOB_MOONIMG = 6, JOB_EARTHIMG = 7, JOB_REGIONIMG = 8, JOB_PLANETIMG = 9, JOB_BACK = 10,
@@ -176,13 +197,19 @@ namespace net {
 
 static const char *const TAG = "sat_net";
 
-constexpr double ELEM_REFRESH_S = 12 * 3600.0;  // DATA-1: element sets are good for days; 12 h keeps them fresh
+inline double ELEM_REFRESH_S = 12 * 3600.0;  // DATA-1: element sets are good for days; 12 h keeps them fresh
+// TEST-1: where the CelesTrak files come from. Release builds use celestrak.org; a debug build
+// can point at tools/host_test/celestrak_server.py (cached copies, no 403 rule) and shorten
+// ELEM_REFRESH_S to download again and again.
+inline std::string celestrak_base = "https://celestrak.org";
+inline std::string ct_url(const char *path) { return celestrak_base + path; }
 constexpr double MAX_ELEM_AGE_S = 10 * 86400.0; // DATA-9: older element sets (decayed, lost) are dropped
 constexpr double RETRY_S = 10 * 60.0;           // after a failed download
 constexpr double RETRY_403_S = 2 * 3600.0;       // CelesTrak 403s repeat downloads within 2 h; retrying sooner risks a block
 constexpr size_t JSON_BUF = 96 * 1024;          // SATCAT owner list (~52 KB)
 constexpr size_t SAT_CAP = 400;                 // element sets kept for the satellite layer
 constexpr size_t STARLINK_CAP = 16000;
+constexpr size_t STARLINK_ROOM = 13000;  // FAIL-12: reserved at start (~11,100 today); grown later only if PSRAM allows
 constexpr size_t MEO_CAP = 200;                  // UI-28: GNSS lists, ~130 today
 constexpr size_t GEO_CAP = 740;                  // geosynchronous, ~560 today (cache region D)          // ~11,000 today
 constexpr size_t STARLINK_PUB_CAP = 700;        // DATA-3: published per scan (whole sky)
@@ -941,7 +968,7 @@ inline void owners_update(double now) {
   if (!miss)
     return;
   if (now >= owner_bulk_next) {
-    int len = http_get("https://celestrak.org/satcat/records.php?GROUP=visual&FORMAT=JSON", json_buf, JSON_BUF,
+    int len = http_get(ct_url("/satcat/records.php?GROUP=visual&FORMAT=JSON").c_str(), json_buf, JSON_BUF,
                        "satcat bulk");
     int n = len > 0 ? owner_parse(json_buf, len) : -1;
     owner_bulk_next = now + (n > 0 ? 86400 : 900);
@@ -958,7 +985,7 @@ inline void owners_update(double now) {
       continue;
     budget--;
     char url[96];
-    snprintf(url, sizeof(url), "https://celestrak.org/satcat/records.php?CATNR=%ld&FORMAT=JSON", (long) s.id);
+    snprintf(url, sizeof(url), "%s/satcat/records.php?CATNR=%ld&FORMAT=JSON", celestrak_base.c_str(), (long) s.id);
     int len = http_get(url, json_buf, JSON_BUF, "satcat");
     if (len < 0) {
       owner_backoff = now + 300;
@@ -1214,14 +1241,15 @@ inline bool cache_load_list(uint32_t off, uint32_t max, pvector<SgpSat> &v, doub
   CacheHdr h;
   if (!cache_header(off, sizeof(SgpSat), h) || h.payload_len > max || h.payload_len != sizeof(SgpSat) * h.n)
     return false;
-  pvector<SgpSat> tmp;
-  tmp.resize(h.n);
+  if (!room_for(v, h.n, what))
+    return false;
+  v.resize(h.n);  // FAIL-12: straight into the reserved list
   uint32_t pos = off + CACHE_HDR, crc = 0;
-  if (!cache_get(pos, crc, tmp.data(), h.payload_len) || crc != h.crc) {
+  if (!cache_get(pos, crc, v.data(), h.payload_len) || crc != h.crc) {
+    v.clear();
     ESP_LOGW(TAG, "cache: %s damaged; ignored", what);
     return false;
   }
-  std::swap(v, tmp);
   loaded = h.loaded;
   ESP_LOGI(TAG, "cache: loaded %u %s", (unsigned) v.size(), what);
   return true;
@@ -1251,14 +1279,22 @@ inline double hold_load() {
   return h.until;
 }
 
+inline void reserve_lists() {  // FAIL-12: at task start, before PSRAM is cut up
+  sats.reserve(SAT_CAP);
+  meo_sats.reserve(MEO_CAP);
+  geo_sats.reserve(GEO_CAP);
+  starlink.reserve(STARLINK_ROOM);
+}
 inline void cache_load() {
+  reserve_lists();
   cache_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, (esp_partition_subtype_t) 0x40, "skydata");
   if (cache_part == nullptr) {
     ESP_LOGW(TAG, "cache: no skydata partition (flash the new partition table over USB); cache off");
     return;
   }
   // DATA-12: still inside a CelesTrak hold from before the reboot? (UTC, compared once the clock is set)
-  if (const double hold = hold_load(); hold > status.next_try) {
+  // (TEST-1: a hold is celestrak.org's; a test server pointed at by celestrak_base has none)
+  if (const double hold = celestrak_base == "https://celestrak.org" ? hold_load() : 0; hold > status.next_try) {
     status.next_try = hold;
     ESP_LOGI(TAG, "cache: CelesTrak hold until %.0f carried over the reboot", hold);
   }
@@ -1267,7 +1303,9 @@ inline void cache_load() {
   if (cache_header(CACHE_A_OFF, sizeof(SgpSat), h) && h.payload_len <= CACHE_A_MAX &&
       h.payload_len == sizeof(SgpSat) * (1 + h.n) + sizeof(OwnerRec) * h.n2) {
     const bool same_group = h.group_hash == fnv(cfg.sat_group);
-    pvector<SgpSat> s;
+    const bool want = same_group && (cfg.sats_on || cfg.debris_on) && h.n;
+    pvector<SgpSat> unused;  // read for the CRC when the list isn't wanted
+    pvector<SgpSat> &s = want ? sats : unused;  // FAIL-12: straight into the reserved list
     pvector<OwnerRec> own;
     SgpSat i;
     s.resize(h.n);
@@ -1280,10 +1318,8 @@ inline void cache_load() {
         have_iss = true;
         iss_loaded = h.loaded2;
       }
-      if (same_group && (cfg.sats_on || cfg.debris_on) && h.n) {
-        std::swap(sats, s);
+      if (want)
         sats_loaded = h.loaded;
-      }
       bool dated = false;
       for (const auto &r : own) {
         std::array<char, 6> v{};
@@ -1301,20 +1337,20 @@ inline void cache_load() {
       ESP_LOGI(TAG, "cache: loaded ISS, %u satellites%s, %u owners", (unsigned) sats.size(),
                same_group ? "" : " (group changed: skipped)", (unsigned) own.size());
     } else {
+      sats.clear();
       ESP_LOGW(TAG, "cache: region A damaged; ignored");
     }
   }
   if (cfg.starlink_on && cache_header(CACHE_B_OFF, sizeof(SlElem), h) && h.payload_len <= CACHE_B_MAX &&
       h.payload_len == sizeof(SlElem) * h.n) {
-    pvector<SlElem> sl;
-    sl.resize(h.n);
+    starlink.resize(h.n);  // FAIL-12: straight into the reserved list
     uint32_t pos = CACHE_B_OFF + CACHE_HDR, crc = 0;
-    if (cache_get(pos, crc, sl.data(), h.payload_len) && crc == h.crc) {
-      std::swap(starlink, sl);
+    if (cache_get(pos, crc, starlink.data(), h.payload_len) && crc == h.crc) {
       starlink_loaded = h.loaded;
       any = true;
       ESP_LOGI(TAG, "cache: loaded %u Starlink", (unsigned) starlink.size());
     } else {
+      starlink.clear();
       ESP_LOGW(TAG, "cache: region B damaged; ignored");
     }
   }
@@ -1337,16 +1373,18 @@ inline bool cache_load_sats_only() {
   if (!cache_header(CACHE_A_OFF, sizeof(SgpSat), h) || h.payload_len > CACHE_A_MAX || h.n == 0 ||
       h.payload_len != sizeof(SgpSat) * (1 + h.n) + sizeof(OwnerRec) * h.n2 || h.group_hash != fnv(jc.sat_group))
     return false;
-  pvector<SgpSat> s;
+  if (!room_for(sats, h.n, "satellites"))
+    return false;
   SgpSat i;
-  s.resize(h.n);
+  sats.resize(h.n);  // FAIL-12: straight into the reserved list
   uint32_t pos = CACHE_A_OFF + CACHE_HDR, crc = 0;
   pvector<OwnerRec> own;  // read for the CRC only; the owners were loaded at boot
   own.resize(h.n2);
-  if (!cache_get(pos, crc, &i, sizeof(i)) || !cache_get(pos, crc, s.data(), sizeof(SgpSat) * h.n) ||
-      !cache_get(pos, crc, own.data(), sizeof(OwnerRec) * h.n2) || crc != h.crc)
+  if (!cache_get(pos, crc, &i, sizeof(i)) || !cache_get(pos, crc, sats.data(), sizeof(SgpSat) * h.n) ||
+      !cache_get(pos, crc, own.data(), sizeof(OwnerRec) * h.n2) || crc != h.crc) {
+    sats.clear();
     return false;
-  std::swap(sats, s);
+  }
   sats_loaded = h.loaded;
   ESP_LOGI(TAG, "cache: loaded %u satellites on demand", (unsigned) sats.size());
   return true;
@@ -1356,12 +1394,14 @@ inline bool cache_load_starlink() {
   if (!cache_header(CACHE_B_OFF, sizeof(SlElem), h) || h.payload_len > CACHE_B_MAX ||
       h.payload_len != sizeof(SlElem) * h.n)
     return false;
-  pvector<SlElem> sl;
-  sl.resize(h.n);
-  uint32_t pos = CACHE_B_OFF + CACHE_HDR, crc = 0;
-  if (!cache_get(pos, crc, sl.data(), h.payload_len) || crc != h.crc)
+  if (!room_for(starlink, h.n, "Starlink"))
     return false;
-  std::swap(starlink, sl);
+  starlink.resize(h.n);  // FAIL-12: straight into the reserved list
+  uint32_t pos = CACHE_B_OFF + CACHE_HDR, crc = 0;
+  if (!cache_get(pos, crc, starlink.data(), h.payload_len) || crc != h.crc) {
+    starlink.clear();
+    return false;
+  }
   starlink_loaded = h.loaded;
   ESP_LOGI(TAG, "cache: loaded %u Starlink on demand", (unsigned) starlink.size());
   return true;
@@ -2725,7 +2765,7 @@ inline void do_elements() {
   if (!failed && (!have_iss || due(iss_loaded))) {
     SgpSat s;
     bool got = false;
-    if (download("https://celestrak.org/NORAD/elements/gp.php?CATNR=25544&FORMAT=csv", "ISS",
+    if (download(ct_url("/NORAD/elements/gp.php?CATNR=25544&FORMAT=csv").c_str(), "ISS",
                  [&](const Omm &o) { got = make_sgp(o, s); }, now) &&
         got) {
       strncpy(s.name, "ISS", sizeof(s.name) - 1);
@@ -2746,7 +2786,7 @@ inline void do_elements() {
     char err0[sizeof(status.error)];
     memcpy(err0, status.error, sizeof(err0));
     const double next0 = status.next_try;
-    if (download("https://celestrak.org/NORAD/elements/gp.php?CATNR=48274&FORMAT=csv", "Tiangong",
+    if (download(ct_url("/NORAD/elements/gp.php?CATNR=48274&FORMAT=csv").c_str(), "Tiangong",
                  [&](const Omm &o) { got = make_sgp(o, s); }, now) &&
         got) {
       strncpy(s.name, "Tiangong", sizeof(s.name) - 1);
@@ -2766,52 +2806,72 @@ inline void do_elements() {
   // while either layer is on
   if (!failed && (jc.sats_on || jc.debris_on) && (sats.empty() || due(sats_loaded))) {
     char url[128];
-    snprintf(url, sizeof(url), "https://celestrak.org/NORAD/elements/gp.php?GROUP=%s&FORMAT=csv", jc.sat_group.c_str());
-    pvector<SgpSat> staging;
-    staging.reserve(200);
-    if (download(url, "satellite", [&](const Omm &o) {
-          if (staging.size() >= SAT_CAP || o.id == 25544 || o.id == CSS_ID || o.id == CSS_WENTIAN || o.id == CSS_MENGTIAN ||
-              now - o.epoch > MAX_ELEM_AGE_S)
-            return;
-          staging.emplace_back();
-          if (!make_sgp(o, staging.back()))
-            staging.pop_back();  // decayed or unusable
-        }, now)) {
-      std::swap(sats, staging);
-      sats_loaded = now;
-      any = save_a = true;
-    } else {
-      failed = true;
+    snprintf(url, sizeof(url), "%s/NORAD/elements/gp.php?GROUP=%s&FORMAT=csv", celestrak_base.c_str(), jc.sat_group.c_str());
+    // FAIL-12: refilled in place (capacity kept); a failed download restores it from the cache
+    if (room_for(sats, SAT_CAP, "satellites")) {
+      sats.clear();
+      if (download(url, "satellite", [&](const Omm &o) {
+            if (sats.size() >= SAT_CAP || o.id == 25544 || o.id == CSS_ID || o.id == CSS_WENTIAN ||
+                o.id == CSS_MENGTIAN || now - o.epoch > MAX_ELEM_AGE_S)
+              return;
+            sats.emplace_back();
+            if (!make_sgp(o, sats.back()))
+              sats.pop_back();  // decayed or unusable
+          }, now)) {
+        sats_loaded = now;
+        any = save_a = true;
+      } else {
+        sats.clear();
+        cache_load_sats_only();
+        failed = true;
+      }
     }
   }
   if (!failed && jc.starlink_on && jc.starlink_radius > 0 && (starlink.empty() || due(starlink_loaded))) {
-    pvector<SlElem> staging;
-    staging.reserve(12000);
-    if (download("https://celestrak.org/NORAD/elements/gp.php?GROUP=starlink&FORMAT=csv", "Starlink",
-                 [&](const Omm &o) {
-                   if (staging.size() < STARLINK_CAP && now - o.epoch <= MAX_ELEM_AGE_S) {
-                     breathe((uint32_t) staging.size(), 200);
-                     staging.emplace_back();
-                     if (!make_sl(o, staging.back()))
-                       staging.pop_back();
-                   }
-                 }, now)) {
-      std::swap(starlink, staging);
-      starlink_loaded = now;
-      any = save_b = true;
-    } else {
-      failed = true;
+    // FAIL-12: refilled in place; past its capacity (STARLINK_ROOM at start) the rest is
+    // dropped, never reallocated
+    if (room_for(starlink, STARLINK_ROOM, "Starlink")) {
+      starlink.clear();
+      size_t dropped = 0;
+      if (download(ct_url("/NORAD/elements/gp.php?GROUP=starlink&FORMAT=csv").c_str(), "Starlink",
+                   [&](const Omm &o) {
+                     if (now - o.epoch > MAX_ELEM_AGE_S)
+                       return;
+                     if (starlink.size() >= starlink.capacity() || starlink.size() >= STARLINK_CAP) {
+                       dropped++;
+                       return;
+                     }
+                     breathe((uint32_t) starlink.size(), 200);
+                     starlink.emplace_back();
+                     if (!make_sl(o, starlink.back()))
+                       starlink.pop_back();
+                   }, now)) {
+        if (dropped)
+          ESP_LOGW(TAG, "Starlink: %u more than the list holds (%u): dropped", (unsigned) dropped,
+                   (unsigned) starlink.capacity());
+        starlink_loaded = now;
+        any = save_b = true;
+      } else {
+        starlink.clear();
+        cache_load_starlink();
+        failed = true;
+      }
     }
   }
   // UI-28: GNSS (MEO) and geosynchronous lists, only while their class is shown
+  // FAIL-12: refilled in place (capacity kept); a failed download restores it from the cache
+  bool mem_skip = false;  // the last group_list had no room and was skipped (not an error)
   auto group_list = [&](const char *const *groups, int ng, const char *what, size_t cap, pvector<SgpSat> &dst,
-                        double &loaded) -> bool {
-    pvector<SgpSat> staging;
-    staging.reserve(cap < 256 ? cap : 256);
+                        double &loaded, uint32_t c_off, uint32_t c_max) -> bool {
+    mem_skip = !room_for(dst, cap, what);
+    if (mem_skip)
+      return true;
+    pvector<SgpSat> &staging = dst;
+    staging.clear();
     std::unordered_map<int32_t, bool> ids;
     for (int g = 0; g < ng; g++) {
       char url[128];
-      snprintf(url, sizeof(url), "https://celestrak.org/NORAD/elements/gp.php?GROUP=%s&FORMAT=csv", groups[g]);
+      snprintf(url, sizeof(url), "%s/NORAD/elements/gp.php?GROUP=%s&FORMAT=csv", celestrak_base.c_str(), groups[g]);
       if (!download(url, what, [&](const Omm &o) {
             if (staging.size() >= cap || ids.count(o.id) || now - o.epoch > MAX_ELEM_AGE_S)
               return;
@@ -2821,26 +2881,32 @@ inline void do_elements() {
               ids[o.id] = true;
             else
               staging.pop_back();
-          }, now))
+          }, now)) {
+        dst.clear();
+        cache_load_list(c_off, c_max, dst, loaded, what);
         return false;
+      }
     }
-    std::swap(dst, staging);
     loaded = now;
     return true;
   };
   bool save_c = false, save_d = false;
   if (!failed && jc.meo_on && (meo_sats.empty() || due(meo_loaded))) {
     static const char *const G[] = {"gps-ops", "galileo", "glo-ops", "beidou"};
-    if (group_list(G, 4, "GNSS", MEO_CAP, meo_sats, meo_loaded))
-      any = save_c = true;
-    else
+    if (group_list(G, 4, "GNSS", MEO_CAP, meo_sats, meo_loaded, CACHE_C_OFF, CACHE_C_MAX)) {
+      if (!mem_skip)
+        any = save_c = true;
+    } else {
       failed = true;
+    }
   }
   if (!failed && jc.geo_on && (geo_sats.empty() || due(geo_loaded))) {
     static const char *const G[] = {"geo"};
-    if (group_list(G, 1, "GEO", GEO_CAP, geo_sats, geo_loaded)) {
-      any = save_d = true;
-      geo_force();
+    if (group_list(G, 1, "GEO", GEO_CAP, geo_sats, geo_loaded, CACHE_D_OFF, CACHE_D_MAX)) {
+      if (!mem_skip) {
+        any = save_d = true;
+        geo_force();
+      }
     } else {
       failed = true;
     }
@@ -2904,8 +2970,11 @@ inline bool sgp_rec(SgpSat &s, double t, SatRec &r, const geo::Observer &o, floa
 inline void do_above() {
   const double t = clock_now();
   const geo::Observer o = observer();
-  pvector<SatRec> staging;
-  staging.reserve(96);
+  // FAIL-12: persistent, at full size: swapped with pending (and the UI's live copy), so all
+  // three buffers settle at this capacity and the 2 s job stops allocating in PSRAM
+  static pvector<SatRec> staging;
+  staging.clear();
+  room_for(staging, SAT_CAP + MEO_CAP, "satellite positions", true);  // pushes stop at capacity
   int total = 0;
   auto wanted = [&](uint8_t cls) {
     return cls == C_CLS_LEO ? jc.sats_on : cls == C_CLS_GEO ? false : jc.meo_on;  // GEO handled below
@@ -2925,7 +2994,8 @@ inline void do_above() {
     r.kind = K_SAT;
     owner_of(s.id, r.cc);
     r.launched = launched_of(s.id);
-    staging.push_back(r);
+    if (staging.size() < staging.capacity())  // never reallocates (FAIL-12)
+      staging.push_back(r);
     total += el >= 0;
   };
   std::unordered_map<int32_t, bool> seen;
@@ -2945,13 +3015,14 @@ inline void do_above() {
         take(s);
     }
   // GEO: its own list plus any geosynchronous object in the visual list
-  pvector<SatRec> geo;
+  static pvector<SatRec> geo;  // FAIL-12: persistent, as staging
+  geo.clear();
   bool geo_done = false;
   int geo_total = 0;
   if (jc.geo_on && t >= geo_next) {
     geo_next = t + GEO_EVERY_S;
     geo_done = true;
-    geo.reserve(256);
+    room_for(geo, GEO_CAP, "GEO positions", true);
     auto take_geo = [&](SgpSat &s) {
       if (s.debris && !jc.debris_on)  // UI-35
         return;
@@ -2962,7 +3033,8 @@ inline void do_above() {
       r.kind = K_GEO;
       owner_of(s.id, r.cc);
     r.launched = launched_of(s.id);
-      geo.push_back(r);
+      if (geo.size() < geo.capacity())
+        geo.push_back(r);
       geo_total++;
     };
     std::unordered_map<int32_t, bool> gseen;
@@ -3002,14 +3074,15 @@ inline void do_starlink() {
     float el;
     uint32_t i;
   };
-  std::vector<Cand, PsramAlloc<Cand>> cand;
-  cand.reserve(800);
+  static std::vector<Cand, PsramAlloc<Cand>> cand;  // FAIL-12: persistent, grows to the most seen once
+  cand.clear();
+  room_for(cand, 6000, "Starlink candidates", true);  // ~1/3 of the catalogue is above the horizon
   for (uint32_t i = 0; i < starlink.size(); i++) {
     breathe(i, 1000);
     double x[3] = {0, 0, 0};
     sl_ecef(starlink[i], t, x);
     const float el = azel_of(o, x).el;
-    if (el >= RISING_EL)
+    if (el >= RISING_EL && cand.size() < cand.capacity())  // never reallocates (FAIL-12)
       cand.push_back({el, i});
   }
   if (cand.size() > STARLINK_PUB_CAP) {
@@ -3017,8 +3090,9 @@ inline void do_starlink() {
                       [](const Cand &a, const Cand &b) { return a.el > b.el; });
     cand.resize(STARLINK_PUB_CAP);
   }
-  pvector<SatRec> staging;
-  staging.reserve(cand.size());
+  static pvector<SatRec> staging;  // FAIL-12: persistent at STARLINK_PUB_CAP (see do_above)
+  staging.clear();
+  room_for(staging, STARLINK_PUB_CAP, "Starlink positions", true);
   int total = 0;
   for (const auto &c : cand) {
     const SlElem &s = starlink[c.i];
@@ -3039,6 +3113,8 @@ inline void do_starlink() {
     r.incl_deg = s.incl * 180.0f / (float) M_PI;
     r.speed_kms = sqrtf(398600.4418f / s.a_km);
     make_fix(x0, x1, t, r);
+    if (staging.size() >= staging.capacity())
+      break;
     staging.push_back(r);
     total += c.el >= 0;
   }

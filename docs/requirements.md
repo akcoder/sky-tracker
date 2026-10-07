@@ -1,7 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.21 (queued): alerts change once a minute (were every 6 s); no aurora alert for a faint one (Kp under 3.5) unless NOAA's nowcast says likely (UI-38b); a changed status line is drawn just after the panel's scan has passed it, so it no longer tears (PERF-14).
+- 4.6.22 (queued): fixes a crash (abort) when satellite lists downloaded while layers were switched: downloads freed and reallocated lists of up to 1 MB until PSRAM was in pieces too small for the next one. The lists are now reserved once at start and refilled in place (FAIL-12). Crash records survive (their flash sector moved off the launch list's, which overwrote them) and the Last Crash sensor carries the backtrace (FAIL-10).
+- 4.6.21 (installed): alerts change once a minute (were every 6 s); no aurora alert for a faint one (Kp under 3.5) unless NOAA's nowcast says likely (UI-38b); a changed status line is drawn just after the panel's scan has passed it, so it no longer tears (PERF-14).
 - 4.6.20 (installed): a rocket launches across the boot screen (UI-69k). Settings gains a Satellites tab (LEO cone, LEO, Starlink, MEO, GEO, Debris, Sat Trails moved from Celestial), tabs with the icon above the text (UI-16a). A tap on an alert opens its details (UI-41d): the card of its object (ISS or Tiangong overhead, planet, comet, meteor shower, Moon), or a details card for launches, space events, passes to come, aurora, solar wind, alignments, eclipses and seasons. Alert icons centred on the whole text, one or two lines (UI-41c mode 2). The internet update screen's bar and percentage move during the download (UI-68b); installs started from the web page or HA show that screen too.
 - 4.6.19 (installed): the ground cloud fades from 15% of the climb and is gone by 35% (was 25% / 70%), so the animation doesn't bog down early (UI-69j).
 - 4.6.18: fixes a boot loop. The rocket and capsule pictures are drawn at boot (~5 s, 4x4 supersampled, code from PSRAM) without feeding the task watchdog; the device reset 13 s into every boot, so 4.6.17 never got past setup (display dark, safe mode). The drawing loops now feed it each row (FAIL-11).
@@ -1312,14 +1313,35 @@ FAIL-11 Any loop that runs during setup for more than a moment (marker pools, th
        animation's rocket and capsule pictures) MUST call ui_feed_wdt() as it goes. Setup runs
        in the loop task; past the task watchdog's limit the device resets before the display
        comes up, every boot.
+FAIL-12 PSRAM is never asked for a large block after start-up. The four element lists are
+       reserved at their caps when the data task starts (satellites 400, GNSS 200, GEO 740,
+       Starlink 13,000: ~2.6 MB, while PSRAM is in one piece), the flash cache is read
+       straight into them, and a download clears and refills its list in place (the data
+       task alone owns them); a failed download reloads the list from the cache. Rows past a
+       list's capacity are dropped, never reallocated. The per-job position lists (2 s and
+       30 s jobs) are persistent at full size, so their swaps with pending and the UI's live
+       copies stop allocating. room_for() guards any growth: only with a free block that size
+       plus 32 KB, else skipped. PsramAlloc aborts on failure: in 4.6.21 rebuilding the GEO
+       list (and the Starlink scan's list) aborted once downloads had cut PSRAM into pieces
+       of 60-240 KB with 2.5 MB free. Checked with TEST-1: 79 layer switches over 8 rounds
+       of every list downloading each minute, no abort (4.6.21: abort within 9-69).
 FAIL-10 Crash capture (sky_diag.h): ESPHome's crash handler keeps the last panic in
        no-init RAM, logs it at boot and to the first API client, then clears it. At
        on_boot 600 (before the API) the record is replayed through a logger callback,
-       saved to the skydata sector 0x0F1000 (magic, CRC, firmware version) and shown
+       saved to the skydata sector 0x0F3000 (magic, CRC, firmware version) and shown
        on the debug page (reset reason, then up to 8 lines) and as the "Last Crash"
-       text sensor (reason / PC) until the next crash replaces it.
+       text sensor (reason / PC / backtrace PCs, decodable with the release's .elf from
+       the build artifact) until the next crash replaces it. Until 4.6.22 it used
+       0x0F1000, the launch list's sector (UI-54a), which overwrote it: every record
+       was lost at the next launch-list save.
 
 ## 9. Verification (VER)
+TEST-1 Download stress: tools/host_test/fetch_celestrak.py caches the CelesTrak files (at most
+       one fetch per file per 2 h); tools/host_test/celestrak_server.py serves them on the
+       firmware's paths. A debug build sets net::celestrak_base to that server (no CelesTrak
+       403 hold is loaded then), net::ELEM_REFRESH_S = 60 and ELEM_PERIOD = 30, so every
+       list downloads each minute while layers are switched. Release builds keep
+       celestrak.org, 12 h and 300 s.
 VER-1  Orbital and astronomical maths MUST be checked against an independent
        implementation (e.g. pyephem) or a simulated orbit before installing.
 VER-2  Drawing code SHOULD be compiled and exercised against real LVGL on a host;
