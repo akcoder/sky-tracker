@@ -134,6 +134,7 @@ esphome:
             sat::hw::set_calibration(id(cal_cx), id(cal_cy), id(cal_sx), id(cal_sy), id(cal_ok));
             sat::hw::gps_diag.pin = ${gps_rx_pin};  // HW-8a: shown in GPS Diagnostic
             sat::logo_show(id(about_logo), 112);  // UI-67
+            sat::logo_meteor(id(about_logo));     // UI-67a
             {
               char d[24], b[64];
               sat::tidy_date(__DATE__, d, sizeof(d));
@@ -1396,7 +1397,7 @@ switch:
     name: Comet Alerts
     web_server:
       sorting_group_id: grp_alerts
-      sorting_weight: 6
+      sorting_weight: 10.5
     icon: mdi:meteor
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -3377,7 +3378,7 @@ lvgl:
             clickable: false
             hidden: true
             widgets:
-              - label:                 # UI-41a: left, the sky; right, spaceflight (UI-41j)
+              - label:                 # UI-41a: left, the sky; right, spaceflight and comets (UI-41j)
                   x: 16
                   y: 20
                   text: "Aurora"
@@ -3456,23 +3457,6 @@ lvgl:
                   y: 190
                   width: 56
                   height: 28
-              - label:                 # UI-41g
-                  x: 16
-                  y: 240
-                  text: "Comets"
-                  text_font: mono16
-              - label:
-                  x: 130
-                  y: 238
-                  text: "\U000F0629"   # meteor
-                  text_font: mdi_card20
-                  text_color: 0xA8F0E0
-              - switch:
-                  id: sw_comet_alerts
-                  x: 156
-                  y: 234
-                  width: 56
-                  height: 28
               - label:                 # UI-54
                   x: 246
                   y: 20
@@ -3539,6 +3523,23 @@ lvgl:
                   id: sw_station_alerts
                   x: 400
                   y: 146
+                  width: 56
+                  height: 28
+              - label:                 # UI-41g
+                  x: 246
+                  y: 196
+                  text: "Comets"
+                  text_font: mono16
+              - label:
+                  x: 372
+                  y: 194
+                  text: "\U000F0629"   # meteor
+                  text_font: mdi_card20
+                  text_color: 0xA8F0E0
+              - switch:
+                  id: sw_comet_alerts
+                  x: 400
+                  y: 190
                   width: 56
                   height: 28
         - button:                # UI-67: About (version, device, credits), lower right

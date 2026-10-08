@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.29 (queued): the web page has an Alerts section with all the alert switches (NET-6a).
+- 4.6.29 (queued): the web page has an Alerts section with all the alert switches (NET-6a). Comets moves under Stations in the Alerts tab (UI-41j). A shooting star crosses the About page's logo now and then, burning out at the end (UI-67a).
 - 4.6.28: The map no longer stalls after the boot launch or every few seconds: the alignment, eclipse and Milky Way work runs on the other core (PERF-15). Alerts tab in two columns, sky and spaceflight (UI-41j); new Solar switch for solar eclipses, solstices and equinoxes (UI-41k).
 - 4.6.27: the screen lights at power-on with the boot screen (~2.4 s, was ~6.6 s): the backlight is switched on as the boot screen is drawn (BOOT-2). Start-up ends ~4 s sooner and Wi-Fi connects sooner: the satellite markers are made after start-up, a few at a time (BOOT-3). Two-line alerts clear the sky disc: the text sits 4 px higher with its lines 3 px closer, and the disc is 4 px lower (UI-41i).
 - 4.6.26: after a minute untouched, any open screen closes and the map returns (UI-72). At power-on the boot screen shows the logo and "Loading" before the slow start-up, then the Wi-Fi status (BOOT-2). The screen comes up ~2.7 s sooner: the animation pictures are drawn after the display starts, 10 ms at a time, and the boot launch plays when they are ready (UI-69n). A tap on an alert's icon opens the alert too (the picture icon took the tap). The splashdown's sea rises into view, and each splashdown lands in its own spot with its own sway and chute drift (UI-69m).
@@ -663,7 +663,8 @@ UI-41f Lunar Alerts (on by default): the full Moon (UI-48), the Moon near a plan
        (UI-47) and their radiant on the map; solar eclipses, solstices and equinoxes follow Solar
        (UI-41k).
 UI-41j The Alerts tab in two columns: the sky on the left (Aurora, Planets, Sky events, Lunar,
-       Solar, Comets), spaceflight on the right (Launch, Dockings, Splashdowns, Stations); rows
+       Solar), spaceflight and comets on the right (Launch, Dockings, Splashdowns, Stations,
+       Comets); the web Alerts section follows the same order (NET-6a); rows
        44 px apart from y 20; the planets' alignment picture at (130, 62).
 UI-41k Solar Alerts (on by default; mdi:weather-sunny, HA "Solar Alerts", web Celestial after
        Lunar): solar eclipses seen from here (UI-51) and solstices and equinoxes (UI-41b).
@@ -674,6 +675,14 @@ UI-72  After 60 s untouched (lv_display_get_inactive_time), checked every 2 s: S
        the map; the picture viewer, Find, the time scrubber and a details card close; an "Update
        available" or microSD offer closes as Not now. Never the boot / Wi-Fi page, an animation,
        an install or a microSD flash in progress.
+UI-67a About page logo: a shooting star now and then (first ~1.2 s after the page opens, then
+       every 3-7 s; 0.6-0.85 s each) in the open sky above the logo's satellite: starts near the
+       top left, falls down-left at 222-240°, a slight random sideways bow, quick then slowing.
+       White 3 px head, a tail fading back along the path. Burn-out over the last 30 %: the head
+       flares (to ~5 px, warming to orange, with a soft glow) then shrinks away while the tail
+       shortens and fades. Drawn by an overlay on the logo (LV_EVENT_DRAW_MAIN), a 30 ms timer
+       invalidating only the logo while the page shows. Comps: docs/comps/about_meteor.gif,
+       about_meteor_strip.png.
 UI-71  Every progress bar (picture downloads, internet and microSD updates) uses C_BAR 0x2D5BD0 on
        C_BAR_BG 0x1A2547.
 UI-41h Splashdown Alerts (on by default): Launch Library "Spacecraft Landing" events whose name
@@ -1294,8 +1303,8 @@ NET-6  The web page groups entities into sections (web_server v3 sorting_groups;
        Azimuth, Overhead, Next Pass), System (Reboot and the NET-9 diagnostics).
        ESPHome's OTA upload form always comes last.
 NET-6a The Alerts section holds the alert switches in the settings Alerts tab's order (UI-41j):
-       Aurora, Planet, Sky Event, Lunar, Solar, Comet, Launch, Event (dockings), Splashdown,
-       Station Alerts (they were under Celestial).
+       Aurora, Planet, Sky Event, Lunar, Solar, Launch, Event (dockings), Splashdown, Station,
+       Comet Alerts (they were under Celestial).
 HW-9b  Guided compass calibration (sky_sensors.h): each fresh sample during a run is
        measured about a circle fitted to the samples so far (algebraic least squares,
        about the first sample), giving the 10° sectors seen, the total turn and the

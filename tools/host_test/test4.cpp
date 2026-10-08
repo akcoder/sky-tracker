@@ -2241,6 +2241,35 @@ int main() {
       CHECK(!rk::playing() && rk::st.sea == nullptr && rk::st.chutes == nullptr && frames > 150, "splashdown ends (%d frames)", frames);
       sat::alert_override = nullptr;
     }
+    if (getenv("ABOUT_GIF")) {  // UI-67a: the shooting star over the About page's logo
+      lv_obj_t *old = lv_screen_active();
+      lv_obj_t *scr = lv_obj_create(nullptr);
+      lv_obj_set_style_bg_color(scr, lv_color_hex(0x000000), 0);
+      lv_screen_load(scr);
+      lv_obj_t *box = lv_obj_create(scr);
+      lv_obj_remove_style_all(box);
+      lv_obj_set_size(box, 112, 112);
+      lv_obj_set_pos(box, 12, 50);
+      sat::logo_show(box, 112);
+      sat::logo_meteor(box);
+      lv_obj_t *l = lv_label_create(scr);
+      lv_label_set_text(l, "Sky Tracker");
+      lv_obj_set_style_text_font(l, &mono18, 0);
+      lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
+      lv_obj_set_pos(l, 138, 56);
+      system("rm -rf " OUT_DIR "/agif && mkdir -p " OUT_DIR "/agif");
+      lv_rand_set_seed(7);
+      for (int f = 0; f < 300; f++) {  // 10 s
+        sat_host_now += 0.033;
+        sat::logo_meteor_step();
+        lv_refr_now(disp);
+        char fn[80];
+        snprintf(fn, sizeof(fn), OUT_DIR "/agif/f%03d.ppm", f);
+        save_ppm(fn);
+      }
+      lv_screen_load(old);
+      lv_obj_delete(scr);
+    }
     if (getenv("BOOT_GIF")) {  // UI-69k: the launch over a mock of the boot screen (wifi_page)
       lv_obj_t *old = lv_screen_active();
       lv_obj_t *scr = lv_obj_create(nullptr);
