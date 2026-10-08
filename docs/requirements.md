@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.30 (queued): lighter on the PSRAM bus the panel refills from, after the display lost sync with 4.6.29 (PERF-15a): the astro task works in small pieces with rests, and a streaming picture redraws only its new rows.
+- 4.6.30 (queued): the display can no longer stay shifted 10 rows with noise: the frame-start bug in the display driver is put right every frame (PERF-16; Display Resyncs counts it). Lighter on the PSRAM bus the panel refills from (PERF-15a): the astro task works in small pieces with rests, and a streaming picture redraws only its new rows. Last Crash shows the firmware and when (FAIL-10a; older records are dropped).
 - 4.6.29: the web page has an Alerts section with all the alert switches (NET-6a). Comets moves under Stations in the Alerts tab (UI-41j). A shooting star crosses the About page's logo now and then, burning out at the end (UI-67a). The Sun, Moon, Earth and region pictures appear top down as they download, already round-edged, over the picture before (UI-59f).
 - 4.6.28: The map no longer stalls after the boot launch or every few seconds: the alignment, eclipse and Milky Way work runs on the other core (PERF-15). Alerts tab in two columns, sky and spaceflight (UI-41j); new Solar switch for solar eclipses, solstices and equinoxes (UI-41k).
 - 4.6.27: the screen lights at power-on with the boot screen (~2.4 s, was ~6.6 s): the backlight is switched on as the boot screen is drawn (BOOT-2). Start-up ends ~4 s sooner and Wi-Fi connects sooner: the satellite markers are made after start-up, a few at a time (BOOT-3). Two-line alerts clear the sky disc: the text sits 4 px higher with its lines 3 px closer, and the disc is 4 px lower (UI-41i).
@@ -1251,6 +1251,18 @@ PERF-15a The astro task never holds the PSRAM bus long (the panel lost sync afte
        8 ms rest every 16 rows. A streaming picture (UI-59f) redraws only the band of rows new
        since the last redraw, 4 times a second (was the whole 360 px picture 5 times); the
        jpgdec task rests a tick per row of blocks.
+PERF-16 The display MUST NOT stay shifted: in IDF 5.5.5's RGB driver with bounce buffers and
+       CONFIG_LCD_RGB_RESTART_IN_VSYNC, the DMA restarts from bounce buffer 0 every frame but
+       bb_eof_count (its parity picks the buffer each refill goes to) is never reset; one late
+       interrupt leaves it odd, and every refill then lands in the buffer being sent: the
+       picture shifts down 10 rows (one bounce buffer) with noise until a reboot (seen after
+       ~11 h; forced on the device with heap walks: 20 odd frames in 4 bursts). The vsync hook
+       (vs::on_vsync, same interrupt, just before the restart) sets the count to 0 and, when the
+       copy position isn't its healthy 2 bounce buffers (measured at every vsync), to 0, which
+       the restart refills from. The private fields are found next to the hook's own pointer in
+       the panel struct and checked (frame size, bounce size, expected EOF count) before use;
+       unrecognised, the fix stays off and says so. "Display Resyncs" (diagnostic) counts the
+       frames put right; each is logged.
 PERF-14 Status-line changes are drawn behind the scan: the panel's vsync interrupt (an
        esp_lcd RGB panel callback; ESPHome's mipi_rgb registers none) times each frame, and
        when the status text changes draw_hud waits (at most one frame) until the scan and its
@@ -1416,6 +1428,9 @@ FAIL-9 Anything that walks a heap (heap_caps_get_largest_free_block,
        bounce-buffer ISR misses its deadline and the picture glitches or shifts.
        MUST NOT be called at runtime; heap_caps_get_free_size() is a counter read and
        is fine.
+FAIL-10a The crash record carries the firmware version and, once the clock is set after the
+       crash's reboot, the boot time (within seconds of the crash): Last Crash reads
+       "4.6.30, Oct 8 07:58: Abort / ... / BT ...". Records in the earlier layout are dropped.
 FAIL-11 Any loop that runs during setup for more than a moment (marker pools, the launch
        animation's rocket and capsule pictures) MUST call ui_feed_wdt() as it goes. Setup runs
        in the loop task; past the task watchdog's limit the device resets before the display

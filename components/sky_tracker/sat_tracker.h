@@ -53,9 +53,31 @@ namespace vs {
 #ifdef SAT_HOST_TEST
 inline void install(void *) {}
 inline void wait_scan_past(int) {}
+inline volatile uint32_t resyncs = 0;
 #else
 inline volatile int64_t last_us = 0, period_us = 0;
+// PERF-16: the IDF 5.5.5 RGB driver (bounce buffers, CONFIG_LCD_RGB_RESTART_IN_VSYNC) restarts
+// the DMA from bounce buffer 0 every frame but never resets bb_eof_count, whose parity picks the
+// buffer each refill goes to; one late interrupt leaves it odd and every refill then lands in
+// the buffer being sent: the picture shifts 10 rows with noise until a reboot. This hook runs
+// in the same interrupt just before that restart and puts the frame start right: the count to
+// 0 and the copy position to its healthy 2 bounce buffers (else 0, which the driver refills
+// from). Its private fields are found next to our callback pointer and checked (install).
+inline volatile int *bb_pos = nullptr;
+inline volatile uint32_t *bb_eofs = nullptr;
+inline int bb_px = 0;
+inline volatile uint32_t resyncs = 0;  // frames put right
 inline bool on_vsync(esp_lcd_panel_handle_t, const esp_lcd_rgb_panel_event_data_t *, void *) {
+  if (bb_eofs) {
+    bool fixed = (*bb_eofs & 1) != 0;
+    *bb_eofs = 0;
+    if (*bb_pos != 2 * bb_px) {
+      *bb_pos = 0;
+      fixed = true;
+    }
+    if (fixed)
+      resyncs = resyncs + 1;
+  }
   const int64_t n = esp_timer_get_time();
   if (last_us)
     period_us = n - last_us;
@@ -70,8 +92,32 @@ inline void install(esphome::mipi_rgb::MipiRgb *d) {
     return;
   esp_lcd_rgb_panel_event_callbacks_t cb = {};
   cb.on_vsync = on_vsync;
-  if (esp_lcd_rgb_panel_register_event_callbacks(Peek::handle(d), &cb, nullptr) != ESP_OK)
+  if (esp_lcd_rgb_panel_register_event_callbacks(Peek::handle(d), &cb, nullptr) != ESP_OK) {
     ESP_LOGW("sat_ui", "vsync callback not registered");
+    return;
+  }
+  // PERF-16: esp_rgb_panel_t (private) holds ... fb_size, bb_size, ... bounce_pos_px, bb_eof_count,
+  // expect_eof_count, on_color_trans_done, on_frame_buf_complete, on_vsync ...; checked, not assumed
+  const uint32_t *w = (const uint32_t *) Peek::handle(d);
+  const uint32_t fb = (uint32_t) d->get_width() * d->get_height() * 2;
+  int fbi = -1, k = -1;
+  for (int i = 0; i < 400; i++) {
+    if (fbi < 0 && w[i] == fb && w[i + 1] > 0 && fb % w[i + 1] == 0)
+      fbi = i;
+    if (w[i] == (uint32_t) (uintptr_t) &on_vsync) {
+      k = i;
+      break;
+    }
+  }
+  const uint32_t bb = fbi >= 0 ? w[fbi + 1] : 0;
+  if (fbi >= 0 && k > fbi + 5 && bb > 0 && w[k - 3] == fb / bb && (int) w[k - 5] >= 0 && (int) w[k - 5] <= (int) (fb / 2)) {
+    bb_px = (int) (bb / 2);
+    bb_pos = (volatile int *) &w[k - 5];
+    bb_eofs = (volatile uint32_t *) &w[k - 4];
+    ESP_LOGI("sat_ui", "display frame-start fix on (bounce %d px)", bb_px);
+  } else {
+    ESP_LOGW("sat_ui", "display frame-start fix off: driver layout not recognised (%d, %d)", fbi, k);
+  }
 }
 // wait until the scan (and the bounce-buffer refill ~20 rows ahead of it) is below row
 // `row` and well short of the bottom, so rows above `row` can be written untorn
@@ -6606,6 +6652,14 @@ inline void tick() {
   align_step(t);      // UI-41: one day of the look-ahead per tick (the astro task's on the device)
 #endif
   astro_collect();    // PERF-15
+  {  // PERF-16: say when the display's frame start was put right
+    static uint32_t seen = 0;
+    const uint32_t n = vs::resyncs;
+    if (n != seen) {
+      ESP_LOGW(UI_TAG, "display frame start put right (%u in all)", (unsigned) n);
+      seen = n;
+    }
+  }
   sky_events_step(t);  // UI-47..51
   if (fresh & L_SAT)
     restyle_sats(t);

@@ -784,6 +784,18 @@ interval:
 
 # ------------------------------------------------------------------ Home Assistant (ARCH-9)
 sensor:
+  - platform: template           # PERF-16: frames whose start was put right (the 10-row shift with noise)
+    id: s_display_resyncs
+    name: Display Resyncs
+    entity_category: diagnostic
+    icon: mdi:monitor-shimmer
+    accuracy_decimals: 0
+    state_class: total_increasing
+    update_interval: 60s
+    lambda: return (float) sat::vs::resyncs;
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 14
   - platform: template           # HW-9a: magnetic -> true north, computed (WMM2025) for the location
     id: s_magnetic_declination
     name: Magnetic Declination
@@ -1644,7 +1656,17 @@ text_sensor:
     entity_category: diagnostic
     icon: mdi:alert-octagon-outline
     update_interval: 60s
-    lambda: return {skydiag::summary()};
+    lambda: |-
+      // FAIL-10a: "4.6.29, Oct 8 07:58: Abort / ..."; the record is stamped once the clock is set
+      skydiag::stamp(sat::clock_now(), esphome::millis() / 1000.0);
+      char w[32] = "";
+      if (const int64_t t = skydiag::when(); t > 0) {
+        char md[16], hm[12];
+        sat::local_md((double) t, md, sizeof(md));
+        sat::local_hm(t, hm, sizeof(hm));
+        snprintf(w, sizeof(w), "%s %s", md, hm);
+      }
+      return {skydiag::summary(w)};
     web_server:
       sorting_group_id: grp_system
       sorting_weight: 13

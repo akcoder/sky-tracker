@@ -26,11 +26,13 @@
 namespace skydiag {
 
 static const char *const TAG = "sky_diag";
-constexpr uint32_t DIAG_OFF = 0x0F3000, DIAG_MAGIC = 0x43524153;  // "CRAS"
+// FAIL-10a: "CRA2": the record carries the firmware and the time (records before it are dropped)
+constexpr uint32_t DIAG_OFF = 0x0F3000, DIAG_MAGIC = 0x32415243;  // "CRA2"
 constexpr size_t TEXT_MAX = 1400;
 struct Rec {
   uint32_t magic, len, crc;
   char fw[16];
+  int64_t when;  // unix seconds of the boot after the crash (stamped once the clock is set; 0: not yet)
   char text[TEXT_MAX];
 };
 inline Rec rec{};
@@ -95,6 +97,7 @@ inline void install(const char *fw_version) {
       Rec r{};
       r.magic = DIAG_MAGIC;
       snprintf(r.fw, sizeof(r.fw), "%s", fw_version);
+      r.when = 0;  // the clock isn't set this early: stamp() fills it in
       r.len = (uint32_t) std::min(capture.size(), TEXT_MAX - 1);
       memcpy(r.text, capture.data(), r.len);
       r.crc = esp_rom_crc32_le(0, (const uint8_t *) r.text, r.len);
@@ -107,12 +110,32 @@ inline void install(const char *fw_version) {
   }
 #endif
 }
-// "Last Crash" text sensor: the reason line, the fault PC and the backtrace PCs (for
-// addr2line against the release's .elf, kept in the build artifact)
-inline std::string summary() {
+inline void save() {
+  const esp_partition_t *pt = part();
+  if (pt && esp_partition_erase_range(pt, DIAG_OFF, 0x1000) == ESP_OK)
+    esp_partition_write(pt, DIAG_OFF, &rec, sizeof(rec));
+}
+// FAIL-10a: once the clock is set, a record captured at this boot gets the boot time (the crash
+// was seconds before it); `now` and `uptime_s` from the caller
+inline void stamp(double now, double uptime_s) {
+  if (!fresh || rec.when != 0 || now < 1.7e9)
+    return;
+  rec.when = (int64_t) (now - uptime_s);
+  save();
+  ESP_LOGI(TAG, "crash record stamped");
+}
+inline int64_t when() { return have ? rec.when : 0; }
+// "Last Crash" text sensor: the firmware and when, the reason line, the fault PC and the
+// backtrace PCs (for addr2line against that release's .elf, kept in the build artifact)
+inline std::string summary(const char *when_text = "") {
   if (!have)
     return "none recorded";
   std::string s;
+  s += rec.fw[0] ? rec.fw : "?";
+  if (when_text && *when_text)
+    s += std::string(", ") + when_text;
+  s += ": ";
+  const size_t head = s.size();
   const char *t = rec.text;
   auto grab = [&](const char *key) {
     const char *p = strstr(t, key);
@@ -123,14 +146,14 @@ inline std::string summary() {
     std::string v(p, e ? (size_t) (e - p) : strlen(p));
     while (!v.empty() && v.front() == ' ')
       v.erase(0, 1);
-    if (!s.empty())
+    if (s.size() > head)
       s += " / ";
     s += v;
   };
   grab("Reason:");
   grab("PC:");
-  if (s.empty())
-    s = "crash (see debug page)";
+  if (s.size() == head)
+    s += "crash (see debug page)";
   // the backtrace: "BTn: 0x4200ABCD  (backtrace)" lines, addresses only
   std::string bt;
   for (const char *p = strstr(t, "BT"); p != nullptr; p = strstr(p + 2, "BT")) {
@@ -152,7 +175,7 @@ inline void debug_text(char *buf, size_t n) {
   int k = snprintf(buf, n, "RESET  %s\n", reset_reason);
   if (!have || k < 0 || (size_t) k >= n)
     return;
-  k += snprintf(buf + k, n - k, "LAST CRASH%s:\n", fresh ? " (this boot)" : "");
+  k += snprintf(buf + k, n - k, "LAST CRASH%s, fw %s:\n", fresh ? " (this boot)" : "", rec.fw[0] ? rec.fw : "?");
   const char *p = rec.text;
   for (int lines = 0; *p && lines < 8 && (size_t) k < n - 1; lines++) {
     const char *e = strchr(p, '\n');
@@ -167,7 +190,9 @@ inline void debug_text(char *buf, size_t n) {
 #else
 namespace skydiag {
 inline void install(const char *) {}
-inline std::string summary() { return "none recorded"; }
+inline std::string summary(const char * = "") { return "none recorded"; }
+inline void stamp(double, double) {}
+inline int64_t when() { return 0; }
 inline void debug_text(char *buf, size_t n) {
   if (n)
     buf[0] = 0;
