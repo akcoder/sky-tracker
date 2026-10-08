@@ -1618,6 +1618,124 @@ int main() {
     CHECK(strstr(lv_label_get_text(sat::sv.cap1), "GOES-19 SUVI, 30.4 nm") && strstr(lv_label_get_text(sat::sv.cap2), "Taken ") &&
           !lv_obj_has_flag(sat::sv.img, LV_OBJ_FLAG_HIDDEN) && lv_obj_has_flag(sat::sv.bar, LV_OBJ_FLAG_HIDDEN), "sun view shows it");
     save_ppm(OUT_DIR "/renders/r8_sunview.ppm");
+    {  // UI-59f: pictures shown as they arrive: each row is final when reported, the rows come
+       // top down, and the streamed result is the same as decoding at the end
+      namespace net = sat::net;
+      constexpr int N = net::IMG_PX;
+      static uint16_t a[N * N], b[N * N], snap[N * N];
+      struct Rec { uint16_t *buf; int last; bool order; int stage; const char *tag; };
+      auto save565 = [](const uint16_t *px, const char *path) {
+        FILE *f = fopen(path, "wb");
+        fprintf(f, "P6 %d %d 255\n", N, N);
+        for (int i = 0; i < N * N; i++) {
+          const uint16_t c = px[i];
+          const unsigned char rgb[3] = {(unsigned char) ((c >> 11) << 3), (unsigned char) (((c >> 5) & 63) << 2), (unsigned char) ((c & 31) << 3)};
+          fwrite(rgb, 1, 3, f);
+        }
+        fclose(f);
+      };
+      static Rec rec;
+      auto on_rows = [](int upto, void *ctx) {
+        Rec *r = (Rec *) ctx;
+        if (upto < r->last) r->order = false;
+        for (int y = r->last; y < upto; y++) memcpy(snap + y * N, r->buf + y * N, N * 2);
+        r->last = std::max(r->last, upto);
+        // the comps: the picture at about a quarter, half and three quarters
+        const int want = (r->stage + 1) * N / 4;
+        if (r->stage < 3 && upto >= want) {
+          char fn[96];
+          snprintf(fn, sizeof(fn), OUT_DIR "/renders/r19_prog_%s_%d.ppm", r->tag, r->stage);
+          static uint16_t show[N * N];
+          memcpy(show, r->buf, sizeof(show));
+          for (int y = upto; y < N; y++)  // not in yet: the page colour (a first picture)
+            for (int x = 0; x < N; x++) show[y * N + x] = 0x0863;
+          FILE *f = fopen(fn, "wb");
+          fprintf(f, "P6 %d %d 255\n", N, N);
+          for (int i = 0; i < N * N; i++) {
+            const uint16_t c = show[i];
+            const unsigned char rgb[3] = {(unsigned char) ((c >> 11) << 3), (unsigned char) (((c >> 5) & 63) << 2), (unsigned char) ((c & 31) << 3)};
+            fwrite(rgb, 1, 3, f);
+          }
+          fclose(f);
+          r->stage++;
+        }
+      };
+      auto masked_rows = [](int upto, void *ctx) {  // as JpgStream: round edge on each new row
+        Rec *r = (Rec *) ctx;
+        static int done = 0;
+        if (r->last == 0) done = 0;
+        const float r0 = r->tag[0] == 'm' ? 166 : 176, r1 = 180;
+        for (; done < upto; done++) net::round_mask_row(r->buf + done * N, done, N, r0, r1);
+      };
+      struct Both { Rec *r; void (*a)(int, void *); void (*b)(int, void *); };
+      for (int kind = 0; kind < 2; kind++) {
+        const std::string jpg = slurp(kind == 0 ? HOST_DIR "/fixtures/moon_test.jpg" : HOST_DIR "/fixtures/earth_test.jpg");
+        static uint16_t acc[N * N * 3];
+        // reference: decoded at the end, then the round edge on the whole picture
+        const char *e1 = kind == 0 ? skyjpg::decode_half((const uint8_t *) jpg.data(), jpg.size(), a, N, N)
+                                   : skyjpg::decode_fit((const uint8_t *) jpg.data(), jpg.size(), a, N, N, acc);
+        net::round_mask(a, N, kind == 0 ? 166 : 176, 180);
+        // streamed: the row callback masks and records
+        rec = Rec{b, 0, true, 0, kind == 0 ? "moon" : "earth"};
+        static Both both;
+        both = Both{&rec, masked_rows, on_rows};
+        skyjpg::Stream st;
+        st.rows = [](int upto, void *ctx) { Both *x = (Both *) ctx; x->a(upto, x->r); x->b(upto, x->r); };
+        st.ctx = &both;
+        for (int i = 0; i < N * N; i++) b[i] = 0x0863;
+        const char *e2 = kind == 0 ? skyjpg::decode_half((const uint8_t *) jpg.data(), jpg.size(), b, N, N, nullptr, nullptr, &st)
+                                   : skyjpg::decode_fit((const uint8_t *) jpg.data(), jpg.size(), b, N, N, acc, nullptr, nullptr, 1.0f, 0, false, &st);
+        CHECK(!e1 && !e2 && rec.order && rec.last == N, "%s streams top down to the last row (%d)", rec.tag, rec.last);
+        CHECK(!memcmp(a, b, sizeof(a)), "%s: streamed picture = decoded at the end", rec.tag);
+        CHECK(!memcmp(snap, b, sizeof(a)), "%s: each row final when reported", rec.tag);
+        char fn[96];
+        snprintf(fn, sizeof(fn), OUT_DIR "/renders/r19_prog_%s_3.ppm", rec.tag);
+        save565(b, fn);
+      }
+      {  // the Sun: the round edge row by row = on the whole picture
+        const std::string png = slurp(HOST_DIR "/fixtures/suvi_good.png");
+        skypng::Decoder d;
+        d.begin(a, N, N, net::SUN_CROP);
+        for (size_t i = 0; i < png.size(); i += 4096) d.feed((const uint8_t *) png.data() + i, std::min<size_t>(4096, png.size() - i));
+        d.release();
+        net::round_mask(a, N, 158, 178);
+        skypng::Decoder d2;
+        d2.begin(b, N, N, net::SUN_CROP);
+        rec = Rec{b, 0, true, 0, "sun"};
+        d2.on_row = [](uint16_t *row, int y, void *ctx) {
+          net::round_mask_row(row, y, N, 158, 178);
+          Rec *r = (Rec *) ctx;
+          if (y + 1 < r->last) r->order = false;
+          memcpy(snap + y * N, row, N * 2);
+          r->last = std::max(r->last, y + 1);
+          const int want = (r->stage + 1) * N / 4;
+          if (r->stage < 3 && y + 1 >= want) {
+            char fn[96];
+            snprintf(fn, sizeof(fn), OUT_DIR "/renders/r19_prog_sun_%d.ppm", r->stage);
+            static uint16_t show[N * N];
+            memcpy(show, r->buf, sizeof(show));
+            for (int yy = y + 1; yy < N; yy++)
+              for (int x = 0; x < N; x++) show[yy * N + x] = 0x0863;
+            FILE *f = fopen(fn, "wb");
+            fprintf(f, "P6 %d %d 255\n", N, N);
+            for (int i = 0; i < N * N; i++) {
+              const uint16_t c = show[i];
+              const unsigned char rgb[3] = {(unsigned char) ((c >> 11) << 3), (unsigned char) (((c >> 5) & 63) << 2), (unsigned char) ((c & 31) << 3)};
+              fwrite(rgb, 1, 3, f);
+            }
+            fclose(f);
+            r->stage++;
+          }
+        };
+        d2.row_ctx = &rec;
+        for (size_t i = 0; i < png.size(); i += 4096) d2.feed((const uint8_t *) png.data() + i, std::min<size_t>(4096, png.size() - i));
+        d2.release();
+        CHECK(d2.done && rec.order && rec.last == N, "sun streams top down to the last row (%d)", rec.last);
+        CHECK(!memcmp(a, b, sizeof(a)), "sun: row-by-row round edge = on the whole picture");
+        CHECK(!memcmp(snap, b, sizeof(a)), "sun: each row final when reported");
+        save565(b, OUT_DIR "/renders/r19_prog_sun_3.ppm");
+      }
+    }
     // an update in progress: the caption says so
     hold_loading(IMG_SUN, sat::net::STG_DOWNLOAD, 30 * 1024, 70 * 1024);
     sat::img_view_update(sat_host_now);

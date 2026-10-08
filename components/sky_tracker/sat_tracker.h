@@ -5572,6 +5572,18 @@ inline void img_flip_state(bool avail, bool fetching = false) {
       lv_obj_remove_flag(sv.flip[i], LV_OBJ_FLAG_CLICKABLE);
   }
 }
+// UI-59f: a live picture's work buffer is showing while it streams in, and once finished until
+// the loop copies it (so the old picture doesn't flash back meanwhile)
+inline bool img_streaming(int k) {
+  return k >= 0 && k < net::IMG_LIVE_N && net::img_work_buf &&
+         (net::img_work_owner == k ||
+          (net::img_stage_kind == k && (net::img_stage == net::STG_DOWNLOAD || net::img_stage == net::STG_DECODE) &&
+           net::img_prog_rows > 0));
+}
+inline void img_prog_timer_cb(lv_timer_t *) {  // UI-59f: new rows shown 5 times a second
+  if (sv.root && sv.kind < VIEW_PLANET && !sv.show_prev && img_streaming(sv.kind))
+    img_view_update(clock_now());
+}
 inline void img_view_update(double t) {
   if (!sv.root)
     return;
@@ -5588,9 +5600,13 @@ inline void img_view_update(double t) {
   const bool fetching = live_kind && back_loading(k);  // UI-59d: an older frame on its way
   const bool loading = before ? fetching : img_loading(k);
   const net::ImageInfo &in = before ? live.img_prev[k] : live.img[k];
-  uint16_t *px = before ? live.img_prev_px[k] : live.img_px[k];
+  const bool streaming = !before && img_streaming(k);  // UI-59f: the picture as it arrives
+  uint16_t *px = streaming ? net::img_work_buf : before ? live.img_prev_px[k] : live.img_px[k];
   const bool have = px != nullptr;  // a picture has been decoded (it stays until a newer one)
-  img_show(px, (before ? live.img_prev_new[k] : live.img_new[k]) || sv.dsc_px != px);
+  static int prog_rows = -2;
+  const bool prog_new = streaming && net::img_prog_rows != prog_rows;
+  prog_rows = streaming ? net::img_prog_rows : -2;
+  img_show(px, prog_new || (before ? live.img_prev_new[k] : live.img_new[k]) || sv.dsc_px != px);
   (before ? live.img_prev_new[k] : live.img_new[k]) = false;
   img_flip_state(live_kind, fetching);
   // message and bar (only until the first picture; later updates show in the caption)
@@ -6332,6 +6348,7 @@ inline void setup(const Config &cfg, const Widgets &w) {
   pools_work(INT64_MAX);
 #else
   lv_timer_create(pools_timer_cb, 10, nullptr);  // BOOT-3
+  lv_timer_create(img_prog_timer_cb, 200, nullptr);  // UI-59f
   astro_start();                                 // PERF-15
 #endif
   const double t = clock_now();

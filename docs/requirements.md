@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.29 (queued): the web page has an Alerts section with all the alert switches (NET-6a). Comets moves under Stations in the Alerts tab (UI-41j). A shooting star crosses the About page's logo now and then, burning out at the end (UI-67a).
+- 4.6.29 (queued): the web page has an Alerts section with all the alert switches (NET-6a). Comets moves under Stations in the Alerts tab (UI-41j). A shooting star crosses the About page's logo now and then, burning out at the end (UI-67a). The Sun, Moon, Earth and region pictures appear top down as they download, already round-edged, over the picture before (UI-59f).
 - 4.6.28: The map no longer stalls after the boot launch or every few seconds: the alignment, eclipse and Milky Way work runs on the other core (PERF-15). Alerts tab in two columns, sky and spaceflight (UI-41j); new Solar switch for solar eclipses, solstices and equinoxes (UI-41k).
 - 4.6.27: the screen lights at power-on with the boot screen (~2.4 s, was ~6.6 s): the backlight is switched on as the boot screen is drawn (BOOT-2). Start-up ends ~4 s sooner and Wi-Fi connects sooner: the satellite markers are made after start-up, a few at a time (BOOT-3). Two-line alerts clear the sky disc: the text sits 4 px higher with its lines 3 px closer, and the disc is 4 px lower (UI-41i).
 - 4.6.26: after a minute untouched, any open screen closes and the map returns (UI-72). At power-on the boot screen shows the logo and "Loading" before the slow start-up, then the Wi-Fi status (BOOT-2). The screen comes up ~2.7 s sooner: the animation pictures are drawn after the display starts, 10 ms at a time, and the boot launch plays when they are ready (UI-69n). A tap on an alert's icon opens the alert too (the picture icon took the tap). The splashdown's sea rises into view, and each splashdown lands in its own spot with its own sway and chute drift (UI-69m).
@@ -856,6 +856,18 @@ UI-59d Earlier pictures: the < and > buttons are always shown on the Sun, Moon, 
        named by scan start (.../GEOCOLOR/YYYYDDDHHMM_GOES18-ABI-ak-GEOCOLOR-500x500.jpg); the
        newest is found stepping back from the current 10 minutes (a frame appears ~10-15 min
        after its scan); a frame already showing is not fetched again.
+UI-59f Live pictures (Sun, Moon, Earth, region) appear as they download, top down: each output
+       row is finished (and given its UI-62b round edge, row by row) as soon as all of its source
+       rows are in, so every row shown is final. Below the rows done: the picture showing (or the
+       page colour for a first one); the viewer redraws them 5 times a second (img_prog_rows),
+       and keeps showing the work buffer until the loop has copied the finished picture. The Sun's
+       PNG decoder reports rows (on_row); the JPEGs (Moon 2:1, Earth/region box filter, rows
+       finished per row of MCU blocks) are decoded by a short-lived "jpgdec" task on core 0 that
+       reads the download buffer as it fills (waiting at its end), started once the first bytes
+       are a JPEG (a 404 page never starts it); a failed download stops it. Older frames (UI-59d)
+       are not shown while loading. Host tests: the streamed result equals decoding at the end,
+       rows come top down and none changes after it is reported. Comp:
+       docs/comps/progressive_pictures.png.
 UI-59e Picture memory: one IMG_PX^2 RGB565 work buffer (img_work_buf) for every picture and
        older frame; img_work_owner (kind, WORK_BACK+kind, or -1) marks its pixels until the loop
        copies them, and the task waits for it to be free (up to 3 s) before decoding. The

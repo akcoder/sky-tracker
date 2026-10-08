@@ -367,20 +367,23 @@ inline const Region *region_for(double lat, double lon) {
 // UI-62b: the pictures float on the page: black sky becomes the page colour (0x070B18) and a
 // soft circular edge (smoothstep from r0 to r1, pixels from the centre) fades the square away.
 constexpr uint32_t PAGE_BG = 0x070B18;
-inline void round_mask(uint16_t *px, int n, float r0, float r1) {
+inline void round_mask_row(uint16_t *row, int y, int n, float r0, float r1) {  // one row of round_mask
   const float br = (PAGE_BG >> 16) & 0xFF, bg = (PAGE_BG >> 8) & 0xFF, bb = PAGE_BG & 0xFF, c = n / 2.0f;
+  for (int x = 0; x < n; x++) {
+    const float dx = x + 0.5f - c, dy = y + 0.5f - c, d = sqrtf(dx * dx + dy * dy);
+    float k = d <= r0 ? 1.0f : d >= r1 ? 0.0f : (r1 - d) / (r1 - r0);
+    k = k * k * (3 - 2 * k);
+    uint16_t &p = row[x];
+    const float r = std::max<float>((p >> 11) * 255 / 31, br), g = std::max<float>(((p >> 5) & 63) * 255 / 63, bg),
+                b = std::max<float>((p & 31) * 255 / 31, bb);
+    const int R = (int) (r * k + br * (1 - k) + 0.5f), G = (int) (g * k + bg * (1 - k) + 0.5f),
+              B = (int) (b * k + bb * (1 - k) + 0.5f);
+    p = (uint16_t) ((R >> 3) << 11 | (G >> 2) << 5 | (B >> 3));
+  }
+}
+inline void round_mask(uint16_t *px, int n, float r0, float r1) {
   for (int y = 0; y < n; y++)
-    for (int x = 0; x < n; x++) {
-      const float dx = x + 0.5f - c, dy = y + 0.5f - c, d = sqrtf(dx * dx + dy * dy);
-      float k = d <= r0 ? 1.0f : d >= r1 ? 0.0f : (r1 - d) / (r1 - r0);
-      k = k * k * (3 - 2 * k);
-      uint16_t &p = px[y * n + x];
-      const float r = std::max<float>((p >> 11) * 255 / 31, br), g = std::max<float>(((p >> 5) & 63) * 255 / 63, bg),
-                  b = std::max<float>((p & 31) * 255 / 31, bb);
-      const int R = (int) (r * k + br * (1 - k) + 0.5f), G = (int) (g * k + bg * (1 - k) + 0.5f),
-                B = (int) (b * k + bb * (1 - k) + 0.5f);
-      p = (uint16_t) ((R >> 3) << 11 | (G >> 2) << 5 | (B >> 3));
-    }
+    round_mask_row(px + (size_t) y * n, y, n, r0, r1);
 }
 constexpr int IMG_PX = 360;
 constexpr float SUN_CROP = 0.75f;  // SUVI's field is ~1.6 solar diameters: the middle 3/4 fills the view
@@ -401,6 +404,11 @@ struct ImageInfo {
 enum ImgStage : uint8_t { STG_IDLE, STG_LIST, STG_DOWNLOAD, STG_DECODE };
 inline volatile uint8_t img_stage = STG_IDLE, img_stage_kind = IMG_SUN;
 inline volatile int32_t img_bytes = 0, img_total = -1;  // -1: size not known (chunked)
+// UI-59f: the live pictures are shown as they arrive: rows of img_work_buf finished so far (-1:
+// not streaming one, img_stage_kind says which); the rows below hold the picture showing
+// (img_shown, set by the loop when it copies one)
+inline volatile int img_prog_rows = -1;
+inline const uint16_t *volatile img_shown[IMG_N] = {};
 inline volatile bool dl_track = false;                   // http_stream reports into img_bytes/img_total
 struct Pending {
   uint8_t fresh = 0;
@@ -2390,6 +2398,99 @@ inline const char *http_err(const HttpResult &r, const char *who, char *e, size_
     snprintf(e, n, r.status ? "download cut short" : "could not reach %s", who);
   return e;
 }
+// UI-59f: before a live picture streams in: the one showing (or the page colour) under it
+inline void img_prog_fill(uint16_t *work, int kind) {
+  if (const uint16_t *old = img_shown[kind])
+    memcpy(work, old, IMG_PX * IMG_PX * 2);
+  else
+    for (int i = 0; i < IMG_PX * IMG_PX; i++)
+      work[i] = (uint16_t) (((PAGE_BG >> 19) & 31) << 11 | ((PAGE_BG >> 10) & 63) << 5 | ((PAGE_BG >> 3) & 31));
+  img_prog_rows = 0;
+}
+// UI-59f: a JPEG (the Moon, the Earth, the region) decoded while it downloads: a short-lived
+// "jpgdec" task reads the buffer as it fills (waiting at its end), and each finished row gets
+// its round edge at once, so the rows shown are the final picture. The host tests decode once
+// the download is in (start() is not called there), through the same row code.
+struct JpgStream {
+  const uint8_t *jpg = nullptr;
+  uint16_t *work = nullptr, *acc = nullptr;
+  bool half = false;     // the Moon (2:1), else the box filter
+  float keep = 1.0f;     // decode_fit's keep
+  float r0 = 0, r1 = 0;  // round_mask radii (0: none)
+  bool show = false;     // report rows to the viewer (img_prog_rows)
+  volatile size_t have = 0;
+  volatile bool eof = false, done = false;
+  bool started = false;
+  const char *err = nullptr;
+  int w = 0, h = 0, masked = 0;
+  static void rows_cb(int upto, void *ctx) {
+    JpgStream *j = (JpgStream *) ctx;
+    for (; j->masked < upto; j->masked++)
+      if (j->r1 > 0)
+        round_mask_row(j->work + (size_t) j->masked * IMG_PX, j->masked, IMG_PX, j->r0, j->r1);
+    if (j->show)
+      img_prog_rows = upto;
+  }
+  void run(size_t len, bool streaming) {
+    skyjpg::Stream st;
+    if (streaming) {
+      st.have = &have;
+      st.eof = &eof;
+    }
+    st.rows = rows_cb;
+    st.ctx = this;
+    masked = 0;
+    err = half ? skyjpg::decode_half(jpg, len, work, IMG_PX, IMG_PX, &w, &h, &st)
+               : skyjpg::decode_fit(jpg, len, work, IMG_PX, IMG_PX, acc, &w, &h, keep, 0, false, &st);
+    done = true;
+  }
+#ifndef SAT_HOST_TEST
+  static void task(void *a) {
+    ((JpgStream *) a)->run(IMG_JPG_MAX, true);
+    vTaskDelete(nullptr);  // (nothing of the job is touched after done)
+  }
+  // the first bytes are in and look like a JPEG: decode alongside the rest of the download
+  void start() {
+    started = xTaskCreatePinnedToCore(task, "jpgdec", 6144, this, 1, nullptr, 0) == pdPASS;
+  }
+#else
+  void start() {}
+#endif
+  // the download is over: the decoder finishes (or, started, stops at the end of what came)
+  const char *finish(size_t n) {
+    eof = true;
+    if (!started) {
+      run(n, false);
+      return err;
+    }
+    while (!done)
+      vTaskDelay(pdMS_TO_TICKS(5));
+    return err;
+  }
+  void abandon() {  // a failed download: stop the decoder without using its result
+    eof = true;
+    while (started && !done)
+      vTaskDelay(pdMS_TO_TICKS(5));
+  }
+  void reset() {
+    jpg = nullptr;
+    work = acc = nullptr;
+    half = false;
+    keep = 1.0f;
+    r0 = r1 = 0;
+    show = false;
+    have = 0;
+    eof = done = false;
+    started = false;
+    err = nullptr;
+    w = h = masked = 0;
+  }
+  void feed(size_t n) {
+    have = n;
+    if (!started && !eof && n >= 4 && jpg[0] == 0xFF && jpg[1] == 0xD8)
+      start();
+  }
+};
 // UI-59: the newest frame of NOAA's SUVI 304 A animation, box-filtered to IMG_PX (SOHO EIT
 // from 4.5.31 to 4.5.36; SUVI again from 4.5.37, picked over SOHO and SDO)
 // before > 0 (UI-59d): the newest frame older than that instead (the < button)
@@ -2461,6 +2562,17 @@ inline const char *sun_image(ImageInfo &info, uint16_t *work, char *e, size_t en
       return nullptr;  // nothing newer (that shows the Sun) than what is showing
     if (!dec.begin(work, IMG_PX, IMG_PX, SUN_CROP))
       return dec.error;
+    // UI-59f: each row gets its round edge as it is finished, so what shows during the download
+    // is the final picture; below the rows done, the one showing (or the page colour)
+    if (before == 0) {
+      img_prog_fill(work, IMG_SUN);
+    }
+    dec.on_row = [](uint16_t *row, int y, void *ctx) {
+      round_mask_row(row, y, IMG_PX, 158, 178);  // UI-62b: the glow fades out, prominences kept
+      if (ctx)
+        img_prog_rows = y + 1;
+    };
+    dec.row_ctx = before == 0 ? (void *) 1 : nullptr;
     img_stage = STG_DOWNLOAD;
     dl_track = true;
     bool small = false, stop = false;
@@ -2502,8 +2614,7 @@ inline const char *sun_image(ImageInfo &info, uint16_t *work, char *e, size_t en
     }
     ESP_LOGI(TAG, "Sun image %s (%ld bytes, %ux%u)%s", info.src, r.bytes, (unsigned) dec.W, (unsigned) dec.H,
              dark_seen ? " (newer frames dark: the satellite is in Earth's shadow)" : "");
-    round_mask(work, IMG_PX, 158, 178);  // UI-62b: the glow fades out, prominences kept
-    if (before == 0)
+    if (before == 0)  // (the round edge went on row by row: UI-59f)
       img_have[IMG_SUN] = obs;
     info.shadow = before == 0 && t > 0;
     info.fresh = true;
@@ -2559,6 +2670,14 @@ inline const char *moon_image(ImageInfo &info, uint16_t *work, double now, char 
     return "out of memory";
   size_t n = 0;
   bool big = false;
+  JpgStream js;  // UI-59f: decoded as it arrives
+  js.jpg = jpg;
+  js.work = work;
+  js.half = true;
+  js.r0 = 166, js.r1 = 180;  // UI-62b
+  js.show = before == 0;
+  if (js.show)
+    img_prog_fill(work, IMG_MOON);
   img_stage = STG_DOWNLOAD;
   dl_track = true;
   const HttpResult r = http_stream(url, "Moon image", [&](const char *dd, int k) {
@@ -2568,18 +2687,18 @@ inline const char *moon_image(ImageInfo &info, uint16_t *work, double now, char 
     }
     memcpy(jpg + n, dd, k);
     n += k;
+    js.feed(n);
   });
   dl_track = false;
-  if (!r.ok)
-    return http_err(r, "NASA", e, en);
-  if (big)
-    return "picture larger than expected";
+  if (!r.ok || big) {
+    js.abandon();
+    return !r.ok ? http_err(r, "NASA", e, en) : "picture larger than expected";
+  }
   img_stage = STG_DECODE;
-  int w = 0, h = 0;
-  if (const char *de = skyjpg::decode_half(jpg, n, work, IMG_PX, IMG_PX, &w, &h))
+  if (const char *de = js.finish(n))
     return de;
-  ESP_LOGI(TAG, "Moon image (%u bytes, %dx%d, %.0f%% lit)", (unsigned) n, w, h, info.phase);
-  round_mask(work, IMG_PX, 166, 180);  // UI-62b
+  ESP_LOGI(TAG, "Moon image (%u bytes, %dx%d, %.0f%% lit)%s", (unsigned) n, js.w, js.h, info.phase,
+           js.started ? ", decoded as it came" : "");
   if (before == 0)
     img_have[IMG_MOON] = key;
   info.fresh = true;
@@ -2618,6 +2737,7 @@ inline const char *earth_image(ImageInfo &info, uint16_t *work, char *e, size_t 
   HttpResult r;
   double obs = 0;
   bool fresh_retry = false;
+  JpgStream js;
   for (int i = 0; i < steps; i++) {
     const double t = start - 600.0 * i;
     const double key = t + (west ? 0.5 : 0);
@@ -2635,6 +2755,16 @@ inline const char *earth_image(ImageInfo &info, uint16_t *work, char *e, size_t 
                sat, stamp, sat);
     n = 0;
     bool big = false;
+    js.reset();  // UI-59f: decoded as it arrives
+    js.jpg = jpg;
+    js.work = work;
+    js.acc = acc;
+    js.keep = rg ? 0.965f : 1.0f;  // the regional frames: NOAA's label strip (the bottom ~3%) cropped off
+    if (!rg)
+      js.r0 = 176, js.r1 = 180;  // UI-62b: a crisp limb, the corner label gone
+    js.show = before == 0;
+    if (js.show)
+      img_prog_fill(work, kind);
     img_stage = STG_DOWNLOAD;
     dl_track = true;
     r = http_stream(url, regional ? "Region image" : "Earth image", [&](const char *d, int k) {
@@ -2644,8 +2774,11 @@ inline const char *earth_image(ImageInfo &info, uint16_t *work, char *e, size_t 
       }
       memcpy(jpg + n, d, k);
       n += k;
+      js.feed(n);  // (a 404 page is not a JPEG: the decoder never starts on one)
     });
     dl_track = false;
+    if (!r.ok || big)
+      js.abandon();
     if (r.status == 404)
       continue;  // not there (yet): ten minutes earlier
     if (!r.ok)
@@ -2671,13 +2804,10 @@ inline const char *earth_image(ImageInfo &info, uint16_t *work, char *e, size_t 
     return before > 0 ? "no older picture at NOAA" : "no recent picture at NOAA";
   info.obs = obs;
   img_stage = STG_DECODE;
-  int w = 0, h = 0;
-  // the regional frames: NOAA's label strip (the bottom ~3%) cropped off
-  if (const char *de = skyjpg::decode_fit(jpg, n, work, IMG_PX, IMG_PX, acc, &w, &h, rg ? 0.965f : 1.0f))
+  if (const char *de = js.finish(n))
     return de;
-  ESP_LOGI(TAG, "%s image %s (%u bytes, %dx%d)", rg ? rg->name : "Earth", info.src, (unsigned) n, w, h);
-  if (!rg)
-    round_mask(work, IMG_PX, 176, 180);  // UI-62b: a crisp limb, the corner label gone
+  ESP_LOGI(TAG, "%s image %s (%u bytes, %dx%d)%s", rg ? rg->name : "Earth", info.src, (unsigned) n, js.w, js.h,
+           js.started ? ", decoded as it came" : "");
   if (before == 0)
     img_have[kind] = obs + (west ? 0.5 : 0);
   info.fresh = true;
@@ -2772,6 +2902,7 @@ inline void do_image(uint8_t kind) {
                     : kind == IMG_PLANET      ? planet_image(info, work, e, sizeof(e))
                                               : earth_image(info, work, e, sizeof(e), kind == IMG_REGION);
   img_stage = STG_IDLE;
+  img_prog_rows = -1;
   if (err && !strcmp(err, "out of memory"))
     ESP_LOGW(TAG, "picture %u: out of memory (PSRAM free %u KB)", (unsigned) kind,
              (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));  // no heap walk (FAIL-9)
@@ -3570,6 +3701,7 @@ inline uint8_t drain() {
         if (live.img_px[k]) {
           memcpy(live.img_px[k], net::img_work_buf, net::IMG_PX * net::IMG_PX * 2);
           live.img_new[k] = true;
+          net::img_shown[k] = live.img_px[k];  // UI-59f: under the next one as it arrives
         }
         net::img_work_owner = -1;
       }

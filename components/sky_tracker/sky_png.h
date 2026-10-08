@@ -28,6 +28,9 @@ struct Decoder {
   uint32_t W = 0, H = 0;
   bool done = false;  // IEND seen and every row decoded
   const char *error = nullptr;
+  // called with each output row as it is finished (UI-59f: progressive display); kept by begin()
+  void (*on_row)(uint16_t *row, int y, void *ctx) = nullptr;
+  void *row_ctx = nullptr;
 
   ~Decoder() { release(); }
 
@@ -370,6 +373,8 @@ struct Decoder {
       o[x] = (uint16_t) ((r >> 3) << 11 | (g >> 2) << 5 | (b >> 3));
       q[0] = q[1] = q[2] = q[3] = 0;
     }
+    if (on_row)
+      on_row(o, acc_ty_, row_ctx);
     acc_ty_ = -1;
   }
 };

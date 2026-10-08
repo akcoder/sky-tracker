@@ -29,19 +29,39 @@ namespace skyjpg_rom {  // the ROM header's short type names (BYTE, WORD, ...) s
 typedef UINT in_len_t;
 typedef UINT out_ret_t;
 }  // namespace skyjpg_rom
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #endif
 
 namespace skyjpg {
+
+// UI-59f: decoding while the file downloads. `have` counts the bytes in so far (the reader
+// waits for more until `eof`); `rows` is told how many output rows are finished, top down.
+struct Stream {
+  volatile size_t *have = nullptr;
+  volatile bool *eof = nullptr;
+  void (*rows)(int done, void *ctx) = nullptr;
+  void *ctx = nullptr;
+};
 
 struct Src {
   const uint8_t *p;
   size_t len, pos;
   uint16_t *dst;
   int tw, th, offx, offy;
+  const Stream *st = nullptr;
 };
 
 inline skyjpg_rom::in_len_t jpg_in(skyjpg_rom::JDEC *jd, uint8_t *buf, skyjpg_rom::in_len_t n) {
   Src *s = (Src *) jd->device;
+  if (s->st && s->st->have) {  // wait for the download to bring these bytes (or end)
+    while (s->pos + n > *s->st->have && !*s->st->eof) {
+#ifndef SAT_HOST_TEST
+      vTaskDelay(pdMS_TO_TICKS(5));
+#endif
+    }
+    s->len = *s->st->have;
+  }
   const size_t k = n < s->len - s->pos ? (size_t) n : s->len - s->pos;
   if (buf)
     memcpy(buf, s->p + s->pos, k);
@@ -69,14 +89,16 @@ inline skyjpg_rom::out_ret_t jpg_out(skyjpg_rom::JDEC *jd, void *bitmap, skyjpg_
       o[tx] = (uint16_t) ((R >> 3) << 11 | (G >> 2) << 5 | (B >> 3));
     }
   }
+  if (s->st && s->st->rows && r->right + 1 >= (int) jd->width)  // the end of a row of blocks
+    s->st->rows(std::max(0, std::min(s->th, (r->bottom + 1) / 2 - s->offy)), s->st->ctx);
   return 1;
 }
 
 // Returns nullptr on success, else a short reason. `sw`/`sh`: the source size.
 inline const char *decode_half(const uint8_t *jpg, size_t len, uint16_t *dst, int tw, int th, int *sw = nullptr,
-                               int *sh = nullptr) {
+                               int *sh = nullptr, const Stream *st = nullptr) {
   static uint8_t pool[4096] __attribute__((aligned(4)));  // TJpgDec work area (~3.1 KB needed)
-  Src s{jpg, len, 0, dst, tw, th, 0, 0};
+  Src s{jpg, len, 0, dst, tw, th, 0, 0, st};
   skyjpg_rom::JDEC jd;
   memset(&jd, 0, sizeof(jd));
   skyjpg_rom::JRESULT r = skyjpg_rom::jd_prepare(&jd, jpg_in, pool, sizeof(pool), &s);
@@ -90,9 +112,10 @@ inline const char *decode_half(const uint8_t *jpg, size_t len, uint16_t *dst, in
   if (hw < tw || hh < th)
     return "picture smaller than expected";
   s.offx = (hw - tw) / 2;
-  s.offy = (hh - th) / 2;
-  memset(dst, 0, sizeof(uint16_t) * tw * th);
+  s.offy = (hh - th) / 2;  // (every target pixel is written: the picture is at least the target)
   r = skyjpg_rom::jd_decomp(&jd, jpg_out, 0);
+  if (r == 0 && st && st->rows)
+    st->rows(th, st->ctx);
   return r == 0 ? nullptr : "corrupt JPEG data";
 }
 
@@ -102,7 +125,18 @@ struct Fit {
   uint16_t *dst, *acc;
   int tw, th, W, H;
   uint16_t *xm, *ym;  // source column / row -> target
+  int stride = 0, next = 0;  // UI-59f: rows below `next` are finished (written to dst)
 };
+inline uint8_t fit_cx[1024], fit_cy[1024];  // source pixels per target column / row
+inline uint16_t fit_last[1024];             // the last source row of each target row
+inline void fit_row(Fit *f, int y) {  // one target row: the sums averaged into dst
+  for (int x = 0; x < f->tw; x++) {
+    const uint16_t *a = f->acc + ((size_t) y * f->tw + x) * 3;
+    const unsigned n = fit_cx[x] * fit_cy[y], h2 = n / 2;
+    const unsigned R = (a[0] + h2) / n, G = (a[1] + h2) / n, B = (a[2] + h2) / n;
+    f->dst[(size_t) y * (f->stride > 0 ? f->stride : f->tw) + x] = (uint16_t) ((R >> 3) << 11 | (G >> 2) << 5 | (B >> 3));
+  }
+}
 inline skyjpg_rom::out_ret_t fit_out(skyjpg_rom::JDEC *jd, void *bitmap, skyjpg_rom::JRECT *r) {
   Src *s = (Src *) jd->device;
   Fit *f = (Fit *) s->dst;  // (reused pointer: the Fit rides in Src.dst)
@@ -120,6 +154,13 @@ inline skyjpg_rom::out_ret_t fit_out(skyjpg_rom::JDEC *jd, void *bitmap, skyjpg_
       a[0] += px[0], a[1] += px[1], a[2] += px[2];
     }
   }
+  if (r->right + 1 >= f->W) {  // the end of a row of blocks: the target rows now complete
+    const int before = f->next;
+    while (f->next < f->th && fit_last[f->next] <= r->bottom)
+      fit_row(f, f->next++);
+    if (s->st && s->st->rows && f->next != before)
+      s->st->rows(f->next, s->st->ctx);
+  }
   return 1;
 }
 // `keep`: the fraction of the height kept from the top, centred square window (UI-62a: NOAA's
@@ -127,11 +168,12 @@ inline skyjpg_rom::out_ret_t fit_out(skyjpg_rom::JDEC *jd, void *bitmap, skyjpg_
 // `stride`: pixels per destination row (0 = tw), to decode into part of a larger picture.
 inline const char *decode_fit(const uint8_t *jpg, size_t len, uint16_t *dst, int tw, int th, uint16_t *acc,
                               int *sw = nullptr, int *sh = nullptr, float keep = 1.0f, int stride = 0,
-                              bool centre = false) {  // centre: the kept square in the middle (SOHO's Sun)
+                              bool centre = false,  // centre: the kept square in the middle (SOHO's Sun)
+                              const Stream *st = nullptr) {
   static uint8_t pool[4096] __attribute__((aligned(4)));
   static uint16_t xm[2048], ym[2048];
   static Fit f;
-  Src s{jpg, len, 0, (uint16_t *) &f, tw, th, 0, 0};
+  Src s{jpg, len, 0, (uint16_t *) &f, tw, th, 0, 0, st};
   skyjpg_rom::JDEC jd;
   memset(&jd, 0, sizeof(jd));
   if (skyjpg_rom::jd_prepare(&jd, jpg_in, pool, sizeof(pool), &s) != 0)
@@ -145,9 +187,10 @@ inline const char *decode_fit(const uint8_t *jpg, size_t len, uint16_t *dst, int
   const int x0 = (W - ww) / 2, y0 = centre ? (H - wh) / 2 : 0;
   if (ww < tw || wh < th || W > 2048 || H > 2048 || ww >= 2 * tw || wh >= 2 * th)
     return "unexpected picture size";
-  static uint8_t cx[1024], cy[1024];  // source pixels per target column / row
-  memset(cx, 0, sizeof(cx));
-  memset(cy, 0, sizeof(cy));
+  uint8_t *cx = fit_cx, *cy = fit_cy;
+  memset(fit_cx, 0, sizeof(fit_cx));
+  memset(fit_cy, 0, sizeof(fit_cy));
+  memset(fit_last, 0, sizeof(fit_last));
   for (int x = 0; x < W; x++)
     xm[x] = x < x0 || x >= x0 + ww ? 0xFFFF : (uint16_t) ((int64_t) (x - x0) * tw / ww);
   for (int y = 0; y < H; y++)
@@ -156,19 +199,18 @@ inline const char *decode_fit(const uint8_t *jpg, size_t len, uint16_t *dst, int
     if (xm[x] != 0xFFFF)
       cx[xm[x]]++;
   for (int y = 0; y < H; y++)
-    if (ym[y] != 0xFFFF)
+    if (ym[y] != 0xFFFF) {
       cy[ym[y]]++;
-  f = Fit{dst, acc, tw, th, W, H, xm, ym};
+      fit_last[ym[y]] = (uint16_t) y;
+    }
+  f = Fit{dst, acc, tw, th, W, H, xm, ym, stride, 0};
   memset(acc, 0, sizeof(uint16_t) * 3 * tw * th);
   if (skyjpg_rom::jd_decomp(&jd, fit_out, 0) != 0)
     return "corrupt JPEG data";
-  for (int y = 0; y < th; y++)
-    for (int x = 0; x < tw; x++) {
-      const uint16_t *a = acc + ((size_t) y * tw + x) * 3;
-      const unsigned n = cx[x] * cy[y], h2 = n / 2;
-      const unsigned R = (a[0] + h2) / n, G = (a[1] + h2) / n, B = (a[2] + h2) / n;
-      dst[(size_t) y * (stride > 0 ? stride : tw) + x] = (uint16_t) ((R >> 3) << 11 | (G >> 2) << 5 | (B >> 3));
-    }
+  while (f.next < th)  // (normally all done by the last row of blocks)
+    fit_row(&f, f.next++);
+  if (st && st->rows)
+    st->rows(th, st->ctx);
   return nullptr;
 }
 
