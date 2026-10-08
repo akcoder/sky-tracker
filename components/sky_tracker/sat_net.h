@@ -2430,6 +2430,10 @@ struct JpgStream {
         round_mask_row(j->work + (size_t) j->masked * IMG_PX, j->masked, IMG_PX, j->r0, j->r1);
     if (j->show)
       img_prog_rows = upto;
+#ifndef SAT_HOST_TEST
+    if (j->started)
+      vTaskDelay(1);  // PERF-15a: a breath per row of blocks for the PSRAM bus
+#endif
   }
   void run(size_t len, bool streaming) {
     skyjpg::Stream st;

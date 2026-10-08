@@ -1,7 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.29 (queued): the web page has an Alerts section with all the alert switches (NET-6a). Comets moves under Stations in the Alerts tab (UI-41j). A shooting star crosses the About page's logo now and then, burning out at the end (UI-67a). The Sun, Moon, Earth and region pictures appear top down as they download, already round-edged, over the picture before (UI-59f).
+- 4.6.30 (queued): lighter on the PSRAM bus the panel refills from, after the display lost sync with 4.6.29 (PERF-15a): the astro task works in small pieces with rests, and a streaming picture redraws only its new rows.
+- 4.6.29: the web page has an Alerts section with all the alert switches (NET-6a). Comets moves under Stations in the Alerts tab (UI-41j). A shooting star crosses the About page's logo now and then, burning out at the end (UI-67a). The Sun, Moon, Earth and region pictures appear top down as they download, already round-edged, over the picture before (UI-59f).
 - 4.6.28: The map no longer stalls after the boot launch or every few seconds: the alignment, eclipse and Milky Way work runs on the other core (PERF-15). Alerts tab in two columns, sky and spaceflight (UI-41j); new Solar switch for solar eclipses, solstices and equinoxes (UI-41k).
 - 4.6.27: the screen lights at power-on with the boot screen (~2.4 s, was ~6.6 s): the backlight is switched on as the boot screen is drawn (BOOT-2). Start-up ends ~4 s sooner and Wi-Fi connects sooner: the satellite markers are made after start-up, a few at a time (BOOT-3). Two-line alerts clear the sky disc: the text sits 4 px higher with its lines 3 px closer, and the disc is 4 px lower (UI-41i).
 - 4.6.26: after a minute untouched, any open screen closes and the map returns (UI-72). At power-on the boot screen shows the logo and "Loading" before the slow start-up, then the Wi-Fi status (BOOT-2). The screen comes up ~2.7 s sooner: the animation pictures are drawn after the display starts, 10 ms at a time, and the boot launch plays when they are ready (UI-69n). A tap on an alert's icon opens the alert too (the picture icon took the tap). The splashdown's sea rises into view, and each splashdown lands in its own spot with its own sway and chute drift (UI-69m).
@@ -1244,6 +1245,12 @@ PERF-15 The look-aheads run in an "astro" task on core 0 at priority 1, not in t
        the Moon's series too. Measured: the map's tick ~1.2 s after the boot launch and ~300 ms
        every 2 s for 2 minutes an hour (alignments) and a few minutes a day (eclipses), 370 ms
        every 2 minutes (Milky Way); now (see the 4.6.27 change line).
+PERF-15a The astro task never holds the PSRAM bus long (the panel lost sync after ~11 h on
+       4.6.29, with the astro task and picture streaming the new load): alignments 6 half hours
+       a step (~15 ms) then a 15 ms rest; an eclipse step (~85 ms) then 90 ms; the Milky Way an
+       8 ms rest every 16 rows. A streaming picture (UI-59f) redraws only the band of rows new
+       since the last redraw, 4 times a second (was the whole 360 px picture 5 times); the
+       jpgdec task rests a tick per row of blocks.
 PERF-14 Status-line changes are drawn behind the scan: the panel's vsync interrupt (an
        esp_lcd RGB panel callback; ESPHome's mipi_rgb registers none) times each frame, and
        when the status text changes draw_hud waits (at most one frame) until the scan and its

@@ -1736,6 +1736,35 @@ int main() {
         save565(b, OUT_DIR "/renders/r19_prog_sun_3.ppm");
       }
     }
+    {  // UI-59f / PERF-15a: the viewer shows the work buffer as it streams, redrawing just the new rows
+      namespace net = sat::net;
+      constexpr int N = net::IMG_PX;
+      uint16_t *wb = net::img_work_buf;
+      static uint16_t own[N * N];
+      if (!wb) wb = net::img_work_buf = own;
+      for (int i = 0; i < N * N; i++) wb[i] = 0x001F;  // the picture before: blue
+      net::img_stage_kind = IMG_SUN;
+      net::img_stage = net::STG_DOWNLOAD;
+      net::img_prog_rows = 1;
+      sat::img_req[IMG_SUN].asked = true;
+      sat::img_req[IMG_SUN].seq = sat::live.img[IMG_SUN].seq;  // loading
+      sat::img_view_update(sat_host_now);
+      lv_obj_invalidate(lv_screen_active());
+      lv_refr_now(disp);
+      for (int y = 0; y < 200; y++) for (int x = 0; x < N; x++) wb[y * N + x] = 0xF800;  // 199 new rows: red
+      net::img_prog_rows = 200;
+      sat::img_view_update(sat_host_now);
+      lv_refr_now(disp);  // (no full invalidation: only what the viewer asked for)
+      lv_area_t a;
+      lv_obj_get_coords(sat::sv.img, &a);
+      auto px = [&](int x, int y) { const uint16_t c = fb[(a.y1 + y) * 480 + a.x1 + x]; return (uint16_t) ((c >> 8) | (c << 8)); };
+      CHECK(sat::sv.dsc_px == wb && px(180, 100) == 0xF800 && px(180, 300) == 0x001F,
+            "streaming: new rows drawn (%04x), the rest still the old picture (%04x)", px(180, 100), px(180, 300));
+      net::img_stage = net::STG_IDLE;
+      net::img_prog_rows = -1;
+      sat::img_req[IMG_SUN].asked = false;
+      if (net::img_work_buf == own) net::img_work_buf = nullptr;
+    }
     // an update in progress: the caption says so
     hold_loading(IMG_SUN, sat::net::STG_DOWNLOAD, 30 * 1024, 70 * 1024);
     sat::img_view_update(sat_host_now);

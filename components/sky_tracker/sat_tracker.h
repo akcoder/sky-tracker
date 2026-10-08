@@ -40,6 +40,8 @@
 #include "esphome/components/mipi_rgb/mipi_rgb.h"
 #endif
 
+extern "C" void lv_image_cache_drop(const void *src);  // (not in the public lvgl.h of this release)
+
 namespace sat {
 
 // ================================================================== PERF-14 scan-synced updates
@@ -1477,6 +1479,13 @@ inline float star_dec(const sky::Star &s) { return s.dec * (90.0f / 32767.0f); }
 // Faded towards the horizon (to a quarter at 0°, full above 15°), as the eye sees it.
 constexpr int MW_LV = 5;  // shades above none
 constexpr uint8_t MW_W[MW_LV + 1] = {0, 18, 30, 42, 56, 72};  // of C_MW over SKY_BG, per shade
+// PERF-15a: a short rest between pieces of long work (on the device only the astro task builds
+// the Milky Way; on the host it runs in the tick, unrested)
+inline void astro_rest() {
+#ifndef SAT_HOST_TEST
+  vTaskDelay(pdMS_TO_TICKS(8));
+#endif
+}
 inline void mw_prepare() {
   const Config &c = config();
   const int n = ui.size / 2;
@@ -1489,6 +1498,8 @@ inline void mw_prepare() {
   ui.mw_cells.resize((size_t) n * n);
   const float sl = sinf((float) c.lat * geo::DEG), cl = cosf((float) c.lat * geo::DEG);
   for (int by = 0; by < n; by++) {
+    if ((by & 15) == 15)
+      astro_rest();  // PERF-15a
     for (int bx = 0; bx < n; bx++) {
       Ui::MwCell &m = ui.mw_cells[(size_t) by * n + bx];
       const float dx = bx * 2 + 1.0f - ui.cx, dy = by * 2 + 1.0f - ui.cy, r = sqrtf(dx * dx + dy * dy);
@@ -1525,6 +1536,8 @@ inline void mw_build(float lst_deg, pvector<Ui::MwSpan> &spans, pvector<uint32_t
   spans.clear();
   band.resize((size_t) n + 1);
   for (int by = 0; by < n; by++) {
+    if ((by & 15) == 15)
+      astro_rest();  // PERF-15a
     band[by] = (uint32_t) spans.size();
     int run_x = -1, run_l = 0;
     for (int bx = 0; bx <= n; bx++) {
@@ -3034,14 +3047,15 @@ struct AlignEv {
 struct AlignScan {
   bool running = false;
   double t0 = 0, next = 0;
-  int day = 0;
+  int day = 0, k = 0;  // the day, and the half hour of it next
   AlignEv c, p;
 };
 inline AlignScan align_scan;
 inline AlignEv conj_ev, parade_ev;  // the UI's
 inline AlignEv conj_out, parade_out;  // PERF-15: from the astro task, taken by astro_collect
 inline std::atomic<bool> align_ready{false};
-inline void align_step(double t) {
+// `per`: half hours sampled this call (PERF-15a: the astro task takes a few at a time)
+inline void align_step(double t, int per = 48) {
   if (!clock_valid())
     return;
   AlignScan &S = align_scan;
@@ -3053,10 +3067,8 @@ inline void align_step(double t) {
     S.t0 = floor(t / 1800) * 1800;
   }
   const Config &c = config();
-  const double lst0 = 0;
-  (void) lst0;
-  for (int k = 0; k < 48; k++) {
-    const double ts = S.t0 + S.day * 86400.0 + k * 1800.0;
+  for (const int end = std::min(48, S.k + per); S.k < end; S.k++) {
+    const double ts = S.t0 + S.day * 86400.0 + S.k * 1800.0;
     const double j = astro::jd(ts);
     const double lst = astro::rad(astro::wrap360(astro::gmst_deg(j) + c.lon));
     if (astro::horizontal(astro::sun(j), c.lat, lst).el > DUSK_SUN_EL)
@@ -3092,6 +3104,9 @@ inline void align_step(double t) {
         }
       }
   }
+  if (S.k < 48)
+    return;  // the rest of this day next call
+  S.k = 0;
   if (++S.day >= ALIGN_DAYS) {
     S.running = false;
     S.next = t + 3600;
@@ -3382,8 +3397,14 @@ inline void astro_task(void *) {
     if (!ui.ready || !clock_valid())
       continue;
     const double t = clock_now();
-    align_step(t);
+    // PERF-15a: small pieces with rests between, so the PSRAM bus the panel refills from is
+    // never held long (6 half hours ~15 ms; an eclipse step ~85 ms, then as long a rest)
+    const bool aligning = align_scan.running;
+    align_step(t, 6);
+    const bool ecl = !sev.scan_done;
     eclipse_step(t);
+    if (aligning || ecl)
+      vTaskDelay(pdMS_TO_TICKS(ecl ? 90 : 15));
   }
 }
 inline void astro_start() {
@@ -5580,7 +5601,7 @@ inline bool img_streaming(int k) {
           (net::img_stage_kind == k && (net::img_stage == net::STG_DOWNLOAD || net::img_stage == net::STG_DECODE) &&
            net::img_prog_rows > 0));
 }
-inline void img_prog_timer_cb(lv_timer_t *) {  // UI-59f: new rows shown 5 times a second
+inline void img_prog_timer_cb(lv_timer_t *) {  // UI-59f: new rows shown 4 times a second
   if (sv.root && sv.kind < VIEW_PLANET && !sv.show_prev && img_streaming(sv.kind))
     img_view_update(clock_now());
 }
@@ -5603,10 +5624,22 @@ inline void img_view_update(double t) {
   const bool streaming = !before && img_streaming(k);  // UI-59f: the picture as it arrives
   uint16_t *px = streaming ? net::img_work_buf : before ? live.img_prev_px[k] : live.img_px[k];
   const bool have = px != nullptr;  // a picture has been decoded (it stays until a newer one)
+  // PERF-15a: while it streams in, only the band of rows new since the last redraw is redrawn
   static int prog_rows = -2;
-  const bool prog_new = streaming && net::img_prog_rows != prog_rows;
-  prog_rows = streaming ? net::img_prog_rows : -2;
-  img_show(px, prog_new || (before ? live.img_prev_new[k] : live.img_new[k]) || sv.dsc_px != px);
+  const int rows_now = streaming ? net::img_prog_rows : -2;
+  if (streaming && sv.dsc_px == px && prog_rows >= 0 && rows_now > prog_rows && sv.img) {
+    lv_image_cache_drop(&sv.dsc[sv.cur]);
+    lv_area_t a;
+    lv_obj_get_coords(sv.img, &a);
+    const lv_area_t band = {a.x1, a.y1 + prog_rows, a.x2, a.y1 + rows_now - 1};
+    lv_obj_invalidate_area(sv.img, &band);
+    prog_rows = rows_now;
+    img_show(px, false);
+  } else {
+    if (rows_now >= 0 || !streaming)
+      prog_rows = rows_now;
+    img_show(px, (before ? live.img_prev_new[k] : live.img_new[k]) || sv.dsc_px != px);
+  }
   (before ? live.img_prev_new[k] : live.img_new[k]) = false;
   img_flip_state(live_kind, fetching);
   // message and bar (only until the first picture; later updates show in the caption)
@@ -6348,7 +6381,7 @@ inline void setup(const Config &cfg, const Widgets &w) {
   pools_work(INT64_MAX);
 #else
   lv_timer_create(pools_timer_cb, 10, nullptr);  // BOOT-3
-  lv_timer_create(img_prog_timer_cb, 200, nullptr);  // UI-59f
+  lv_timer_create(img_prog_timer_cb, 250, nullptr);  // UI-59f
   astro_start();                                 // PERF-15
 #endif
   const double t = clock_now();
