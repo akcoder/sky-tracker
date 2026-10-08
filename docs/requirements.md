@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.32 (queued): every glyph checked: "~" (the re-entry times, "in ~5h") was missing from the fonts and drew as a box; added. Text from the feeds (launch, pad, event, comet names) is folded to what the fonts hold (UI-78).
+- 4.6.32 (queued): every glyph checked: "~" (the re-entry times, "in ~5h") was missing from the fonts and drew as a box; added. Text from the feeds (launch, pad, event, comet names) is folded to what the fonts hold (UI-78). The update prompt shows the release notes (UI-68c).
 - 4.6.31: the picture viewer's < and > buttons (the picture before, earlier frames) are gone; the latest picture only (UI-59c). Frees a 259 KB picture buffer. New: space weather alerts from NOAA (UI-73), re-entry alerts (UI-74), the UAF Poker Flat all-sky camera as a picture tab and from the aurora cards (UI-75), a full-screen launch countdown from T-10 min (UI-76), and "On this day" in space history (UI-77). The Alerts tab gains Space wx, This day, Re-entry and Countdown.
 - 4.6.30: the display can no longer stay shifted 10 rows with noise: the frame-start bug in the display driver is put right every frame (PERF-16; Display Resyncs counts it). Lighter on the PSRAM bus the panel refills from (PERF-15a): the astro task works in small pieces with rests, and a streaming picture redraws only its new rows. Last Crash shows the firmware and when (FAIL-10a; older records are dropped).
 - 4.6.29: the web page has an Alerts section with all the alert switches (NET-6a). Comets moves under Stations in the Alerts tab (UI-41j). A shooting star crosses the About page's logo now and then, burning out at the end (UI-67a). The Sun, Moon, Earth and region pictures appear top down as they download, already round-edged, over the picture before (UI-59f).
@@ -669,6 +669,12 @@ UI-41j The Alerts tab in two columns of seven: the sky on the left (Aurora, Plan
        Lunar, Solar, Space wx, This day), spaceflight and comets on the right (Launch, Dockings,
        Splashdowns, Stations, Comets, Re-entry, Countdown); the web Alerts section follows the same order (NET-6a); rows
        44 px apart from y 20; the planets' alignment picture at (130, 62).
+UI-68c The "Update available" prompt shows the release's notes: the manifest's ota.summary (the
+       GitHub release text, which the release workflow copies in), read from ESPHome's update
+       entity (update_info.summary). The card grows to 440x440 with the notes in a 400x244 box that
+       scrolls (mono12), the buttons below it; Markdown's * ` and # marks are dropped, runs of blank
+       lines squeezed, the text folded to the fonts (UI-78), at most ~1.5 KB. Without notes the
+       card is as before. The other prompts (checking, up to date, installing) keep the short card.
 UI-73  Space weather (NOAA SWPC products/alerts.json, ~40 KB, every 30 min; net::do_swx): the
        newest current notice of each kind: geomagnetic storm watches (WATA: the forecast day with
        the highest G level, shown until that UTC day ends), storm alerts (ALTK, Kp 5 up, 4 h) and

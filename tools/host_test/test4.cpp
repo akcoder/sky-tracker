@@ -2105,8 +2105,23 @@ int main() {
     lv_obj_invalidate(page1);
     lv_refr_now(disp);
     save_ppm(OUT_DIR "/renders/r15_update_icon.ppm");
+    // UI-68c: the release's notes, as GitHub's manifest carries them (Markdown, curly quotes)
+    up::host.summary = "## New\n- **Launch countdown**: a full-screen T-minus clock from 10 minutes out, with GO/HOLD and a "
+                       "\xE2\x80\x9Cwebcast live\xE2\x80\x9D badge\n- Space weather alerts from NOAA: storm watches, storms, "
+                       "big flares\n- Re-entry alerts: rocket stages and satellites about to come down\n- All-sky camera: "
+                       "the University of Alaska\xE2\x80\x99s Poker Flat camera\n- On this day: a moment from space history\n\n\n"
+                       "## Fixed\n- The display can no longer stay shifted down 10 rows (`Display Resyncs` counts it)\n"
+                       "- No more pauses on the map\n\nFaster\n- The screen lights at about 2.4 s (was about 7 s)";
     up::offer_now();  // the icon tapped
     CHECK(up::ui_.mode == up::M_AVAILABLE && strstr(lv_label_get_text(up::ui_.l1), "4.6.1"), "icon opens the prompt");
+    {
+      const char *nt = lv_label_get_text(up::ui_.notes_lbl);
+      printf("update notes:\n%s\n", nt);
+      CHECK(!lv_obj_has_flag(up::ui_.notes, LV_OBJ_FLAG_HIDDEN) && strstr(nt, "New\n- Launch countdown: a full-screen") &&
+                !strchr(nt, '*') && !strchr(nt, '`') && !strchr(nt, '#') && strstr(nt, "\"webcast live\"") &&
+                strstr(nt, "Alaska's") && !strstr(nt, "\n\n\n"),
+            "update prompt shows the release notes, cleaned");
+    }
     lv_refr_now(disp);
     save_ppm(OUT_DIR "/renders/r13_update.ppm");
     lv_obj_send_event(up::ui_.btn[0], LV_EVENT_CLICKED, nullptr);  // Not now

@@ -32,9 +32,11 @@ void ota_end(bool ok);
 }  // namespace upd
 }  // namespace sat
 #else
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
+#include <vector>
 #ifndef SAT_HOST_TEST
 #include "esphome/components/update/update_entity.h"
 #endif
@@ -50,7 +52,7 @@ enum Mode : uint8_t { M_NONE = 0, M_CHECKING, M_LATEST, M_AVAILABLE, M_INSTALLIN
 // host stand-in for ESPHome's entity: the tests set state/info and count calls
 struct HostUpdate {
   int state = 0;  // 0 unknown, 1 no update, 2 available, 3 installing
-  std::string latest, current;
+  std::string latest, current, summary;
   bool has_progress = false;
   float progress = 0;
   int checks = 0, performs = 0;
@@ -59,6 +61,7 @@ inline HostUpdate host;
 inline int st() { return host.state; }
 inline std::string latest() { return host.latest; }
 inline std::string current() { return host.current; }
+inline std::string summary() { return host.summary; }
 inline bool has_prog() { return host.has_progress; }
 inline float prog() { return host.progress; }
 inline void do_check() { host.checks++; }
@@ -69,6 +72,7 @@ inline esphome::update::UpdateEntity *ent = nullptr;
 inline int st() { return ent ? (int) ent->state : 0; }
 inline std::string latest() { return ent ? ent->update_info.latest_version : std::string(); }
 inline std::string current() { return ent ? ent->update_info.current_version : std::string(); }
+inline std::string summary() { return ent ? ent->update_info.summary : std::string(); }  // UI-68c: the release notes
 inline bool has_prog() { return ent && ent->update_info.has_progress; }
 inline float prog() { return ent ? ent->update_info.progress : 0.0f; }
 inline void do_check() {
@@ -87,6 +91,8 @@ inline const lv_font_t *f_title = nullptr, *f_body = nullptr, *f_small = nullptr
 struct Ui {
   lv_obj_t *root = nullptr, *title = nullptr, *l1 = nullptr, *l2 = nullptr, *bar = nullptr;
   lv_obj_t *btn[2] = {nullptr, nullptr}, *btn_lbl[2] = {nullptr, nullptr};
+  lv_obj_t *card = nullptr, *notes = nullptr, *notes_lbl = nullptr;  // UI-68c
+  int btn_y = 196, card_w = 400;
   Mode mode = M_NONE;
   uint32_t since = 0;      // when CHECKING / INSTALLING began
   bool asked = false;      // the check was started from Settings (show "Up to date" too)
@@ -135,6 +141,7 @@ inline void open() {
   lv_obj_set_style_border_color(c, lv_color_hex(0x2A3A66), 0);
   lv_obj_set_style_border_width(c, 2, 0);
   lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
+  ui_.card = c;
   ui_.title = label(c, f_title, 0xFFFFFF, 16);
   ui_.l1 = label(c, f_body, 0xDCE4F8, 76);
   ui_.l2 = label(c, f_body, 0x7E8BB3, 104);
@@ -161,6 +168,75 @@ inline void open() {
     ui_.btn[i] = b;
     ui_.btn_lbl[i] = l;
   }
+  // UI-68c: the release notes, in a box that scrolls (shown with "Update available")
+  lv_obj_t *n = lv_obj_create(c);
+  lv_obj_remove_style_all(n);
+  lv_obj_set_size(n, 400, 244);
+  lv_obj_align(n, LV_ALIGN_TOP_MID, 0, 112);
+  lv_obj_set_style_bg_color(n, lv_color_hex(0x0A1128), 0);
+  lv_obj_set_style_bg_opa(n, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(n, 8, 0);
+  lv_obj_set_style_pad_all(n, 8, 0);
+  lv_obj_set_scroll_dir(n, LV_DIR_VER);
+  lv_obj_add_flag(n, LV_OBJ_FLAG_HIDDEN);
+  ui_.notes = n;
+  ui_.notes_lbl = lv_label_create(n);
+  if (f_small)
+    lv_obj_set_style_text_font(ui_.notes_lbl, f_small, 0);
+  lv_obj_set_style_text_color(ui_.notes_lbl, lv_color_hex(0xC9D3F2), 0);
+  lv_obj_set_width(ui_.notes_lbl, 384);
+  lv_label_set_long_mode(ui_.notes_lbl, LV_LABEL_LONG_WRAP);
+  lv_label_set_text(ui_.notes_lbl, "");
+}
+// UI-68c the release notes as the screen can show them: Markdown's emphasis, code ticks and
+// heading marks dropped, blank-line runs squeezed, the text folded to the fonts (UI-78), at
+// most ~1.5 KB
+inline std::string notes_text(const std::string &md) {
+  std::string out;
+  out.reserve(std::min<size_t>(md.size(), 1600));
+  bool line_start = true;
+  int blank = 0;
+  for (size_t i = 0; i < md.size() && out.size() < 1500; i++) {
+    const char c = md[i];
+    if (c == '\r')
+      continue;
+    if (c == '*' || c == '`')
+      continue;
+    if (line_start && c == '#') {
+      while (i + 1 < md.size() && (md[i + 1] == '#' || md[i + 1] == ' '))
+        i++;
+      continue;
+    }
+    if (c == '\n') {
+      if (++blank > 2)
+        continue;
+      out += c;
+      line_start = true;
+      continue;
+    }
+    blank = 0;
+    line_start = false;
+    out += c;
+  }
+  while (!out.empty() && (out.back() == '\n' || out.back() == ' '))
+    out.pop_back();
+  std::vector<char> b(out.begin(), out.end());
+  b.push_back(0);
+  net::fold_text(b.data());
+  return std::string(b.data());
+}
+// the card's two layouts: tall with the notes (an update offered), else the short one
+inline void layout(bool tall) {
+  ui_.card_w = tall ? 440 : 400;
+  lv_obj_set_size(ui_.card, ui_.card_w, tall ? 440 : 260);
+  lv_obj_align(ui_.card, LV_ALIGN_CENTER, 0, 0);
+  for (lv_obj_t *l : {ui_.title, ui_.l1, ui_.l2})
+    lv_obj_set_width(l, tall ? 420 : 380);
+  lv_obj_align(ui_.l1, LV_ALIGN_TOP_MID, 0, tall ? 58 : 76);
+  lv_obj_align(ui_.l2, LV_ALIGN_TOP_MID, 0, tall ? 82 : 104);
+  ui_.btn_y = tall ? 374 : 196;
+  if (!tall)
+    lv_obj_add_flag(ui_.notes, LV_OBJ_FLAG_HIDDEN);
 }
 inline void buttons(const char *a, const char *b) {  // nullptr: hidden; b nullptr: a alone, centred
   for (int i = 0; i < 2; i++) {
@@ -171,10 +247,11 @@ inline void buttons(const char *a, const char *b) {  // nullptr: hidden; b nullp
     }
     lv_obj_remove_flag(ui_.btn[i], LV_OBJ_FLAG_HIDDEN);
     lv_label_set_text(ui_.btn_lbl[i], t);
-    lv_obj_align(ui_.btn[i], LV_ALIGN_TOP_LEFT, i == 0 ? 24 : 206, 196);
+    const int w = ui_.card_w;
+    lv_obj_align(ui_.btn[i], LV_ALIGN_TOP_LEFT, i == 0 ? w / 2 - 186 : w / 2 + 16, ui_.btn_y);
   }
   if (a && !b)
-    lv_obj_align(ui_.btn[0], LV_ALIGN_TOP_MID, 0, 196);
+    lv_obj_align(ui_.btn[0], LV_ALIGN_TOP_MID, 0, ui_.btn_y);
 }
 inline void show(Mode m) {
   open();
@@ -183,6 +260,13 @@ inline void show(Mode m) {
   lv_obj_add_flag(ui_.bar, LV_OBJ_FLAG_HIDDEN);
   lv_obj_set_style_text_color(ui_.l2, lv_color_hex(0x7E8BB3), 0);
   const std::string cur = current(), lat = latest();
+  std::string notes = m == M_AVAILABLE ? notes_text(summary()) : std::string();
+  layout(!notes.empty());
+  if (!notes.empty()) {
+    lv_label_set_text(ui_.notes_lbl, notes.c_str());
+    lv_obj_remove_flag(ui_.notes, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_scroll_to_y(ui_.notes, 0, LV_ANIM_OFF);
+  }
   switch (m) {
     case M_CHECKING:
       lv_label_set_text(ui_.title, "Checking for updates");
@@ -202,7 +286,7 @@ inline void show(Mode m) {
       lv_label_set_text(ui_.title, "Update available");
       snprintf(b, sizeof(b), "New version: %s", lat.c_str());
       lv_label_set_text(ui_.l1, b);
-      snprintf(b, sizeof(b), "Installed: %s", cur.c_str());
+      snprintf(b, sizeof(b), notes.empty() ? "Installed: %s" : "Installed: %s - what's new:", cur.c_str());
       lv_label_set_text(ui_.l2, b);
       buttons("Not now", "Update");
       break;
