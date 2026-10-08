@@ -259,6 +259,7 @@ struct Ui {
   geo::Observer obs;
   int size = 0, cx = 0, cy = 0, radius = 0;
   int n_deco = 0;
+  int pool_at = 0;  // BOOT-3: where the marker pools sit among the sky's children
   pvector<Marker> sats, starlink;
   std::unordered_map<int32_t, int> sat_slot, starlink_slot;
   Marker iss;
@@ -788,42 +789,11 @@ inline void ui_build() {
     lv_obj_add_flag(ui.comet_lbl[k], LV_OBJ_FLAG_HIDDEN);
   }
 
-  // Starlink below satellites (UI-4); pools fixed at start-up (UI-14)
-  const int64_t pool_t0 = ui_us();
-  ui.starlink.resize(STARLINK_POOL);
-  for (auto &m : ui.starlink) {
-    if ((&m - ui.starlink.data()) % 16 == 0)
-      ui_feed_wdt();
-    m.dot = dot(sky, sl_px(), C_STARLINK_DIM);
-    m.icol = m.drawn_col = ui.w.icon_font ? C_STARLINK_ICON : C_STARLINK_DIM;  // UI-43
-    if (ui.w.icon_font) {  // UI-31
-      m.icon = make_icon(m.dot, C_STARLINK_ICON);
-      lv_label_set_text(m.icon, "\xF3\xB0\xA4\x89");  // satellite-uplink
-    }
-  }
-  ui.sats.resize(SAT_POOL);
-  for (auto &m : ui.sats) {
-    m.dot = dot(sky, sat_px(), C_LEO);
-    if (ui.w.icon_font)
-      m.icon = make_icon(m.dot, C_LEO);  // UI-31
-  }
-  for (auto &m : ui.sats) {
-    m.label = lv_label_create(sky);
-    lv_obj_remove_style_all(m.label);
-    lv_obj_set_style_text_color(m.label, lv_color_hex(C_LABEL), 0);
-    if (ui.w.label_font)
-      lv_obj_set_style_text_font(m.label, ui.w.label_font, 0);
-    lv_label_set_text(m.label, "");
-    lv_obj_add_flag(m.label, LV_OBJ_FLAG_HIDDEN);
-    if (ui.w.icon_font) {  // UI-31: GNSS flag in place of the constellation letter
-      m.flag = lv_image_create(m.label);
-      lv_obj_add_flag(m.label, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
-      lv_obj_align(m.flag, LV_ALIGN_LEFT_MID, 0, 0);
-      lv_obj_add_flag(m.flag, LV_OBJ_FLAG_HIDDEN);
-    }
-  }
-  ESP_LOGI(UI_TAG, "marker pools: %d Starlink, %d satellites in %lld ms", STARLINK_POOL, SAT_POOL,
-           (long long) ((ui_us() - pool_t0) / 1000));
+  // Starlink below satellites (UI-4); pools fixed at start-up (UI-14), made after setup
+  // (BOOT-3): their place among the sky's children is kept here
+  ui.pool_at = (int) lv_obj_get_child_count(sky);
+  ui.starlink.reserve(STARLINK_POOL);
+  ui.sats.reserve(SAT_POOL);
   // ISS on top (UI-5)
   ui.iss.dot = dot(sky, ISS_PX, C_ISS);
   if (ui.w.card_icon_font) {  // UI-5: space-station icon instead of the orange dot
@@ -853,6 +823,64 @@ inline void ui_build() {
     lv_label_set_text(ic, "\xF3\xB1\x8E\x83");  // space-station
     lv_obj_center(ic);
   }
+}
+
+// BOOT-3: the marker pools (~800 LVGL objects, 2.3 s on the device) are made a few at a time
+// once setup is over, so the panel and Wi-Fi are not held up; until then a pool is just
+// shorter (rebind leaves the rest undrawn). Each new object goes where it would have been
+// made in ui_build: Starlink dots, then satellite dots, then satellite tags.
+inline void make_starlink_marker() {
+  Marker &m = ui.starlink.emplace_back();
+  m.dot = dot(ui.w.sky, sl_px(), C_STARLINK_DIM);
+  lv_obj_move_to_index(m.dot, ui.pool_at + (int) ui.starlink.size() - 1);
+  m.icol = m.drawn_col = ui.w.icon_font ? C_STARLINK_ICON : C_STARLINK_DIM;  // UI-43
+  if (ui.w.icon_font) {  // UI-31
+    m.icon = make_icon(m.dot, C_STARLINK_ICON);
+    lv_label_set_text(m.icon, "\xF3\xB0\xA4\x89");  // satellite-uplink
+  }
+}
+inline void make_sat_marker() {
+  const int k = (int) ui.sats.size(), base = ui.pool_at + STARLINK_POOL;
+  Marker &m = ui.sats.emplace_back();
+  m.dot = dot(ui.w.sky, sat_px(), C_LEO);
+  lv_obj_move_to_index(m.dot, base + k);  // after the dots made so far, before their tags
+  if (ui.w.icon_font)
+    m.icon = make_icon(m.dot, C_LEO);  // UI-31
+  m.label = lv_label_create(ui.w.sky);
+  lv_obj_move_to_index(m.label, base + 2 * k + 1);
+  lv_obj_remove_style_all(m.label);
+  lv_obj_set_style_text_color(m.label, lv_color_hex(C_LABEL), 0);
+  if (ui.w.label_font)
+    lv_obj_set_style_text_font(m.label, ui.w.label_font, 0);
+  lv_label_set_text(m.label, "");
+  lv_obj_add_flag(m.label, LV_OBJ_FLAG_HIDDEN);
+  if (ui.w.icon_font) {  // UI-31: GNSS flag in place of the constellation letter
+    m.flag = lv_image_create(m.label);
+    lv_obj_add_flag(m.label, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    lv_obj_align(m.flag, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_add_flag(m.flag, LV_OBJ_FLAG_HIDDEN);
+  }
+}
+inline bool pools_ready() { return (int) ui.starlink.size() >= STARLINK_POOL && (int) ui.sats.size() >= SAT_POOL; }
+// makes markers for up to budget_us; true when both pools are full
+inline bool pools_work(int64_t budget_us) {
+  static int64_t spent = 0;
+  const int64_t t0 = ui_us();
+  while (!pools_ready() && ui_us() - t0 < budget_us) {
+    if ((int) ui.starlink.size() < STARLINK_POOL)
+      make_starlink_marker();
+    else
+      make_sat_marker();
+  }
+  spent += ui_us() - t0;
+  if (pools_ready())
+    ESP_LOGI(UI_TAG, "marker pools: %d Starlink, %d satellites in %lld ms", STARLINK_POOL, SAT_POOL,
+             (long long) (spent / 1000));
+  return pools_ready();
+}
+inline void pools_timer_cb(lv_timer_t *tm) {
+  if (pools_work(12000))
+    lv_timer_delete(tm);
 }
 
 inline void reassert_order() {  // UI-6
@@ -6212,6 +6240,11 @@ inline void setup(const Config &cfg, const Widgets &w) {
     lv_label_set_long_mode(ui.w.status, LV_LABEL_LONG_WRAP);
   }
   ui.ready = true;
+#ifdef SAT_HOST_TEST
+  pools_work(INT64_MAX);
+#else
+  lv_timer_create(pools_timer_cb, 10, nullptr);  // BOOT-3
+#endif
   const double t = clock_now();
   draw_sun_moon(t, t);
   reassert_order();

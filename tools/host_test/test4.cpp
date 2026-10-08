@@ -1324,6 +1324,16 @@ int main() {
         sat::set_alert_kinds(true, true, true);
         CHECK(l0 > 0 && e0 > 0 && l1 == 0 && e1 == e0 && l2 == l0 && e2 == 0, "alert kinds %d/%d %d/%d %d/%d", l0, e0, l1, e1, l2, e2);
       }
+      {  // BOOT-3: the pools made after setup sit where ui_build left room for them
+        bool ok = sat::pools_ready();
+        for (int i = 0; ok && i < sat::STARLINK_POOL; i++)
+          ok = lv_obj_get_index(sat::ui.starlink[i].dot) == sat::ui.pool_at + i;
+        for (int k = 0; ok && k < sat::SAT_POOL; k++)
+          ok = lv_obj_get_index(sat::ui.sats[k].dot) == sat::ui.pool_at + sat::STARLINK_POOL + k &&
+               lv_obj_get_index(sat::ui.sats[k].label) == sat::ui.pool_at + sat::STARLINK_POOL + sat::SAT_POOL + k;
+        CHECK(ok && lv_obj_get_index(sat::ui.iss.dot) > sat::ui.pool_at + sat::STARLINK_POOL + 2 * sat::SAT_POOL - 1,
+              "marker pool order");
+      }
       {  // UI-72: after a minute untouched, a card and the picture viewer close
         sat::select_object(sat::K_MOON, 0);
         sat::idle_close();
