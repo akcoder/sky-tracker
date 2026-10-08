@@ -136,7 +136,7 @@ template<class T, class A> inline bool room_for(std::vector<T, A> &v, size_t n, 
 }
 
 enum Layer : uint8_t { L_SAT = 1, L_STARLINK = 2, L_ISS = 4, L_PASS = 8, L_STATUS = 16, L_GEO = 32, L_KP = 64, L_EXTRA = 128 };  // L_EXTRA: solar wind, launches
-enum Job : uint8_t { JOB_ABOVE = 0, JOB_STARLINK = 1, JOB_ISS = 2, JOB_PASS = 3, JOB_ELEMENTS = 4, JOB_SUNIMG = 5, JOB_MOONIMG = 6, JOB_EARTHIMG = 7, JOB_REGIONIMG = 8, JOB_PLANETIMG = 9, JOB_BACK = 10,
+enum Job : uint8_t { JOB_ABOVE = 0, JOB_STARLINK = 1, JOB_ISS = 2, JOB_PASS = 3, JOB_ELEMENTS = 4, JOB_SUNIMG = 5, JOB_MOONIMG = 6, JOB_EARTHIMG = 7, JOB_REGIONIMG = 8, JOB_PLANETIMG = 9,
                      JOB_SD = 11, JOB_SDFLASH = 12 };  // UI-66 (sky_sdfw.h, through extra_job)
 inline void (*extra_job)(uint8_t job) = nullptr;  // UI-66: jobs served by headers included later
 enum Kind : uint8_t { K_SAT = 0, K_STARLINK = 1, K_ISS = 2, K_GEO = 3 };
@@ -322,7 +322,7 @@ struct AuroraChance {
 //   IMG_REGION the observer's region from the same satellite (500-600 px JPEG, ~250 KB, UI-62a)
 //   IMG_PLANET a NASA photo of the planet asked for (Wikimedia Commons, ~15-55 KB, UI-61a)
 enum ImgKind : uint8_t { IMG_SUN = 0, IMG_MOON = 1, IMG_EARTH = 2, IMG_REGION = 3, IMG_PLANET = 4, IMG_N = 5 };
-constexpr int IMG_LIVE_N = 4;  // the live kinds (Sun .. region) keep the picture before too (UI-59c)
+constexpr int IMG_LIVE_N = 4;  // the live kinds (Sun .. region): streamed in as they arrive (UI-59f)
 // UI-61a: public-domain NASA photos, 500 px thumbnails from Wikimedia Commons (baseline JPEG)
 struct PlanetPhoto {
   const char *path, *credit;
@@ -341,9 +341,6 @@ inline const PlanetPhoto &planet_photo(int p) {
   return P[p];
 }
 inline volatile int planet_req = -1;  // the planet whose photo JOB_PLANETIMG fetches
-// UI-59d: JOB_BACK fetches the frame of back_kind older than back_before (the < button)
-inline volatile int back_kind = -1;
-inline volatile double back_before = 0;
 // UI-62a: NOAA STAR GeoColor sectors (square frames); the first whose box holds the observer
 struct Region {
   const char *code, *sat, *name;
@@ -428,8 +425,6 @@ struct Pending {
   bool comets_new = false;
   AuroraChance ovation;           // UI-58
   ImageInfo img[IMG_N];           // UI-59/60
-  ImageInfo back;                 // UI-59d: an older frame (pixels in img_work_buf)
-  int back_kind = -1;
   DataStatus status;
 };
 inline Pending pending;
@@ -2346,12 +2341,11 @@ inline void do_ovation(double now) {
 // ------------------------------------------------------------------ UI-59/60 live pictures
 // On request (the Sun or Moon card, or its picture, is open). Only the task writes
 // img_work; the loop copies it in drain() while holding the mutex.
-// UI-59e: ONE work buffer for every picture and for older frames (the task decodes one at a
-// time). img_work_owner says whose pixels it holds until the loop has copied them: -1 free,
-// a kind, or WORK_BACK + kind for an older frame. Guarded by the mutex.
+// UI-59e: ONE work buffer for every picture (the task decodes one at a time). img_work_owner
+// says whose pixels it holds until the loop has copied them: -1 free, else a kind. Guarded by
+// the mutex.
 inline uint16_t *img_work_buf = nullptr;
 inline int img_work_owner = -1;
-constexpr int WORK_BACK = 16;
 // wait (a loop pass or two) until the loop has copied the last picture out, then take the buffer
 inline uint16_t *img_work_take() {
   for (int i = 0; i < 150; i++) {
@@ -2497,8 +2491,7 @@ struct JpgStream {
 };
 // UI-59: the newest frame of NOAA's SUVI 304 A animation, box-filtered to IMG_PX (SOHO EIT
 // from 4.5.31 to 4.5.36; SUVI again from 4.5.37, picked over SOHO and SDO)
-// before > 0 (UI-59d): the newest frame older than that instead (the < button)
-inline const char *sun_image(ImageInfo &info, uint16_t *work, char *e, size_t en, double before = 0) {
+inline const char *sun_image(ImageInfo &info, uint16_t *work, char *e, size_t en) {
   // 1. the frame list (~40 KB): the last "url" is the newest exposure
   static char url[240];
   constexpr int KEEP = 16;  // newest frames remembered (4 min apart: an hour back)
@@ -2542,41 +2535,33 @@ inline const char *sun_image(ImageInfo &info, uint16_t *work, char *e, size_t en
   // from the headers, before the body) and, if the size is not given, by their darkness.
   constexpr int32_t SUVI_MIN_BYTES = 150000;  // good ~1.1 MB, shadowed ~30 KB
   static skypng::Decoder dec;
-  const int tries = np > 0 ? std::min(np, KEEP) : 1;  // (older ones skipped for "before" don't count as tries)
+  const int tries = np > 0 ? std::min(np, KEEP) : 1;
   bool dark_seen = false;
   for (int t = 0; t < tries; t++) {
     double obs = 0;
     const char *path = np > 0 ? paths[(np - 1 - t) % KEEP] : "";
     if (np > 0 && sun_frame_time(path, obs)) {
-      if (before > 0 && obs >= before)
-        continue;  // not older than the one showing
       snprintf(url, sizeof(url), "https://services.swpc.noaa.gov%s", path);
       const char *g = strstr(path, "_g");
       if (g && g[2] >= '0' && g[2] <= '9')
         snprintf(info.src, sizeof(info.src), "GOES-%d", atoi(g + 2));
-    } else if (before > 0) {
-      return np > 0 ? "no older picture in NOAA's list" : "no frame list from NOAA";
     } else {  // no list: the "latest" copy (time unknown)
       copy_cstr(url, sizeof(url), "https://services.swpc.noaa.gov/images/animations/suvi/primary/304/latest.png");
       obs = 0;
     }
     info.obs = obs;
     info.shadow = dark_seen;
-    if (before == 0 && obs > 0 && obs == img_have[IMG_SUN])
+    if (obs > 0 && obs == img_have[IMG_SUN])
       return nullptr;  // nothing newer (that shows the Sun) than what is showing
     if (!dec.begin(work, IMG_PX, IMG_PX, SUN_CROP))
       return dec.error;
     // UI-59f: each row gets its round edge as it is finished, so what shows during the download
     // is the final picture; below the rows done, the one showing (or the page colour)
-    if (before == 0) {
-      img_prog_fill(work, IMG_SUN);
-    }
-    dec.on_row = [](uint16_t *row, int y, void *ctx) {
+    img_prog_fill(work, IMG_SUN);
+    dec.on_row = [](uint16_t *row, int y, void *) {
       round_mask_row(row, y, IMG_PX, 158, 178);  // UI-62b: the glow fades out, prominences kept
-      if (ctx)
-        img_prog_rows = y + 1;
+      img_prog_rows = y + 1;
     };
-    dec.row_ctx = before == 0 ? (void *) 1 : nullptr;
     img_stage = STG_DOWNLOAD;
     dl_track = true;
     bool small = false, stop = false;
@@ -2618,22 +2603,20 @@ inline const char *sun_image(ImageInfo &info, uint16_t *work, char *e, size_t en
     }
     ESP_LOGI(TAG, "Sun image %s (%ld bytes, %ux%u)%s", info.src, r.bytes, (unsigned) dec.W, (unsigned) dec.H,
              dark_seen ? " (newer frames dark: the satellite is in Earth's shadow)" : "");
-    if (before == 0)  // (the round edge went on row by row: UI-59f)
-      img_have[IMG_SUN] = obs;
-    info.shadow = before == 0 && t > 0;
+    img_have[IMG_SUN] = obs;  // (the round edge went on row by row: UI-59f)
+    info.shadow = t > 0;
     info.fresh = true;
     return nullptr;
   }
-  return before > 0 && !dark_seen ? "no older picture in NOAA's list (an hour back)" : "the satellite is in Earth's shadow";
+  return "the satellite is in Earth's shadow";
 }
 // UI-60: NASA SVS Dial-A-Moon for this hour: the Moon as seen from Earth's centre (phase,
 // libration, size and tilt), rendered from Lunar Reconnaissance Orbiter data. A small JSON
 // names the frame (and a south-up copy for the southern hemisphere); the 730 px JPEG
 // (~110 KB) is decoded by the ROM's TJpgDec and averaged 2x2 to IMG_PX.
-inline const char *moon_image(ImageInfo &info, uint16_t *work, double now, char *e, size_t en, double before = 0) {
+inline const char *moon_image(ImageInfo &info, uint16_t *work, double now, char *e, size_t en) {
   img_stage = STG_LIST;
-  // UI-59d: before > 0: the hour before that frame
-  const int64_t hr = before > 0 ? (int64_t) floor((before - 1) / 3600.0) * 3600 : (int64_t) floor(now / 3600.0) * 3600;
+  const int64_t hr = (int64_t) floor(now / 3600.0) * 3600;
   int64_t z = hr / 86400 + 719468;  // civil_from_days (H. Hinnant)
   const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
   const unsigned doe = (unsigned) (z - era * 146097);
@@ -2667,7 +2650,7 @@ inline const char *moon_image(ImageInfo &info, uint16_t *work, double now, char 
   info.dist_km = doc["distance"] | NAN;
   copy_cstr(info.src, sizeof(info.src), "NASA SVS");
   const double key = (double) hr + (info.south_up ? 0.5 : 0);
-  if (before == 0 && key == img_have[IMG_MOON])
+  if (key == img_have[IMG_MOON])
     return nullptr;  // this hour's frame is already showing
   uint8_t *jpg = img_jpg();
   if (jpg == nullptr)
@@ -2679,9 +2662,8 @@ inline const char *moon_image(ImageInfo &info, uint16_t *work, double now, char 
   js.work = work;
   js.half = true;
   js.r0 = 166, js.r1 = 180;  // UI-62b
-  js.show = before == 0;
-  if (js.show)
-    img_prog_fill(work, IMG_MOON);
+  js.show = true;
+  img_prog_fill(work, IMG_MOON);
   img_stage = STG_DOWNLOAD;
   dl_track = true;
   const HttpResult r = http_stream(url, "Moon image", [&](const char *dd, int k) {
@@ -2703,26 +2685,24 @@ inline const char *moon_image(ImageInfo &info, uint16_t *work, double now, char 
     return de;
   ESP_LOGI(TAG, "Moon image (%u bytes, %dx%d, %.0f%% lit)%s", (unsigned) n, js.w, js.h, info.phase,
            js.started ? ", decoded as it came" : "");
-  if (before == 0)
-    img_have[IMG_MOON] = key;
+  img_have[IMG_MOON] = key;
   info.fresh = true;
   return nullptr;
 }
 // UI-62: the Earth from NOAA's GOES West (GOES-18, 137.0 W) or East (GOES-19, 75.2 W),
 // whichever is nearer the observer's longitude: the GeoColor full disk (true colour by day,
 // clouds and city lights at night), 678 px JPEG every 10 min, box-filtered to IMG_PX.
-// UI-59d: NOAA STAR names each frame by its scan start, every 10 minutes:
+// NOAA STAR names each frame by its scan start, every 10 minutes:
 //   .../GOES18/ABI/SECTOR/ak/GEOCOLOR/20262720430_GOES18-ABI-ak-GEOCOLOR-500x500.jpg  (YYYYDDDHHMM)
 // The newest is found by stepping back from the current 10 minutes until one exists (it
-// appears ~10-15 min after the scan); "before" steps back from that frame instead.
+// appears ~10-15 min after the scan).
 inline void star_stamp(double t, char *buf, size_t n) {
   const time_t tt = (time_t) t;
   struct tm g;
   gmtime_r(&tt, &g);
   snprintf(buf, n, "%04d%03d%02d%02d", (g.tm_year + 1900) % 10000, (g.tm_yday + 1) % 1000, g.tm_hour % 100, g.tm_min % 100);
 }
-inline const char *earth_image(ImageInfo &info, uint16_t *work, char *e, size_t en, bool regional = false,
-                               double before = 0) {
+inline const char *earth_image(ImageInfo &info, uint16_t *work, char *e, size_t en, bool regional = false) {
   auto gap = [](double a, double b) { return fabs(fmod(a - b + 540.0, 360.0) - 180.0); };
   const Region *rg = regional ? region_for(jc.lat, jc.lon) : nullptr;
   if (regional && !rg)
@@ -2735,8 +2715,8 @@ inline const char *earth_image(ImageInfo &info, uint16_t *work, char *e, size_t 
   uint16_t *acc = fit_acc();
   if (jpg == nullptr || acc == nullptr)
     return "out of memory";
-  const double start = floor((before > 0 ? before - 1 : clock_now()) / 600.0) * 600.0;
-  const int steps = before > 0 ? 4 : 6;  // up to 40 / 60 minutes back
+  const double start = floor(clock_now() / 600.0) * 600.0;
+  const int steps = 6;  // up to 60 minutes back
   size_t n = 0;
   HttpResult r;
   double obs = 0;
@@ -2745,7 +2725,7 @@ inline const char *earth_image(ImageInfo &info, uint16_t *work, char *e, size_t 
   for (int i = 0; i < steps; i++) {
     const double t = start - 600.0 * i;
     const double key = t + (west ? 0.5 : 0);
-    if (before == 0 && key == img_have[kind]) {
+    if (key == img_have[kind]) {
       info.obs = t;
       return nullptr;  // the newest there is is showing already
     }
@@ -2766,9 +2746,8 @@ inline const char *earth_image(ImageInfo &info, uint16_t *work, char *e, size_t 
     js.keep = rg ? 0.965f : 1.0f;  // the regional frames: NOAA's label strip (the bottom ~3%) cropped off
     if (!rg)
       js.r0 = 176, js.r1 = 180;  // UI-62b: a crisp limb, the corner label gone
-    js.show = before == 0;
-    if (js.show)
-      img_prog_fill(work, kind);
+    js.show = true;
+    img_prog_fill(work, kind);
     img_stage = STG_DOWNLOAD;
     dl_track = true;
     r = http_stream(url, regional ? "Region image" : "Earth image", [&](const char *d, int k) {
@@ -2805,15 +2784,14 @@ inline const char *earth_image(ImageInfo &info, uint16_t *work, char *e, size_t 
     break;
   }
   if (obs == 0)
-    return before > 0 ? "no older picture at NOAA" : "no recent picture at NOAA";
+    return "no recent picture at NOAA";
   info.obs = obs;
   img_stage = STG_DECODE;
   if (const char *de = js.finish(n))
     return de;
   ESP_LOGI(TAG, "%s image %s (%u bytes, %dx%d)%s", rg ? rg->name : "Earth", info.src, (unsigned) n, js.w, js.h,
            js.started ? ", decoded as it came" : "");
-  if (before == 0)
-    img_have[kind] = obs + (west ? 0.5 : 0);
+  img_have[kind] = obs + (west ? 0.5 : 0);
   info.fresh = true;
   return nullptr;
 }
@@ -2851,42 +2829,6 @@ inline const char *planet_image(ImageInfo &info, uint16_t *work, char *e, size_t
   img_have[IMG_PLANET] = p;
   info.fresh = true;
   return nullptr;
-}
-inline void do_back() {
-  const int kind = back_kind;
-  const double before = back_before;
-  if (kind < 0 || kind >= IMG_LIVE_N || before <= 0)
-    return;
-  xSemaphoreTake(mutex, portMAX_DELAY);
-  const bool busy = pending.back.fresh;
-  xSemaphoreGive(mutex);
-  if (busy)
-    return;
-  ImageInfo info;
-  img_stage_kind = (uint8_t) kind;
-  img_bytes = 0;
-  img_total = -1;
-  uint16_t *work = img_work_take();
-  char e[48];
-  const char *err = work == nullptr ? (img_work_buf ? "busy" : "out of memory")
-                    : kind == IMG_SUN        ? sun_image(info, work, e, sizeof(e), before)
-                    : kind == IMG_MOON       ? moon_image(info, work, clock_now(), e, sizeof(e), before)
-                                             : earth_image(info, work, e, sizeof(e), kind == IMG_REGION, before);
-  img_stage = STG_IDLE;
-  if (err)
-    copy_cstr(info.err, sizeof(info.err), err);
-  info.ok = err == nullptr && info.fresh;
-  if (err == nullptr && !info.fresh)
-    copy_cstr(info.err, sizeof(info.err), "no older picture");
-  ESP_LOGI(TAG, "older picture %d before %.0f: %s", kind, before, info.ok ? "ok" : info.err);
-  xSemaphoreTake(mutex, portMAX_DELAY);
-  info.seq = pending.back.seq + 1;
-  pending.back = info;
-  pending.back_kind = kind;
-  if (info.ok)
-    img_work_owner = WORK_BACK + kind;
-  pending.fresh |= L_EXTRA;
-  xSemaphoreGive(mutex);
 }
 inline void do_image(uint8_t kind) {
   ImageInfo info;
@@ -3487,10 +3429,6 @@ inline void run_job(uint8_t job) {
                  : job == JOB_REGIONIMG ? IMG_REGION
                                         : IMG_PLANET);
       break;
-    case JOB_BACK:  // UI-59d
-      if (link_up)
-        do_back();
-      break;
     default:
       if (extra_job)
         extra_job(job);
@@ -3627,12 +3565,6 @@ struct Live {
   net::ImageInfo img[net::IMG_N];                 // UI-59/60
   uint16_t *img_px[net::IMG_N] = {};  // IMG_PX x IMG_PX RGB565 shown by the pictures
   bool img_new[net::IMG_N] = {};      // new pixels since the picture last looked
-  // UI-59c: the picture before (live kinds only), kept when a newer one arrives
-  uint16_t *img_prev_px[net::IMG_N] = {};
-  net::ImageInfo img_prev[net::IMG_N];
-  bool img_prev_new[net::IMG_N] = {};  // UI-59d: new pixels in img_prev_px (same buffer)
-  net::ImageInfo back;               // UI-59d: the last older-frame fetch (seq moves when one finishes)
-  int back_kind = -1;
   pvector<net::LaunchRec> launches;  // UI-54
   pvector<net::EventRec> events;     // UI-54c
   pvector<comets::El> comet_list;        // UI-63
@@ -3641,22 +3573,6 @@ struct Live {
   pvector<net::KpPt> kp;  // UI-37
 };
 inline Live live;
-// UI-59e: one "picture before" buffer shared by the live kinds (one picture is on screen at a
-// time). Taking it for kind k drops whichever kind held it; null if PSRAM has none.
-inline uint16_t *&prev_buf(int k) {
-  if (live.img_prev_px[k] == nullptr) {
-    for (int j = 0; j < net::IMG_N; j++)
-      if (j != k && live.img_prev_px[j]) {
-        std::swap(live.img_prev_px[k], live.img_prev_px[j]);
-        live.img_prev[j] = net::ImageInfo();
-        live.img_prev_new[j] = false;
-        break;
-      }
-    if (live.img_prev_px[k] == nullptr)
-      live.img_prev_px[k] = (uint16_t *) heap_caps_malloc(net::IMG_PX * net::IMG_PX * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  }
-  return live.img_prev_px[k];
-}
 
 // ARCH-5: never blocks; returns the fresh-layer mask (0 if nothing new or mutex busy).
 inline uint8_t drain() {
@@ -3691,13 +3607,6 @@ inline uint8_t drain() {
     live.ovation = p.ovation;
     for (int k = 0; k < net::IMG_N; k++) {  // UI-59/60: pixels copied while the task is held off
       const bool px_new = p.img[k].fresh && net::img_work_owner == k && net::img_work_buf;
-      if (px_new && k < net::IMG_LIVE_N && live.img_px[k] && live.img[k].obs > 0 &&
-          live.img[k].obs != p.img[k].obs) {  // UI-59c: the one showing becomes "before"
-        if (uint16_t *&pv = prev_buf(k)) {
-          std::swap(pv, live.img_px[k]);
-          live.img_prev[k] = live.img[k];
-        }
-      }
       live.img[k] = p.img[k];
       if (px_new) {
         if (live.img_px[k] == nullptr)
@@ -3718,22 +3627,6 @@ inline uint8_t drain() {
     if (!p.events.empty()) {  // UI-54c
       std::swap(live.events, p.events);
       p.events.clear();
-    }
-    if (p.back.seq != live.back.seq) {  // UI-59d: an older frame: it becomes "the one before"
-      const int k = p.back_kind;
-      if (p.back.fresh && p.back.ok && k >= 0 && k < net::IMG_LIVE_N && net::img_work_owner == net::WORK_BACK + k &&
-          net::img_work_buf) {
-        if (uint16_t *&pv = prev_buf(k)) {
-          memcpy(pv, net::img_work_buf, net::IMG_PX * net::IMG_PX * 2);
-          live.img_prev[k] = p.back;
-          live.img_prev_new[k] = true;
-        }
-      }
-      if (net::img_work_owner == net::WORK_BACK + k)
-        net::img_work_owner = -1;
-      live.back = p.back;
-      live.back_kind = k;
-      p.back.fresh = false;
     }
     if (p.comets_new) {  // UI-63
       std::swap(live.comet_list, p.comet_list);

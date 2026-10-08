@@ -5329,8 +5329,6 @@ struct ImgView {
   lv_obj_t *seg[2] = {};  // UI-62a: Globe / region, under the Earth picture
   lv_obj_t *credit = nullptr;  // UI-61b: the planet photo's credit, top left of the picture
   lv_obj_t *phase_mark = nullptr;  // UI-61g: the "Tonight's phase" switch
-  lv_obj_t *flip[2] = {};  // UI-59c: < the picture before, > the latest (bottom corners of the picture)
-  bool show_prev = false;
   int kind = net::IMG_SUN;
   int planet = -1;        // the planet tab (-1: none)
   lv_image_dsc_t dsc[2];  // alternated: a new source each update, so LVGL's image cache never shows old pixels
@@ -5380,7 +5378,6 @@ inline void img_view_close() {
   sv.root = sv.img = sv.msg = sv.bar = sv.cap1 = sv.cap2 = sv.east = sv.west = sv.credit = nullptr;
   sv.seg[0] = sv.seg[1] = nullptr;
   sv.phase_mark = nullptr;
-  sv.flip[0] = sv.flip[1] = nullptr;
   memcpy(sv.tab, none, sizeof(none));
   memcpy(sv.mlab, none, sizeof(none));
   sv.dsc_px = nullptr;
@@ -5583,62 +5580,6 @@ inline void planet_view_update(double t) {
   set_text_if(sv.cap1, c1);
 }
 inline void img_view_update(double t);
-// UI-59c: < and > between the picture before and the latest
-// UI-59d: < steps back a frame at a time (the frame before is fetched when it isn't here:
-// the Sun from NOAA's list, the Moon the hour before, the Earth and region 10 minutes
-// before); > returns to the latest.
-struct BackReq {
-  bool asked = false;
-  uint32_t seq = 0;  // live.back.seq when asked: still loading while unchanged
-  int kind = -1;
-};
-inline BackReq back_req;
-inline bool back_loading(int k) { return back_req.asked && back_req.kind == k && live.back.seq == back_req.seq; }
-inline bool back_failed(int k) {
-  return back_req.asked && back_req.kind == k && live.back.seq != back_req.seq && live.back_kind == k && !live.back.ok;
-}
-inline void img_flip_cb(lv_event_t *e) {
-  const int i = (int) (intptr_t) lv_event_get_user_data(e), k = sv.kind;
-  if (i == 1) {
-    sv.show_prev = false;
-  } else if (k < net::IMG_LIVE_N && !back_loading(k)) {
-    const bool have_prev =
-        live.img_prev_px[k] && live.img_prev[k].obs > 0 && live.img_prev[k].obs < live.img[k].obs;
-    if (!sv.show_prev && have_prev) {
-      sv.show_prev = true;
-    } else {
-      const double ref = sv.show_prev ? live.img_prev[k].obs : live.img[k].obs;
-      if (ref > 0) {
-        net::back_kind = k;
-        net::back_before = ref;
-        const uint32_t seq = live.back.seq;
-        if (enqueue(JOB_BACK)) {
-          back_req = {true, seq, k};
-          sv.show_prev = true;
-        }
-      }
-    }
-  }
-  sv.dsc_px = nullptr;  // re-point the picture
-  img_view_update(clock_now());
-}
-inline void img_flip_state(bool avail, bool fetching = false) {
-  for (int i = 0; i < 2; i++) {
-    if (!sv.flip[i])
-      continue;
-    if (!avail) {
-      lv_obj_add_flag(sv.flip[i], LV_OBJ_FLAG_HIDDEN);
-      continue;
-    }
-    lv_obj_remove_flag(sv.flip[i], LV_OBJ_FLAG_HIDDEN);
-    const bool usable = i == 0 ? !fetching : sv.show_prev;  // < always steps back; > back to the latest
-    lv_obj_set_style_opa(sv.flip[i], usable ? LV_OPA_COVER : LV_OPA_40, 0);
-    if (usable)
-      lv_obj_add_flag(sv.flip[i], LV_OBJ_FLAG_CLICKABLE);
-    else
-      lv_obj_remove_flag(sv.flip[i], LV_OBJ_FLAG_CLICKABLE);
-  }
-}
 // UI-59f: a live picture's work buffer is showing while it streams in, and once finished until
 // the loop copies it (so the old picture doesn't flash back meanwhile)
 inline bool img_streaming(int k) {
@@ -5648,7 +5589,7 @@ inline bool img_streaming(int k) {
            net::img_prog_rows > 0));
 }
 inline void img_prog_timer_cb(lv_timer_t *) {  // UI-59f: new rows shown 4 times a second
-  if (sv.root && sv.kind < VIEW_PLANET && !sv.show_prev && img_streaming(sv.kind))
+  if (sv.root && sv.kind < VIEW_PLANET && img_streaming(sv.kind))
     img_view_update(clock_now());
 }
 inline void img_view_update(double t) {
@@ -5660,15 +5601,10 @@ inline void img_view_update(double t) {
   }
   const int k = sv.kind;
   img_request(k, t);
-  const bool live_kind = k < net::IMG_LIVE_N;
-  if (!live_kind)
-    sv.show_prev = false;
-  const bool before = sv.show_prev;
-  const bool fetching = live_kind && back_loading(k);  // UI-59d: an older frame on its way
-  const bool loading = before ? fetching : img_loading(k);
-  const net::ImageInfo &in = before ? live.img_prev[k] : live.img[k];
-  const bool streaming = !before && img_streaming(k);  // UI-59f: the picture as it arrives
-  uint16_t *px = streaming ? net::img_work_buf : before ? live.img_prev_px[k] : live.img_px[k];
+  const bool loading = img_loading(k);
+  const net::ImageInfo &in = live.img[k];
+  const bool streaming = img_streaming(k);  // UI-59f: the picture as it arrives
+  uint16_t *px = streaming ? net::img_work_buf : live.img_px[k];
   const bool have = px != nullptr;  // a picture has been decoded (it stays until a newer one)
   // PERF-15a: while it streams in, only the band of rows new since the last redraw is redrawn
   static int prog_rows = -2;
@@ -5684,33 +5620,24 @@ inline void img_view_update(double t) {
   } else {
     if (rows_now >= 0 || !streaming)
       prog_rows = rows_now;
-    img_show(px, (before ? live.img_prev_new[k] : live.img_new[k]) || sv.dsc_px != px);
+    img_show(px, live.img_new[k] || sv.dsc_px != px);
   }
-  (before ? live.img_prev_new[k] : live.img_new[k]) = false;
-  img_flip_state(live_kind, fetching);
+  live.img_new[k] = false;
   // message and bar (only until the first picture; later updates show in the caption)
   char prog[48];
   const int pc = loading ? img_progress(k, prog, sizeof(prog)) : -1;
   char m[128] = "";
   if (!have) {
     if (loading)
-      snprintf(m, sizeof(m), "Downloading the %s picture\nfrom %s\n\n%s", before ? "earlier" : "latest",
-               k == net::IMG_MOON ? "NASA" : "NOAA", prog);
-    else if (before)
-      snprintf(m, sizeof(m), "%s", back_failed(k) && live.back.err[0] ? live.back.err : "No earlier picture");
+      snprintf(m, sizeof(m), "Downloading the latest picture\nfrom %s\n\n%s", k == net::IMG_MOON ? "NASA" : "NOAA",
+               prog);
     else
       snprintf(m, sizeof(m), "%s", !net::link_up ? "No network" : in.err[0] ? in.err : "Waiting for the picture...");
   }
   set_text_if(sv.msg, m);
   img_bar(!have && loading ? std::max(0, pc) : -1);
   char c1[112], c2[112], tail[48] = "";
-  if (before && fetching) {
-    snprintf(tail, sizeof(tail), " - getting an earlier one %d%%", std::max(0, pc));
-  } else if (before && back_failed(k)) {
-    snprintf(tail, sizeof(tail), "%s", " - none earlier");
-  } else if (before) {
-    snprintf(tail, sizeof(tail), "%s", " - earlier picture");
-  } else if (have && k == net::IMG_SUN && in.shadow && !img_loading(k)) {
+  if (have && k == net::IMG_SUN && in.shadow && !img_loading(k)) {
     snprintf(tail, sizeof(tail), "%s", " - GOES in Earth's shadow");  // UI-59: newer frames dark
   } else if (have && img_loading(k)) {
     if (pc >= 0)
@@ -5882,27 +5809,6 @@ inline void img_view_open_now(int kind, int planet) {
   }
   sv.cap1 = finder_label(root, w.label_font, 0xC9D3F2, 414);
   sv.cap2 = finder_label(root, w.label_font, 0x7E8BB3, 442);
-  sv.show_prev = false;
-  if (kind < net::IMG_LIVE_N) {  // UI-59c: < before / > latest, in the picture's bottom corners
-    for (int i = 0; i < 2; i++) {
-      lv_obj_t *fb = lv_button_create(root);
-      sv.flip[i] = fb;
-      lv_obj_set_size(fb, 48, 48);
-      lv_obj_set_pos(fb, i == 0 ? 66 : 366, 354);
-      lv_obj_set_style_radius(fb, LV_RADIUS_CIRCLE, 0);
-      lv_obj_set_style_bg_color(fb, lv_color_hex(0x24356A), 0);
-      lv_obj_set_style_shadow_width(fb, 0, 0);
-      lv_obj_set_style_pad_all(fb, 0, 0);
-      lv_obj_t *l = lv_label_create(fb);
-      if (w.title_font)
-        lv_obj_set_style_text_font(l, w.title_font, 0);
-      lv_obj_set_style_text_color(l, lv_color_hex(0xEEF2FF), 0);
-      lv_label_set_text(l, i == 0 ? "<" : ">");
-      lv_obj_center(l);
-      lv_obj_add_event_cb(fb, img_flip_cb, LV_EVENT_CLICKED, (void *) (intptr_t) i);
-      lv_obj_add_flag(fb, LV_OBJ_FLAG_HIDDEN);
-    }
-  }
   const bool pl = kind >= VIEW_PLANET;
   if (pl) {  // UI-61b: the photo's credit, top left of the picture
     sv.credit = lv_label_create(root);

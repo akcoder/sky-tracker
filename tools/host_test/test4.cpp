@@ -1779,27 +1779,14 @@ int main() {
       CHECK(sat::live.img[IMG_SUN].ok && sat::live.img[IMG_SUN].seq == sq + 1 && !sat::live.img_new[IMG_SUN] &&
             host_last_url.find(".json") != std::string::npos, "sun image repeat skipped");
     }
-    {  // UI-59c/d: a newer frame keeps the one before; < past it takes an older frame from the list
+    {  // a newer frame replaces the one showing
       host_http_bodies[suvi_name(t2)] = good;
       suvi_list({t3, t1, t2});
       sat::net::do_image(IMG_SUN);
       sat::tick();
       sat::img_view_update(sat_host_now);
-      CHECK(sat::live.img_prev_px[IMG_SUN] && fabs(sat::live.img_prev[IMG_SUN].obs - t1) < 1 &&
-            fabs(sat::live.img[IMG_SUN].obs - t2) < 1 && !lv_obj_has_flag(sat::sv.flip[0], LV_OBJ_FLAG_HIDDEN), "sun history kept");
-      lv_obj_send_event(sat::sv.flip[0], LV_EVENT_CLICKED, nullptr);
-      printf("before: \"%s\"\n", lv_label_get_text(sat::sv.cap2));
-      CHECK(sat::sv.show_prev && strstr(lv_label_get_text(sat::sv.cap2), "7m ago - earlier picture"), "flip to the one before");
-      lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-      save_ppm(OUT_DIR "/renders/r11_sunbefore.ppm");
-      lv_obj_send_event(sat::sv.flip[0], LV_EVENT_CLICKED, nullptr);  // one more: from the list
-      run_jobs();
-      sat::tick();
-      sat::img_view_update(sat_host_now);
-      printf("sun two back: \"%s\" prev obs %.0f want %.0f\n", lv_label_get_text(sat::sv.cap2), sat::live.img_prev[IMG_SUN].obs, t3);
-      CHECK(fabs(sat::live.img_prev[IMG_SUN].obs - t3) < 1 && strstr(lv_label_get_text(sat::sv.cap2), "earlier picture"), "sun earlier from the list");
-      lv_obj_send_event(sat::sv.flip[1], LV_EVENT_CLICKED, nullptr);
-      CHECK(!sat::sv.show_prev && strstr(lv_label_get_text(sat::sv.cap2), "1m ago"), "flip back to the latest");
+      CHECK(fabs(sat::live.img[IMG_SUN].obs - t2) < 1 && strstr(lv_label_get_text(sat::sv.cap2), "1m ago"),
+            "sun: a newer frame replaces it (%s)", lv_label_get_text(sat::sv.cap2));
     }
     {  // UI-59: GOES in Earth's shadow: the newest frame is dark; the last good one stays, captioned
       host_http_bodies[suvi_name(t4)] = dark;
@@ -1897,30 +1884,7 @@ int main() {
       CHECK(sat::live.img[sat::net::IMG_EARTH].seq == sq + 1 && sat::live.img[sat::net::IMG_EARTH].ok && !sat::live.img_new[sat::net::IMG_EARTH] &&
             host_http_opens - opens0 == 1 && host_http_inits - inits0 == 0,
             "earth repeat skipped (one 404 on the kept connection)");
-      // UI-59d: < fetches the frame 10 minutes before
-      host_http_bodies[std::string(st2) + "_GOES18-ABI-FD-GEOCOLOR-678x678.jpg"] = slurp(HOST_DIR "/fixtures/earth_test.jpg");
-      CHECK(!lv_obj_has_flag(sat::sv.flip[0], LV_OBJ_FLAG_HIDDEN), "earth < shown");
-      lv_obj_send_event(sat::sv.flip[0], LV_EVENT_CLICKED, nullptr);
-      CHECK(sat::sv.show_prev && sat::back_loading(sat::net::IMG_EARTH), "earth < asks for the earlier frame");
-      run_jobs();
-      sat::tick();
-      sat::img_view_update(sat_host_now);
-      printf("earth earlier: \"%s\" prev obs %.0f\n", lv_label_get_text(sat::sv.cap1), sat::live.img_prev[sat::net::IMG_EARTH].obs);
-      CHECK(sat::live.img_prev_px[sat::net::IMG_EARTH] && fabs(sat::live.img_prev[sat::net::IMG_EARTH].obs - (f10 - 1200)) < 1 &&
-            strstr(lv_label_get_text(sat::sv.cap1), "earlier picture"), "earth earlier frame shown");
-      lv_obj_send_event(sat::sv.flip[0], LV_EVENT_CLICKED, nullptr);  // and one more: none there
-      run_jobs();
-      sat::tick();
-      sat::img_view_update(sat_host_now);
-      CHECK(strstr(lv_label_get_text(sat::sv.cap1), "none earlier"), "earth: no frame before that");
-      lv_obj_send_event(sat::sv.flip[1], LV_EVENT_CLICKED, nullptr);
-      CHECK(!sat::sv.show_prev, "earth > back to the latest");
-      {  // UI-59e: one shared "before" buffer (the Sun's went to the Earth) and one work buffer
-        int held = 0;
-        for (int k = 0; k < sat::net::IMG_N; k++) held += sat::live.img_prev_px[k] != nullptr;
-        CHECK(held == 1 && sat::live.img_prev_px[sat::net::IMG_EARTH] && sat::live.img_prev[IMG_SUN].obs <= 0 &&
-              sat::net::img_work_owner == -1, "one picture-before buffer, work buffer free");
-      }
+      CHECK(sat::net::img_work_owner == -1, "work buffer free after the copy");
       // ---- UI-62a the region (Alaska for the test location), label strip cropped
       host_http_bodies["_GOES18-ABI-ak-GEOCOLOR-500x500.jpg"] = slurp(HOST_DIR "/fixtures/region_test.jpg");
       sat::earth_regional = true;  // as the Alaska button does

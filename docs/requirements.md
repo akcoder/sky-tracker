@@ -1,7 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.30 (queued): the display can no longer stay shifted 10 rows with noise: the frame-start bug in the display driver is put right every frame (PERF-16; Display Resyncs counts it). Lighter on the PSRAM bus the panel refills from (PERF-15a): the astro task works in small pieces with rests, and a streaming picture redraws only its new rows. Last Crash shows the firmware and when (FAIL-10a; older records are dropped).
+- 4.6.31 (queued): the picture viewer's < and > buttons (the picture before, earlier frames) are gone; the latest picture only (UI-59c). Frees a 259 KB picture buffer.
+- 4.6.30: the display can no longer stay shifted 10 rows with noise: the frame-start bug in the display driver is put right every frame (PERF-16; Display Resyncs counts it). Lighter on the PSRAM bus the panel refills from (PERF-15a): the astro task works in small pieces with rests, and a streaming picture redraws only its new rows. Last Crash shows the firmware and when (FAIL-10a; older records are dropped).
 - 4.6.29: the web page has an Alerts section with all the alert switches (NET-6a). Comets moves under Stations in the Alerts tab (UI-41j). A shooting star crosses the About page's logo now and then, burning out at the end (UI-67a). The Sun, Moon, Earth and region pictures appear top down as they download, already round-edged, over the picture before (UI-59f).
 - 4.6.28: The map no longer stalls after the boot launch or every few seconds: the alignment, eclipse and Milky Way work runs on the other core (PERF-15). Alerts tab in two columns, sky and spaceflight (UI-41j); new Solar switch for solar eclipses, solstices and equinoxes (UI-41k).
 - 4.6.27: the screen lights at power-on with the boot screen (~2.4 s, was ~6.6 s): the backlight is switched on as the boot screen is drawn (BOOT-2). Start-up ends ~4 s sooner and Wi-Fi connects sooner: the satellite markers are made after start-up, a few at a time (BOOT-3). Two-line alerts clear the sky disc: the text sits 4 px higher with its lines 3 px closer, and the disc is 4 px lower (UI-41i).
@@ -843,38 +844,26 @@ UI-60  The Moon now: "Moon image" (bottom left of the Moon card; the same button
 UI-59b Picture tabs: Sun (80), Moon (80), Earth (84) and, from a planet's card, the planet
        (100) along the top at y 4, 36 high; the one showing is navy with orange text; Close
        stays at 376,4. A tab switches in place (the planet tab stays).
-UI-59c History: when a newer Sun, Moon, Earth or region frame arrives (different obs
-       time), the one showing moves to a second PSRAM buffer (live.img_prev_px). Round
-       48x48 < (66,354) and > (366,354) buttons flip between them; the caption ends
-       " - the one before" on the older one. Hidden until there is a picture before.
-UI-59d Earlier pictures: the < and > buttons are always shown on the Sun, Moon, Earth and
-       region pictures. < shows the picture before; when it isn't held (or from an earlier one
-       already), JOB_BACK fetches the frame older than the one showing into the work buffer
-       (Sun: the newest non-dark frame older than it in NOAA's list, 16 frames ~1 h; Moon:
-       Dial-A-Moon for the hour before; Earth/region: the frame 10 min earlier, up to 40 min
-       on 404s), which becomes live.img_prev. Caption tail " - earlier picture", " - getting an
-       earlier one 45%", " - none earlier". > returns to the latest. Earth/region frames are
-       named by scan start (.../GEOCOLOR/YYYYDDDHHMM_GOES18-ABI-ak-GEOCOLOR-500x500.jpg); the
-       newest is found stepping back from the current 10 minutes (a frame appears ~10-15 min
-       after its scan); a frame already showing is not fetched again.
+UI-59c (removed in 4.6.31: the picture before and the < > buttons, with UI-59d's fetching of
+       earlier frames; the viewer shows the latest picture only.) Earth/region frames are named
+       by scan start (.../GEOCOLOR/YYYYDDDHHMM_GOES18-ABI-ak-GEOCOLOR-500x500.jpg); the newest is
+       found stepping back from the current 10 minutes (a frame appears ~10-15 min after its
+       scan); a frame already showing is not fetched again.
 UI-59f Live pictures (Sun, Moon, Earth, region) appear as they download, top down: each output
        row is finished (and given its UI-62b round edge, row by row) as soon as all of its source
        rows are in, so every row shown is final. Below the rows done: the picture showing (or the
-       page colour for a first one); the viewer redraws them 5 times a second (img_prog_rows),
+       page colour for a first one); the viewer redraws them 4 times a second (img_prog_rows),
        and keeps showing the work buffer until the loop has copied the finished picture. The Sun's
        PNG decoder reports rows (on_row); the JPEGs (Moon 2:1, Earth/region box filter, rows
        finished per row of MCU blocks) are decoded by a short-lived "jpgdec" task on core 0 that
        reads the download buffer as it fills (waiting at its end), started once the first bytes
-       are a JPEG (a 404 page never starts it); a failed download stops it. Older frames (UI-59d)
-       are not shown while loading. Host tests: the streamed result equals decoding at the end,
+       are a JPEG (a 404 page never starts it); a failed download stops it. Host tests: the streamed result equals decoding at the end,
        rows come top down and none changes after it is reported. Comp:
        docs/comps/progressive_pictures.png.
-UI-59e Picture memory: one IMG_PX^2 RGB565 work buffer (img_work_buf) for every picture and
-       older frame; img_work_owner (kind, WORK_BACK+kind, or -1) marks its pixels until the loop
-       copies them, and the task waits for it to be free (up to 3 s) before decoding. The
-       latest picture of each live kind is kept (live.img_px); one "picture before" buffer is
-       shared (prev_buf(k) moves it to the kind asking and forgets the other's earlier one).
-       Worst case 4 + 1 + 1 picture buffers (~1.5 MB) instead of 3 per kind.
+UI-59e Picture memory: one IMG_PX^2 RGB565 work buffer (img_work_buf) for every picture;
+       img_work_owner (the kind, or -1) marks its pixels until the loop copies them, and the
+       task waits for it to be free (up to 3 s) before decoding. The latest picture of each
+       live kind is kept (live.img_px): at most 4 + 1 picture buffers (~1.3 MB).
 UI-61  Planets drawn (sky_pview.h), redrawn each minute: phase angle and bright-limb
        position angle from the Sun; pole position angle and the Earth's planetocentric
        latitude from the IAU pole directions (Saturn's ring tilt B); flattening; Lambert
