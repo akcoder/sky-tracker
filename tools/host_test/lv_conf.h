@@ -100,7 +100,7 @@
 #define LV_USE_PAGE 0
 #define LV_USE_PROFILER_BUILTIN 0
 #define LV_USE_PXP_DRAW_THREAD 0
-#define LV_USE_QRCODE 0
+#define LV_USE_QRCODE 1
 #define LV_USE_ROLLER 0
 #define LV_USE_SCALE 0
 #define LV_USE_SLIDER 1

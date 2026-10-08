@@ -17,6 +17,7 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <climits>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -266,6 +267,7 @@ struct LaunchRec {
   double net = 0;         // UTC seconds
   float lat = NAN, lon = NAN;
   bool webcast = false;   // UI-76: Launch Library says its webcast is live
+  char watch[100] = "";   // UI-80: where to watch it (the best-ranked of its video links), for the QR code
 };
 // UI-54c: an upcoming space event (Launch Library 2 events: dockings, undockings, EVAs...)
 struct EventRec {
@@ -2067,6 +2069,8 @@ inline void do_launches(double now) {
   f["pad"]["location"]["name"] = true;
   f["rocket"]["configuration"]["name"] = true;
   f["webcast_live"] = true;  // UI-76
+  f["vid_urls"][0]["url"] = true;  // UI-80
+  f["vid_urls"][0]["priority"] = true;
   JsonDocument doc(&psram_alloc);
   // the 2.3.0 reply nests 11 deep (ArduinoJson stops at 10 unless told)
   if (const DeserializationError de = deserializeJson(doc, buf, (size_t) len, DeserializationOption::Filter(filter),
@@ -2092,6 +2096,15 @@ inline void do_launches(double now) {
     l.lat = num(r["pad"]["latitude"]);
     l.lon = num(r["pad"]["longitude"]);
     l.webcast = r["webcast_live"] | false;
+    int best = INT_MAX;  // UI-80: the lowest priority number is Launch Library's first choice
+    for (JsonObject v : r["vid_urls"].as<JsonArray>()) {
+      const char *u = v["url"] | "";
+      const int pr = v["priority"] | 1000;
+      if (strncmp(u, "https://", 8) == 0 && strlen(u) < sizeof(l.watch) && pr < best) {
+        best = pr;
+        copy_cstr(l.watch, sizeof(l.watch), u);
+      }
+    }
     out.push_back(l);
   }
   launches_publish(out, now, "Launch Library");

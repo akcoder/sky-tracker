@@ -1943,7 +1943,9 @@ constexpr uint32_t C_AURORA = 0x7EE0B0;  // UI-38: soft aurora green
 
 // UI-25: one or two lines under the title saying how fresh the orbits are, or what
 // went wrong and what the device is doing about it. Returns the colour to use.
-inline uint32_t status_text(double t, char *b, size_t n) {
+// ha: for Home Assistant, without the times that tick on (an age, a retry): the text then
+// changes only when the state does, not every minute (the ages are the Data Age sensor).
+inline uint32_t status_text(double t, char *b, size_t n, bool ha = false) {
   const DataStatus &s = live.status;
   const bool have = s.n_sats > 0 || s.have_iss || s.n_starlink > 0;
   char age[24], retry[24];
@@ -1957,7 +1959,10 @@ inline uint32_t status_text(double t, char *b, size_t n) {
   }
   fmt_age(std::max(0.0, s.next_try - t), retry, sizeof(retry));
   if (!have) {
-    snprintf(b, n, "%s.\nNo orbital data yet; retrying in %s", s.error, retry);
+    if (ha)
+      snprintf(b, n, "%s.\nNo orbital data yet; retrying", s.error);
+    else
+      snprintf(b, n, "%s.\nNo orbital data yet; retrying in %s", s.error, retry);
     return C_BAD;
   }
   // Only the ISS loaded (both layers off, or none downloaded yet): say so.
@@ -1965,15 +1970,24 @@ inline uint32_t status_text(double t, char *b, size_t n) {
   const char *what = iss_only ? "ISS orbital data" : "Orbital data";
   fmt_age(t - s.data_time, age, sizeof(age));
   if (s.error[0]) {
-    snprintf(b, n, "%s.\nUsing %s%s %s old; retrying in %s", s.error, iss_only ? "ISS " : "", "orbital data", age, retry);
+    if (ha)
+      snprintf(b, n, "%s.\nUsing %sorbital data; retrying", s.error, iss_only ? "ISS " : "");
+    else
+      snprintf(b, n, "%s.\nUsing %s%s %s old; retrying in %s", s.error, iss_only ? "ISS " : "", "orbital data", age, retry);
     return C_WARN;
   }
   if (t - s.data_time > STALE_S) {
-    snprintf(b, n, "%s is %s old;\npositions may drift", what, age);
+    if (ha)
+      snprintf(b, n, "%s is stale;\npositions may drift", what);
+    else
+      snprintf(b, n, "%s is %s old;\npositions may drift", what, age);
     return C_WARN;
   }
   fmt_age(t - s.loaded, age, sizeof(age));
-  snprintf(b, n, "%s updated %s ago", what, age);
+  if (ha)
+    snprintf(b, n, "%s up to date", what);
+  else
+    snprintf(b, n, "%s updated %s ago", what, age);
   return C_OK;
 }
 
@@ -2714,6 +2728,241 @@ inline void draw_radiant(lv_layer_t *layer, const lv_area_t &clip, int ox, int o
     lv_draw_label(layer, &l, &a);
   }
 }
+
+// UI-79: a re-entry in the sky view. When the clock passes a listed re-entry's estimate, a
+// fireball crosses the disc once: a white-hot head with a tail cooling to orange and red, the
+// body breaking into a few fainter pieces part-way, then burning out. No two are alike: where
+// it starts, its heading, length, speed, sideways bow and wobble, and the pieces are all drawn
+// at random. (The estimate is only good to hours, and the real thing is seldom visible from
+// here: this marks the moment, it is not a prediction of the path.)
+namespace reentry_fx {
+constexpr int NFRAG = 5, NPLAYED = 16, SEG = 10;
+struct Frag {
+  float q = 0;    // when it breaks off (part of the run)
+  float ca = 1, sa = 0;  // its heading (cos, sin)
+  float len = 0;  // how far it flies (px)
+};
+struct State {
+  bool on = false, deb = false;
+  uint32_t t0 = 0, dur = 3000;
+  float x0 = 0, y0 = 0, dx = 0, dy = 0, bend = 0, wob = 0, ph = 0;
+  int nfrag = 0;
+  Frag f[NFRAG];
+  lv_area_t last = {0, 0, -1, -1};  // what was drawn at the last frame (disc coordinates)
+  int32_t played[NPLAYED] = {};
+  int nplayed = 0;
+  lv_timer_t *timer = nullptr;
+};
+inline State s;
+inline uint32_t now_ms() {
+#ifdef SAT_HOST_TEST
+  return (uint32_t) (uint64_t) (sat_host_now * 1000.0);
+#else
+  return lv_tick_get();
+#endif
+}
+inline float rnd(int lo, int hi) { return (float) lv_rand(lo, hi) / 100.0f; }  // lo..hi in hundredths
+inline bool was_played(int32_t id) {
+  for (int i = 0; i < std::min(s.nplayed, NPLAYED); i++)
+    if (s.played[i] == id)
+      return true;
+  return false;
+}
+// the main body's place at q (0..1 of the run)
+inline void at(float q, float &x, float &y) {
+  const float len = sqrtf(s.dx * s.dx + s.dy * s.dy), nx = -s.dy / len, ny = s.dx / len;
+  const float b = s.bend * 4.0f * q * (1.0f - q) + s.wob * q * sinf(s.ph + q * 11.0f);
+  x = s.x0 + s.dx * q + nx * b;
+  y = s.y0 + s.dy * q + ny * b;
+}
+inline float eased(float p) { return p * (1.25f - 0.25f * p); }  // quick, slowing as the air thickens
+// a piece's head at time p, 0 before it breaks off
+inline bool frag_at(const Frag &f, float p, float &x, float &y, float &life) {
+  const float end = 0.97f;
+  if (p < f.q || f.q >= end)
+    return false;
+  life = (p - f.q) / (end - f.q);
+  float bx, by;
+  at(eased(f.q), bx, by);
+  const float d = f.len * life * (1.5f - 0.5f * life);
+  x = bx + f.ca * d;
+  y = by + f.sa * d;
+  return true;
+}
+inline void start(const net::DecayRec &d) {
+  const float R = (float) ui.radius, cx = (float) ui.cx, cy = (float) ui.cy;
+  // in from the low sky, heading roughly across the disc
+  const float a0 = rnd(0, 628), r0 = R * rnd(55, 90);
+  s.x0 = cx + r0 * cosf(a0);
+  s.y0 = cy + r0 * sinf(a0);
+  const float h = atan2f(cy - s.y0, cx - s.x0) + (rnd(0, 100) - 0.5f) * 2.1f;  // +-60 deg of "towards the middle"
+  float len = R * rnd(55, 90);
+  for (int i = 0; i < 5; i++) {  // keep the end inside the horizon ring
+    const float ex = s.x0 + len * cosf(h) - cx, ey = s.y0 + len * sinf(h) - cy;
+    if (ex * ex + ey * ey < (R - 8) * (R - 8))
+      break;
+    len *= 0.8f;
+  }
+  s.dx = len * cosf(h);
+  s.dy = len * sinf(h);
+  s.bend = (rnd(0, 100) - 0.5f) * R * 0.24f;
+  s.wob = 1.5f + rnd(0, 350);
+  s.ph = rnd(0, 628);
+  s.dur = 2600 + (uint32_t) lv_rand(0, 1800);
+  s.deb = d.deb;
+  s.nfrag = d.deb ? 1 + lv_rand(0, 1) : 2 + lv_rand(0, NFRAG - 2);
+  for (int i = 0; i < s.nfrag; i++) {
+    Frag &f = s.f[i];
+    f.q = 0.3f + rnd(0, 32);
+    const float ang = h + ((i & 1) ? 1.0f : -1.0f) * (0.1f + rnd(0, 28));  // 6..22 deg off the heading
+    f.ca = cosf(ang);
+    f.sa = sinf(ang);
+    f.len = len * (0.12f + rnd(0, 18));
+  }
+  s.t0 = now_ms();
+  s.on = true;
+  s.last = {0, 0, -1, -1};
+  s.played[s.nplayed++ % NPLAYED] = d.id;
+}
+// the tail's length at p, as a part of the run
+inline float tail_len(float p) {
+  const float burn = p < 0.8f ? 0.0f : (p - 0.8f) / 0.2f;
+  return 0.34f * (1.0f - 0.7f * burn);
+}
+inline void draw(lv_layer_t *layer, const lv_area_t &clip, int ox, int oy) {
+  if (!s.on)
+    return;
+  const float p = std::min(1.0f, (now_ms() - s.t0) / (float) s.dur);
+  const float fade_in = std::min(1.0f, p / 0.12f);
+  const float burn = p < 0.8f ? 0.0f : (p - 0.8f) / 0.2f;       // the end
+  const float glow = fade_in * (1.0f - burn * burn) * (s.deb ? 0.7f : 1.0f);
+  const float hp = eased(p), tl = tail_len(p);
+  const lv_color_t hot = lv_color_hex(0xFFF4E0), warm = lv_color_hex(C_REENTRY), cool = lv_color_hex(0x7A2A1A);
+  lv_draw_line_dsc_t d;
+  lv_draw_line_dsc_init(&d);
+  d.round_start = d.round_end = 1;
+  float px, py;
+  at(hp, px, py);
+  for (int i = 0; i < SEG; i++) {  // the main tail, hottest and widest at the head
+    const float f0 = (float) i / SEG, f1 = (float) (i + 1) / SEG;
+    d.color = f0 < 0.4f ? lv_color_mix(warm, hot, (uint8_t) (255 * f0 / 0.4f))
+                        : lv_color_mix(cool, warm, (uint8_t) (255 * (f0 - 0.4f) / 0.6f));
+    d.width = i < 3 && !s.deb ? 3 : (i < 6 ? 2 : 1);
+    d.opa = (lv_opa_t) (glow * 255 * (1.0f - f0) * (1.0f - 0.4f * f0));
+    float x0, y0, x1, y1;
+    at(std::max(0.0f, hp - tl * f0), x0, y0);
+    at(std::max(0.0f, hp - tl * f1), x1, y1);
+    d.p1.x = (lv_value_precise_t) (ox + x0);
+    d.p1.y = (lv_value_precise_t) (oy + y0);
+    d.p2.x = (lv_value_precise_t) (ox + x1);
+    d.p2.y = (lv_value_precise_t) (oy + y1);
+    lv_draw_line(layer, &d);
+  }
+  // the pieces: short tails, fading as they cool
+  for (int i = 0; i < s.nfrag; i++) {
+    float x1, y1, life;
+    if (!frag_at(s.f[i], p, x1, y1, life))
+      continue;
+    float x0, y0, l0;
+    frag_at(s.f[i], std::max(s.f[i].q, p - 0.06f), x0, y0, l0);
+    d.width = 1;
+    d.color = lv_color_mix(cool, warm, (uint8_t) (255 * std::min(1.0f, life * 1.3f)));
+    d.opa = (lv_opa_t) (255 * (1.0f - life) * fade_in * 0.85f);
+    d.p1.x = (lv_value_precise_t) (ox + x0);
+    d.p1.y = (lv_value_precise_t) (oy + y0);
+    d.p2.x = (lv_value_precise_t) (ox + x1);
+    d.p2.y = (lv_value_precise_t) (oy + y1);
+    lv_draw_line(layer, &d);
+    lv_draw_rect_dsc_t r;
+    lv_draw_rect_dsc_init(&r);
+    r.bg_color = lv_color_mix(warm, hot, (uint8_t) (255 * life));
+    r.bg_opa = d.opa;
+    const lv_area_t a = {(int32_t) (ox + x1 - 1), (int32_t) (oy + y1 - 1), (int32_t) (ox + x1), (int32_t) (oy + y1)};
+    lv_draw_rect(layer, &r, &a);
+  }
+  // the head: flares as it breaks up (~0.4..0.6) and again at the end, then shrinks away
+  const float flare = std::max(0.0f, 1.0f - fabsf(p - 0.5f) / 0.12f), end = burn < 0.35f ? burn / 0.35f : (1.0f - burn) / 0.65f;
+  const float head_r = (s.deb ? 1.2f : 1.8f) + 1.6f * flare + 1.2f * end - (burn > 0.35f ? 2.2f * (burn - 0.35f) / 0.65f : 0.0f);
+  if (head_r < 0.5f)
+    return;
+  lv_draw_rect_dsc_t h;
+  lv_draw_rect_dsc_init(&h);
+  h.radius = LV_RADIUS_CIRCLE;
+  h.bg_color = warm;
+  h.bg_opa = (lv_opa_t) (80 * glow);
+  const float g = head_r + 3.0f;
+  const lv_area_t ga = {(int32_t) (ox + px - g), (int32_t) (oy + py - g), (int32_t) (ox + px + g), (int32_t) (oy + py + g)};
+  lv_draw_rect(layer, &h, &ga);
+  h.bg_color = hot;
+  h.bg_opa = (lv_opa_t) (255 * glow);
+  const lv_area_t ha = {(int32_t) (ox + px - head_r), (int32_t) (oy + py - head_r), (int32_t) (ox + px + head_r),
+                        (int32_t) (oy + py + head_r)};
+  lv_draw_rect(layer, &h, &ha);
+}
+// one frame: the box to redraw is where it is now and where it was
+inline void step() {
+  if (!s.on)
+    return;
+  const uint32_t el = now_ms() - s.t0;
+  const bool done = el >= s.dur;
+  const float p = std::min(1.0f, el / (float) s.dur);
+  const float hp = eased(p), tl = tail_len(p);
+  lv_area_t b = {INT32_MAX, INT32_MAX, INT32_MIN, INT32_MIN};
+  auto add = [&](float x, float y) {
+    b.x1 = std::min(b.x1, (int32_t) x - 8);
+    b.y1 = std::min(b.y1, (int32_t) y - 8);
+    b.x2 = std::max(b.x2, (int32_t) x + 8);
+    b.y2 = std::max(b.y2, (int32_t) y + 8);
+  };
+  float x, y, life;
+  for (int i = 0; i <= 4; i++) {  // the bowed tail is covered by a few points along it
+    at(std::max(0.0f, hp - tl * i / 4.0f), x, y);
+    add(x, y);
+  }
+  for (int i = 0; i < s.nfrag; i++) {
+    if (frag_at(s.f[i], p, x, y, life))
+      add(x, y);
+    if (frag_at(s.f[i], std::max(s.f[i].q, p - 0.06f), x, y, life))
+      add(x, y);
+  }
+  if (s.last.x2 >= s.last.x1) {
+    b.x1 = std::min(b.x1, s.last.x1);
+    b.y1 = std::min(b.y1, s.last.y1);
+    b.x2 = std::max(b.x2, s.last.x2);
+    b.y2 = std::max(b.y2, s.last.y2);
+  }
+  invalidate_disc_area(b);
+  s.last = b;
+  if (done) {
+    s.on = false;
+#ifndef SAT_HOST_TEST
+    if (s.timer) {
+      lv_timer_delete(s.timer);
+      s.timer = nullptr;
+    }
+#endif
+  }
+}
+// called from tick(): the clock has just passed an estimate shown on the Alerts tab
+inline void check(double t) {
+  if (s.on || !ui.reentry_alerts || ui.scrub_on || !ui.ready || !ui.w.sky || !clock_valid())
+    return;
+#ifndef SAT_HOST_TEST
+  if (lv_obj_get_screen(ui.w.sky) != lv_screen_active())
+    return;  // not showing: it may still play within the two minutes
+#endif
+  for (const auto &d : live.decays) {
+    if (d.est > t || t - d.est > 120.0 || was_played(d.id))
+      continue;
+    start(d);
+#ifndef SAT_HOST_TEST
+    s.timer = lv_timer_create([](lv_timer_t *) { step(); }, 40, nullptr);
+#endif
+    step();
+    return;
+  }
+}
+}  // namespace reentry_fx
 inline void draw_comet_tails(lv_layer_t *layer, const lv_area_t &clip, int ox, int oy);
 inline void draw_overlays(lv_layer_t *layer, const lv_area_t &clip, int ox, int oy) {
   draw_comet_tails(layer, clip, ox, oy);  // UI-63
@@ -2721,6 +2970,7 @@ inline void draw_overlays(lv_layer_t *layer, const lv_area_t &clip, int ox, int 
   if (ui.scrub_on)
     return;  // UI-53: no satellites (trains, GEO, trails, pass arcs) at another time
   draw_trains(layer, clip, ox, oy);  // UI-42
+  reentry_fx::draw(layer, clip, ox, oy);  // UI-79
   if (!ui.geo_pts.empty()) {  // UI-28: under everything else
     lv_draw_rect_dsc_t r;
     lv_draw_rect_dsc_init(&r);
@@ -3560,7 +3810,7 @@ inline void reentry_text(const net::DecayRec &d, double t, char *b, size_t n) {
     snprintf(b, n, "%s re-enters %s%s - over you %s, %.0f\xC2\xB0 %s", d.name, d.est > t ? "in ~" : "now",
              d.est > t ? in : "", hm, d.over_el, d.over_dir);
   } else if (d.est > t) {
-    snprintf(b, n, "%s re-enters in ~%s (\xC2\xB1%.0fh)", d.name, in, std::max(1.0f, d.unc_h));
+    snprintf(b, n, "%s re-enters in ~%s (+/-%.0fh)", d.name, in, std::max(1.0f, d.unc_h));
   } else {
     snprintf(b, n, "%s re-entering about now", d.name);
   }
@@ -4416,6 +4666,13 @@ constexpr uint16_t CSS_LAUNCHED = 23495;  // 29 Apr 2021, Tianhe (UI-52)
 // object (ISS or Tiangong overhead, a planet, comet, meteor shower, the Moon), or else this
 // card, built from the same live data, in the alert's colour and icon.
 inline void select_object(int kind, int32_t id);
+// the card's bottom padding keeps clear of its bottom buttons: Find (every card but an
+// alert's), and the picture button (Sky cam on the aurora and space weather alert cards)
+inline void card_pad_update() {
+  const bool info = ui.sel_kind == K_INFO;
+  const bool buttons = !info || info_alert.info == AI_AURORA || info_alert.info == AI_WIND || info_alert.info == AI_SWX;
+  lv_obj_set_style_pad_bottom(ui.card, buttons ? 52 : 10, 0);
+}
 inline void info_card_update(double t) {
   const Alert &al = info_alert;
   if (t - ui.sel_since > CARD_TIMEOUT_S) {
@@ -4582,7 +4839,7 @@ inline void info_card_update(double t) {
           fmt_dur(d.est - t, in, sizeof(in));
         else
           snprintf(in, sizeof(in), "about now");
-        k += snprintf(body + k, sizeof(body) - k, "%s%s (%s): %s%s, \xC2\xB1%.0fh", k ? "\n" : "", d.name,
+        k += snprintf(body + k, sizeof(body) - k, "%s%s (%s): %s%s, +/-%.0fh", k ? "\n" : "", d.name,
                       d.rb ? "rocket stage" : d.deb ? "debris" : "satellite", d.est > t ? "in ~" : "", in,
                       std::max(1.0f, d.unc_h));
         if (d.over_el >= 10 && d.over_t > t && k < (int) sizeof(body)) {
@@ -4645,6 +4902,7 @@ inline void info_card_update(double t) {
   lv_obj_add_flag(ui.sel_ring, LV_OBJ_FLAG_HIDDEN);
   lv_area_t box;
   lv_obj_get_coords(ui.w.sky, &box);
+  card_pad_update();
   lv_obj_update_layout(ui.card);
   const int ch = lv_obj_get_height(ui.card), cw = lv_obj_get_width(ui.card);
   lv_obj_set_pos(ui.card, box.x1 + ui.cx - cw / 2, box.y1 + std::max(0, std::min(ui.size - ch, 16)));
@@ -4665,6 +4923,7 @@ inline void alert_click_cb(lv_event_t *e) {
 inline void card_update(double t) {
   if (ui.sel_kind < 0 || ui.card == nullptr)
     return;
+  card_pad_update();
   if (card_find_btn) {  // UI-41d: an alert's details card has nothing to point at
     if (ui.sel_kind == K_INFO)
       lv_obj_add_flag(card_find_btn, LV_OBJ_FLAG_HIDDEN);
@@ -6738,6 +6997,7 @@ inline void tick() {
   update_planets(tv);  // UI-40
   update_comets(tv);   // UI-63
   update_radiant(tv);  // UI-47
+  reentry_fx::check(t);  // UI-79
 #ifdef SAT_HOST_TEST
   align_step(t);      // UI-41: one day of the look-ahead per tick (the astro task's on the device)
 #endif
@@ -7419,7 +7679,7 @@ inline float wind_speed() { return wind_fresh(clock_now()) ? live.wind.speed : N
 // Diagnostics (NET-9)
 inline std::string data_status() {
   char b[160];
-  status_text(clock_now(), b, sizeof(b));
+  status_text(clock_now(), b, sizeof(b), true);  // no ticking ages: HA logs a change per new text
   for (char *c = b; *c; c++)
     if (*c == '\n')
       *c = ' ';

@@ -4,3 +4,5 @@ __pycache__/
 *.pyc
 *.swp
 .DS_Store
+.venv/
+build-local.yaml

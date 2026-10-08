@@ -1,7 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.32 (queued): every glyph checked: "~" (the re-entry times, "in ~5h") was missing from the fonts and drew as a box; added. Text from the feeds (launch, pad, event, comet names) is folded to what the fonts hold (UI-78). The update prompt shows the release notes (UI-68c).
+- 4.6.33 (queued): a re-entry plays as a random fireball across the sky view when its estimated time comes (UI-79). The countdown's "WEBCAST LIVE" shows a QR code to the webcast (UI-80). The web UI's logo links to the GitHub page (NET-1). HA: the satellite counts show as whole numbers, not "18.0", and Data Status no longer changes every minute. The Firmware entity has an icon. Re-entry cards say "+/-" (was a box), and cards with no button no longer leave space for one.
+- 4.6.32: every glyph checked: "~" (the re-entry times, "in ~5h") was missing from the fonts and drew as a box; added. Text from the feeds (launch, pad, event, comet names) is folded to what the fonts hold (UI-78). The update prompt shows the release notes (UI-68c).
 - 4.6.31: the picture viewer's < and > buttons (the picture before, earlier frames) are gone; the latest picture only (UI-59c). Frees a 259 KB picture buffer. New: space weather alerts from NOAA (UI-73), re-entry alerts (UI-74), the UAF Poker Flat all-sky camera as a picture tab and from the aurora cards (UI-75), a full-screen launch countdown from T-10 min (UI-76), and "On this day" in space history (UI-77). The Alerts tab gains Space wx, This day, Re-entry and Countdown.
 - 4.6.30: the display can no longer stay shifted 10 rows with noise: the frame-start bug in the display driver is put right every frame (PERF-16; Display Resyncs counts it). Lighter on the PSRAM bus the panel refills from (PERF-15a): the astro task works in small pieces with rests, and a streaming picture redraws only its new rows. Last Crash shows the firmware and when (FAIL-10a; older records are dropped).
 - 4.6.29: the web page has an Alerts section with all the alert switches (NET-6a). Comets moves under Stations in the Alerts tab (UI-41j). A shooting star crosses the About page's logo now and then, burning out at the end (UI-67a). The Sun, Moon, Earth and region pictures appear top down as they download, already round-edged, over the picture before (UI-59f).
@@ -719,6 +720,21 @@ UI-78  Glyphs: the text fonts (*glyphs) hold printable ASCII except ^ ` { } \, p
        stored (net::fold_text): accented Latin letters to their base letter (U+00C0..U+017F, by
        Unicode decomposition), dashes and minus to "-", curly quotes to straight, no-break and thin
        spaces to a space, the ellipsis to "...", anything else to "?".
+UI-79  Re-entry animation: when the clock passes a listed re-entry's estimate (UI-74; within 2 min,
+       once per object, Re-entry Alerts on, not while scrubbing time), a fireball crosses the sky
+       view for 2.6-4.4 s: a white-hot head, a tail cooling to orange and red, the body breaking
+       into 2-5 fainter pieces (1-2 for debris) at 30-62 % of the run, then burning out. Every
+       one is random: the start (55-90 % of the radius out), the heading (within 60 deg of
+       "towards the middle"), length, bow and wobble of the path, the pieces' headings and
+       reach. Drawn in the overlay layer (sat_tracker.h reentry_fx); a 40 ms timer exists only
+       while it plays and redraws just the box it covers. It marks the moment: the estimate is
+       only good to hours and the path is not a prediction.
+UI-80  Webcast QR code: while the countdown (UI-76) shows "WEBCAST LIVE", a QR code at its lower
+       right, "Scan to watch", opens the webcast on a phone. The link is the best-ranked https
+       one of the launch's vid_urls (Launch Library 2, lowest priority number; up to 99 chars;
+       none: no code). LVGL's QR code (lv_qrcode, CONFIG_LV_USE_QRCODE; error correction M,
+       the version picked to fit the link), black on white with its quiet zone, 130 px square.
+       Checked against a QR decoder.
 UI-41k Solar Alerts (on by default; mdi:weather-sunny, HA "Solar Alerts", web Celestial after
        Lunar): solar eclipses seen from here (UI-51) and solstices and equinoxes (UI-41b).
 UI-41g Comet Alerts (on by default): a comet bright enough to see (UI-63). The Comets map layer
@@ -1322,6 +1338,10 @@ NET-1  ESPHome's web server runs on port 80 (version 3, with the UI bundled loca
        web page is ON, as asked. The web UI has no login, so anyone on the LAN can
        change entities or flash firmware; add `auth:` to the web_server block if
        that matters. The Builder's encrypted native OTA (BUILD-1) still works.
+       The page's logo links to this project's GitHub page, not esphome.io/web-api (ESPHome
+       hardcodes it in its bundled page): the sky_tracker component swaps the link in the
+       build folder's copy of the page after ESPHome copies its sources (__init__.py). A
+       later ESPHome that words the page differently leaves the link alone and warns.
 NET-2  Fallback AP "Sky Tracker - XXXX", where XXXX is the last 4 hex digits of the
        MAC, with no password. The captive portal serves Wi-Fi setup while the AP is
        up. The name is set at boot (on_boot priority 1100, before Wi-Fi), because

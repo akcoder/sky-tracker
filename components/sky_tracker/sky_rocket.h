@@ -956,11 +956,14 @@ inline void play(const char *name) { play_scene(false, name); }
 // animation (check(), which waits for the top layer to be clear) takes over; a slip of more than
 // the window, a scrub or a flown status closes it too.
 constexpr double CD_WINDOW_S = 600;
+constexpr int QR_PX = 130;  // UI-80: the webcast QR code's side
 struct Cd {
   bool on = true;
   const lv_font_t *digits = nullptr, *title = nullptr, *body = nullptr, *small = nullptr;
   lv_obj_t *root = nullptr, *mission = nullptr, *sub = nullptr, *clock = nullptr, *status = nullptr, *when = nullptr,
-           *badge = nullptr;
+           *badge = nullptr, *qr = nullptr, *qr_hint = nullptr;
+  char watch[100] = "";       // UI-80: what the webcast's QR code encodes
+  bool qr_ok = false;         // ...and that it fitted
   lv_timer_t *timer = nullptr;
   uint32_t key = 0, dismissed = 0;  // the launch (by name), and the one put away
   char name[64] = "";
@@ -980,7 +983,8 @@ void countdown_close() {
   }
   if (cd.root)
     lv_obj_delete(cd.root);
-  cd.root = cd.mission = cd.sub = cd.clock = cd.status = cd.when = cd.badge = nullptr;
+  cd.root = cd.mission = cd.sub = cd.clock = cd.status = cd.when = cd.badge = cd.qr = cd.qr_hint = nullptr;
+  cd.watch[0] = 0;
   cd.shown_s = -1;
 }
 bool countdown_open() { return cd.root != nullptr; }
@@ -1013,6 +1017,21 @@ inline void cd_update() {
     lv_obj_remove_flag(cd.badge, LV_OBJ_FLAG_HIDDEN);
   else
     lv_obj_add_flag(cd.badge, LV_OBJ_FLAG_HIDDEN);
+  // UI-80: the QR code to the webcast while it is live
+  const bool show_qr = l->webcast && l->watch[0] != 0;
+  if (show_qr && strcmp(cd.watch, l->watch) != 0) {
+    net::copy_cstr(cd.watch, sizeof(cd.watch), l->watch);
+    cd.qr_ok = lv_qrcode_update(cd.qr, cd.watch, (uint32_t) strlen(cd.watch)) == LV_RESULT_OK;
+  }
+  const bool has_qr = show_qr && cd.qr_ok;
+  if (has_qr != !lv_obj_has_flag(cd.qr, LV_OBJ_FLAG_HIDDEN)) {
+    for (lv_obj_t *o : {cd.qr, cd.qr_hint}) {
+      if (has_qr)
+        lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+      else
+        lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
 }
 inline lv_obj_t *cd_label(lv_obj_t *p, const lv_font_t *f, uint32_t col, int y, const char *text) {
   lv_obj_t *l = lv_label_create(p);
@@ -1067,6 +1086,17 @@ inline void cd_open(const net::LaunchRec &l) {
   lv_obj_set_style_text_color(bl, lv_color_hex(0xFFFFFF), 0);
   lv_label_set_text(bl, "WEBCAST LIVE");
   lv_obj_center(bl);
+  cd.qr_hint = cd_label(r, cd.small, 0x9AA6C8, 404, "Scan to watch");  // UI-80
+  lv_obj_add_flag(cd.qr_hint, LV_OBJ_FLAG_HIDDEN);
+  cd.qr = lv_qrcode_create(r);  // black on white, with its quiet zone; 130 px: 3 px a module for a YouTube link
+  lv_qrcode_set_size(cd.qr, QR_PX);
+  lv_qrcode_set_dark_color(cd.qr, lv_color_hex(0x000000));
+  lv_qrcode_set_light_color(cd.qr, lv_color_hex(0xFFFFFF));
+  lv_obj_align(cd.qr, LV_ALIGN_TOP_RIGHT, -8, 440 - QR_PX);
+  lv_obj_remove_flag(cd.qr, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+  lv_obj_add_flag(cd.qr, LV_OBJ_FLAG_HIDDEN);
+  cd.qr_ok = false;
+  cd.watch[0] = 0;
   cd_label(r, cd.small, 0x7E8BB3, 446, "Tap to close");
   cd_update();
 #ifndef SAT_HOST_TEST

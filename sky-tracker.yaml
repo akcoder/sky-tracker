@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.32"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.33"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -36,6 +36,11 @@ esphome:
     # forced a full-screen PSRAM redraw each tick and the panel jumped. ESPHome
     # passes -D flags to every IDF component, LVGL included, so layouts agree.
     - "-DLV_INV_BUF_SIZE=128"
+  platformio_options:
+    # UI-80: LVGL's QR code for the launch countdown's webcast link. ESPHome's lv_conf.h turns
+    # off every LVGL part its widgets don't use, unless a define here (and only here) sets it.
+    build_flags:
+      - "-DLV_USE_QRCODE=1"
   on_boot:
     - priority: 1100               # HW-7: before the SPI bus (1000) and the panel init
       then:
@@ -351,6 +356,7 @@ update:
   - platform: http_request
     id: fw_update
     name: Firmware
+    icon: mdi:update
     source: ${manifest_url}
     update_interval: never         # NET-13a: checked from the interval below, so each check is logged
     web_server:
@@ -906,6 +912,7 @@ sensor:
       sorting_group_id: grp_sats
       sorting_weight: 3
     icon: mdi:counter
+    state_class: measurement     # HA shows "18", not "18.0" (it applies the precision to measurements)
     accuracy_decimals: 0
     update_interval: 60s
     lambda: return sat::sat_count();
@@ -916,6 +923,7 @@ sensor:
       sorting_group_id: grp_sats
       sorting_weight: 4
     icon: mdi:counter
+    state_class: measurement     # HA shows "18", not "18.0" (it applies the precision to measurements)
     accuracy_decimals: 0
     update_interval: 90s
     lambda: return sat::starlink_count();
@@ -979,6 +987,7 @@ sensor:
     id: s_satellites_tracked
     name: Satellites Tracked
     icon: mdi:satellite-variant
+    state_class: measurement     # HA shows "18", not "18.0" (it applies the precision to measurements)
     accuracy_decimals: 0
     update_interval: 300s
     entity_category: diagnostic
@@ -990,6 +999,7 @@ sensor:
     id: s_starlink_tracked
     name: Starlink Tracked
     icon: mdi:satellite-uplink
+    state_class: measurement     # HA shows "18", not "18.0" (it applies the precision to measurements)
     accuracy_decimals: 0
     update_interval: 300s
     entity_category: diagnostic

@@ -1197,13 +1197,13 @@ int main() {
     host_http_bodies["rtsw_mag_1m.json"] = mag;
     host_http_bodies["rtsw_wind_1m.json"] = wind;
     // UI-54 launches: one from Kodiak in 5 h, one from Florida in 40 min, one flown
-    char lj[2400];
+    char lj[3200];
     auto iso = [](double t, char *b) { time_t tt = (time_t) t; struct tm g; gmtime_r(&tt, &g); strftime(b, 32, "%Y-%m-%dT%H:%M:%SZ", &g); };
     char t1[32], t2[32], t3[32];
     iso(sat_host_now + 5 * 3600, t1); iso(sat_host_now + 40 * 60, t2); iso(sat_host_now - 3 * 3600, t3);
     snprintf(lj, sizeof(lj), "{\"count\":3,\"results\":["
       "{\"name\":\"Minotaur IV | NROL-174\",\"net\":\"%s\",\"status\":{\"abbrev\":\"Go\"},\"pad\":{\"latitude\":\"57.435\",\"longitude\":\"-152.337\",\"location\":{\"name\":\"Pacific Spaceport Complex, Alaska, USA\"},\"country\":{\"alpha_3_code\":\"USA\"}},\"rocket\":{\"configuration\":{\"name\":\"Minotaur IV\"}},\"mission\":{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":{\"f\":{\"g\":{\"h\":[1]}}}}}}}}},"
-      "{\"name\":\"Falcon 9 | Starlink 12-5\",\"net\":\"%s\",\"status\":{\"abbrev\":\"Go\"},\"pad\":{\"latitude\":28.56,\"longitude\":-80.577,\"location\":{\"name\":\"Cape Canaveral SFS, FL, USA\"},\"country\":{\"alpha_3_code\":\"USA\"}},\"rocket\":{\"configuration\":{\"name\":\"Falcon 9\"}}},"
+      "{\"name\":\"Falcon 9 | Starlink 12-5\",\"vid_urls\":[{\"priority\":10,\"url\":\"https://example.com/b\"},{\"priority\":2,\"url\":\"https://www.youtube.com/watch?v=abc\"},{\"priority\":1,\"url\":\"http://insecure.example/x\"}],\"net\":\"%s\",\"status\":{\"abbrev\":\"Go\"},\"pad\":{\"latitude\":28.56,\"longitude\":-80.577,\"location\":{\"name\":\"Cape Canaveral SFS, FL, USA\"},\"country\":{\"alpha_3_code\":\"USA\"}},\"rocket\":{\"configuration\":{\"name\":\"Falcon 9\"}}},"
       "{\"name\":\"Electron | Test\",\"net\":\"%s\",\"status\":{\"abbrev\":\"Success\"},\"pad\":{\"latitude\":-39.26,\"longitude\":177.86,\"location\":{\"name\":\"Mahia, NZ\"},\"country\":{\"alpha_3_code\":\"NZL\"}},\"rocket\":{\"configuration\":{\"name\":\"Electron\"}}}]}", t1, t2, t3);
     host_http_bodies["launches/upcoming"] = lj;
     sat::net::wind_next = sat::net::launch_next = 0;
@@ -1216,6 +1216,13 @@ int main() {
     CHECK(fabs(sat::live.wind.bz + 8.0f) < 0.01f && fabs(sat::live.wind.speed - 520) < 0.1f && sat::live.launches.size() == 3,
           "wind/launches");
     CHECK(sat::wind_warning(sat_host_now), "wind warning");
+    {  // UI-80: the webcast link: the best-ranked https one
+      const char *w = "";
+      for (const auto &l : sat::live.launches)
+        if (strstr(l.name, "Falcon 9"))
+          w = l.watch;
+      CHECK(!strcmp(w, "https://www.youtube.com/watch?v=abc"), "launches: webcast link (%s)", w);
+    }
     sat::Alert al[sat::MAX_ALERTS];
     const int na = sat::collect_alerts(sat_host_now, al, sat::MAX_ALERTS);
     bool kod = false, fl = false;
@@ -2581,6 +2588,35 @@ int main() {
     sat::set_reentry_alerts(true);
     if (sat::reentry_top(sat_host_now))
       alert_and_card(sat::AI_REENTRY, "r23_reentry_alert", "r23_reentry_card", "Estimated from how fast");
+    {  // UI-79: the re-entry fireball: starts when the clock passes an estimate, once, never twice alike
+      namespace fx = sat::reentry_fx;
+      sat::set_reentry_alerts(true);
+      float start_x[2] = {0, 0}, start_y[2] = {0, 0};
+      bool played_ok = true;
+      for (int run = 0; run < 2; run++) {
+        net::DecayRec d = sat::live.decays.empty() ? net::DecayRec{} : sat::live.decays[0];
+        d.id = 990001 + run;
+        d.est = sat_host_now - 5;
+        sat::live.decays.insert(sat::live.decays.begin(), d);
+        sat::tick();
+        played_ok = played_ok && fx::s.on;
+        start_x[run] = fx::s.x0, start_y[run] = fx::s.y0;
+        for (int f = 0; f < 150 && fx::s.on; f++) {
+          sat_host_now += 0.04;
+          fx::step();
+          lv_refr_now(disp);
+          if (run == 0 && f == 40)
+            shoot("reentry_fx_a");
+          if (run == 0 && f == 60)
+            shoot("reentry_fx_b");
+        }
+        played_ok = played_ok && !fx::s.on;
+        sat::tick();  // the same estimate again: not twice
+        played_ok = played_ok && !fx::s.on;
+      }
+      CHECK(played_ok, "re-entry fx: plays once at the estimate and ends");
+      CHECK(start_x[0] != start_x[1] || start_y[0] != start_y[1], "re-entry fx: each path is its own");
+    }
     // ---- UI-75 the all-sky camera
     host_http_bodies["checkLive.php"] =
         "id: 1791479701\nretry: 60000\ndata: {\ndata: \"0\": \"images/poker-notdark.jpg\",\ndata: \"1\": \"images/poker-notdark.jpg\",\n"
@@ -2612,6 +2648,7 @@ int main() {
       snprintf(l.status, sizeof(l.status), "Go");
       l.net = sat_host_now + 300;
       l.webcast = true;
+      snprintf(l.watch, sizeof(l.watch), "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
       sat::live.launches.push_back(l);
       rk::countdown_fonts(&mono24, &mono18, &mono16, &mono16);
       rk::set_countdown(true);
@@ -2619,13 +2656,15 @@ int main() {
       CHECK(rk::countdown_open() && !strcmp(lv_label_get_text(rk::cd.clock), "T-05:00") &&
                 !strcmp(lv_label_get_text(rk::cd.status), "GO for launch") && !lv_obj_has_flag(rk::cd.badge, LV_OBJ_FLAG_HIDDEN),
             "countdown: T-05:00, GO, webcast live");
+      CHECK(!lv_obj_has_flag(rk::cd.qr, LV_OBJ_FLAG_HIDDEN) && rk::cd.qr_ok, "countdown: the webcast's QR code (%d)",
+            (int) rk::cd.qr_ok);
       shoot("r21_countdown");
       snprintf(sat::live.launches[0].status, sizeof(l.status), "Hold");
       sat::live.launches[0].webcast = false;
       sat_host_now += 61;
       rk::cd_update();
       CHECK(!strcmp(lv_label_get_text(rk::cd.clock), "T-03:59") && !strcmp(lv_label_get_text(rk::cd.status), "HOLD") &&
-                lv_obj_has_flag(rk::cd.badge, LV_OBJ_FLAG_HIDDEN),
+                lv_obj_has_flag(rk::cd.badge, LV_OBJ_FLAG_HIDDEN) && lv_obj_has_flag(rk::cd.qr, LV_OBJ_FLAG_HIDDEN),
             "countdown: a hold");
       shoot("r21_countdown_hold");
       sat_host_now = l.net + 0.5;
