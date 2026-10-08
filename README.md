@@ -4,8 +4,9 @@ A 4" touch screen that shows what's overhead right now: the ISS, Tiangong,
 Starlink trains, a few hundred other satellites, the Sun, Moon and planets, the
 stars and constellations, the Milky Way and any comet bright enough to matter.
 It runs on a cheap Guition ESP32-4848S040 panel with ESPHome and does all the
-orbit math on the chip, so the only thing it needs from the internet is fresh
-orbital elements a couple of times a day.
+orbit math on the chip. From the internet it only needs fresh orbital elements a
+couple of times a day, plus a few small feeds (space weather, launches) and the
+pictures you ask for.
 
 ![Sky map, Jupiter, About](docs/img/screens.png)
 
@@ -18,15 +19,27 @@ orbital elements a couple of times a day.
   and sets, the owner's flag for satellites.
 - **Passes.** The next visible ISS pass with a countdown, and its track drawn
   across the sky when you tap the ISS.
-- **Alerts.** Aurora (from NOAA's Kp and OVATION nowcast, only after dark),
-  meteor showers, eclipses, full Moons, the Moon passing a planet, visible ISS
-  passes and nearby rocket launches.
+- **Alerts.** One line under the title, rotating every minute; tap it for the
+  details. Each kind has its own switch:
+  - the sky: aurora (NOAA's Kp and OVATION nowcast, only after dark), planets
+    and alignments, meteor showers, the full Moon and the Moon near a planet,
+    eclipses, solstices and equinoxes, bright comets;
+  - space weather: NOAA storm watches, geomagnetic storms, big solar flares and
+    radiation storms;
+  - spaceflight: visible ISS and Tiangong passes, launches, dockings and
+    undockings, capsule splashdowns, and objects about to re-enter (with an
+    estimate of when, and whether they pass over you first);
+  - "This day in 1969: ...", a moment from space history, now and then.
 - **Pictures.** Today's Sun (GOES-19 SUVI), the Moon as it looks this hour (NASA
-  Dial-A-Moon), the whole Earth and your region from GOES, and built-in photos
-  of the planets. Swipe back through earlier frames with the < button.
-- **Launches.** The next rocket launch, from The Space Devs' Launch Library, with
-  RocketLaunch.Live as a backup. At lift-off a cartoon rocket flies across the screen
-  with the mission name (tap to skip, or turn it off with the Launch Animation switch):
+  Dial-A-Moon), the whole Earth and your region from GOES, the University of
+  Alaska's Poker Flat all-sky camera (is the aurora up right now?), and
+  built-in photos of the planets. Pictures fill in from the top as they download.
+- **Launches.** The next rocket launches, from The Space Devs' Launch Library,
+  with RocketLaunch.Live as a backup. Ten minutes out, a full-screen countdown
+  shows the mission, GO or HOLD, and whether the webcast is live. At lift-off a
+  cartoon rocket flies across the screen with the mission name (tap to skip, or
+  turn it off with the Launch Animation switch); ISS undockings and splashdowns
+  get their own animations:
 
   ![Launch animation](docs/img/launch.gif)
 - **Home Assistant.** ISS overhead, next pass, aurora chance, solar wind and
@@ -86,10 +99,14 @@ board, and leaves your current version in place if anything goes wrong.
 
 ## Settings
 
-Tap the gear on the map. Location (or GPS), map heading (or compass), which
-layers to show, 12/24 hour clock, miles or km, brightness with an automatic
-evening dim, a red night mode, and which alerts you want. **About** shows the
-version and where all the data comes from.
+Tap the gear on the map. Five tabs: **Display** (brightness with an automatic
+evening dim, a red night mode, 12/24 hour clock, miles or km, time zone),
+**Location** (latitude and longitude, or GPS; map heading, or compass),
+**Celestial** (stars, constellations, Milky Way, planets, comets), **Satellites**
+(which layers, the low-orbit cone, trails, space stations) and **Alerts** (which
+alerts you want, and the launch countdown). The same switches are on the web page
+and in Home Assistant. **About** shows the version and where all the data comes
+from.
 
 ## Building from source
 
@@ -97,7 +114,9 @@ version and where all the data comes from.
 sky-tracker.yaml          the device config (what the Builder and CI build)
 components/sky_tracker/   the C++: orbit propagation, drawing, data download
 docs/requirements.md      how every piece is supposed to behave, and why
+docs/comps/               design comps and screen renders
 tools/                    generators for the star catalogue, Milky Way, logo
+tools/host_test/          a desktop build of the UI and the tests (./build.sh, ./t4)
 ```
 
 The YAML calls into the `sat::` namespace through lambdas. The headers are
@@ -113,12 +132,13 @@ attaches it to the release and updates the manifest the devices read.
 
 | What | Source |
 | --- | --- |
-| Orbits | [CelesTrak](https://celestrak.org) (SatNOGS as a fallback for the ISS) |
-| Kp, solar wind, aurora nowcast | [NOAA SWPC](https://www.swpc.noaa.gov) |
+| Orbits, objects about to re-enter | [CelesTrak](https://celestrak.org) (SatNOGS as a fallback for the ISS) |
+| Kp, solar wind, aurora nowcast, space weather alerts | [NOAA SWPC](https://www.swpc.noaa.gov) |
 | Sun, Earth pictures | NOAA GOES-19 SUVI and GOES-18/19 GeoColor |
+| All-sky camera | [UAF Geophysical Institute](https://allsky.gi.alaska.edu), Poker Flat Research Range |
 | Moon | [NASA SVS Dial-A-Moon](https://svs.gsfc.nasa.gov/help/#apis-dialamoon) |
 | Comets | [JPL Small-Body Database](https://ssd.jpl.nasa.gov) |
-| Launches | [The Space Devs](https://thespacedevs.com), [RocketLaunch.Live](https://www.rocketlaunch.live) as a backup |
+| Launches, dockings, splashdowns | [The Space Devs](https://thespacedevs.com) Launch Library, [RocketLaunch.Live](https://www.rocketlaunch.live) as a backup for launches |
 | Planet photos | NASA, ESA (Mars: ESA Rosetta OSIRIS, CC BY-SA 3.0 IGO), via Wikimedia Commons |
 | Stars, constellations, Milky Way | [d3-celestial](https://github.com/ofrohn/d3-celestial) (Hipparcos positions, BSD-3-Clause) |
 
