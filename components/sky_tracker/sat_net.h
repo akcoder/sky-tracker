@@ -786,6 +786,50 @@ inline void copy_cstr(char *dst, size_t n, const char *src) {
   memcpy(dst, src, k);
   dst[k] = 0;
 }
+// UI-78: text from the feeds (launch, pad, event and comet names) made drawable: the device's
+// fonts hold printable ASCII plus a few symbols, so accented letters become their base letter,
+// dashes and curly quotes plain ones, a no-break space a space, and anything else "?".
+// In place (never longer).
+inline void fold_text(char *s) {
+  static const char LAT[] =  // U+00C0..U+017F, by Unicode decomposition (tools: NFKD)
+      "AAAAAAACEEEEIIIIDNOOOOOxOUUUUYTsaaaaaaaceeeeiiiidnooooo/ouuuuytyAaAaAaCcCcCcCcDdDdEeEeEeEeEeGgGgGgGgHhHhIiIiIiIiIi"
+      "IiJjKkkLlLlLlLlLlNnNnNnnNnOoOoOoOoRrRrRrSsSsSsSsTtTtTtUuUuUuUuUuUuWwYyYZzZzZzs";
+  const uint8_t *r = (const uint8_t *) s;
+  char *w = s;
+  while (*r) {
+    uint32_t cp = *r;
+    int n = 1;
+    if (cp >= 0xF0 && r[1] && r[2] && r[3])
+      cp = (cp & 7) << 18 | (r[1] & 63) << 12 | (r[2] & 63) << 6 | (r[3] & 63), n = 4;
+    else if (cp >= 0xE0 && r[1] && r[2])
+      cp = (cp & 15) << 12 | (r[1] & 63) << 6 | (r[2] & 63), n = 3;
+    else if (cp >= 0xC0 && r[1])
+      cp = (cp & 31) << 6 | (r[1] & 63), n = 2;
+    r += n;
+    if (cp < 0x80) {
+      *w++ = cp == '^' || cp == '`' || cp == '{' || cp == '}' || cp == '\\' ? '-' : (char) cp;
+    } else if (cp == 0xB0 || cp == 0xB1 || cp == 0xB7) {  // degree, plus-minus, middle dot: in the fonts
+      memcpy(w, r - n, n);
+      w += n;
+    } else if (cp >= 0xC0 && cp < 0x180) {
+      *w++ = LAT[cp - 0xC0];
+    } else if ((cp >= 0x2010 && cp <= 0x2015) || cp == 0x2212) {
+      *w++ = '-';
+    } else if (cp == 0x2018 || cp == 0x2019 || cp == 0x201B || cp == 0x2032) {
+      *w++ = '\'';
+    } else if (cp == 0x201C || cp == 0x201D || cp == 0x2033) {
+      *w++ = '"';
+    } else if (cp == 0xA0 || cp == 0x2009 || cp == 0x202F) {
+      *w++ = ' ';
+    } else if (cp == 0x2026 && w + 3 <= (char *) r) {
+      memcpy(w, "...", 3);
+      w += 3;
+    } else {
+      *w++ = '?';
+    }
+  }
+  *w = 0;
+}
 // UI-62: Last-Modified capture (declared above http_stream)
 inline esp_err_t http_event(esp_http_client_event_t *evt) {
   if (evt->event_id == HTTP_EVENT_ON_HEADER && evt->header_key && evt->header_value &&
@@ -1872,6 +1916,11 @@ inline void launch_cache_load() {
   if (esp_partition_read(cache_part, CACHE_LAUNCH_OFF, c, sizeof(*c)) == ESP_OK && c->magic == LAUNCH_MAGIC &&
       c->rec_size == sizeof(LaunchRec) && c->n <= (uint32_t) LAUNCH_KEEP && c->crc == launch_crc(*c)) {
     pvector<LaunchRec> out(c->rec, c->rec + c->n);
+    for (LaunchRec &l : out) {  // UI-78 (a list saved by an older version)
+      fold_text(l.name);
+      fold_text(l.rocket);
+      fold_text(l.where);
+    }
     launch_next = c->saved + LAUNCH_EVERY_S;
     ESP_LOGI(TAG, "cache: loaded %u launches", (unsigned) out.size());
     xSemaphoreTake(mutex, portMAX_DELAY);
@@ -1882,6 +1931,11 @@ inline void launch_cache_load() {
   heap_caps_free(c);
 }
 inline void launches_publish(pvector<LaunchRec> &out, double now, const char *src) {
+  for (LaunchRec &l : out) {  // UI-78
+    fold_text(l.name);
+    fold_text(l.rocket);
+    fold_text(l.where);
+  }
   std::sort(out.begin(), out.end(), [](const LaunchRec &a, const LaunchRec &b) { return a.net < b.net; });
   launch_next = now + LAUNCH_EVERY_S;
   // UI-76: in the last 90 min before a launch (and just after it) every 15 min, the last 20 min
@@ -2060,6 +2114,10 @@ inline uint32_t event_crc(const EventCache &c) {
   return esp_rom_crc32_le(0, (const uint8_t *) &c.saved, sizeof(c.saved) + sizeof(c.rec));
 }
 inline void events_publish(pvector<EventRec> &out) {
+  for (EventRec &e : out) {  // UI-78
+    fold_text(e.name);
+    fold_text(e.type);
+  }
   xSemaphoreTake(mutex, portMAX_DELAY);
   std::swap(pending.events, out);
   pending.fresh |= L_EXTRA;
@@ -2200,6 +2258,7 @@ inline void do_comets(double now) {
     c.K1 = (float) num(r[8]);
     if (!(c.q > 0) || !(c.e >= 0) || !std::isfinite(c.tp) || !std::isfinite(c.M1) || !std::isfinite(c.K1))
       continue;
+    fold_text(c.name);  // UI-78
     comets::short_tag(c.name, c.tag, sizeof(c.tag));
     out.push_back(c);
   }

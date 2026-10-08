@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.32 (queued): every glyph checked: "~" (the re-entry times, "in ~5h") was missing from the fonts and drew as a box; added. Text from the feeds (launch, pad, event, comet names) is folded to what the fonts hold (UI-78).
 - 4.6.31: the picture viewer's < and > buttons (the picture before, earlier frames) are gone; the latest picture only (UI-59c). Frees a 259 KB picture buffer. New: space weather alerts from NOAA (UI-73), re-entry alerts (UI-74), the UAF Poker Flat all-sky camera as a picture tab and from the aurora cards (UI-75), a full-screen launch countdown from T-10 min (UI-76), and "On this day" in space history (UI-77). The Alerts tab gains Space wx, This day, Re-entry and Countdown.
 - 4.6.30: the display can no longer stay shifted 10 rows with noise: the frame-start bug in the display driver is put right every frame (PERF-16; Display Resyncs counts it). Lighter on the PSRAM bus the panel refills from (PERF-15a): the astro task works in small pieces with rests, and a streaming picture redraws only its new rows. Last Crash shows the firmware and when (FAIL-10a; older records are dropped).
 - 4.6.29: the web page has an Alerts section with all the alert switches (NET-6a). Comets moves under Stations in the Alerts tab (UI-41j). A shooting star crosses the About page's logo now and then, burning out at the end (UI-67a). The Sun, Moon, Earth and region pictures appear top down as they download, already round-edged, over the picture before (UI-59f).
@@ -706,6 +707,12 @@ UI-77  On this day (sky_history.h, 108 built-in events, in sky_extra.cpp): the e
        date, shown in the alert rotation for 10 minutes in every 30 ("This day in 1957: Sputnik 1,
        the first artificial satellite, is launched"), mdi:calendar-star in 0xC5B3F0; its card
        lists the day's events with how many years ago. Switch On This Day (on).
+UI-78  Glyphs: the text fonts (*glyphs) hold printable ASCII except ^ ` { } \, plus ° · ±; the icon
+       fonts hold the MDI icons listed with them. Every string the firmware writes uses only these
+       (checked across the sources and the YAML's labels). Text from the feeds is folded as it is
+       stored (net::fold_text): accented Latin letters to their base letter (U+00C0..U+017F, by
+       Unicode decomposition), dashes and minus to "-", curly quotes to straight, no-break and thin
+       spaces to a space, the ellipsis to "...", anything else to "?".
 UI-41k Solar Alerts (on by default; mdi:weather-sunny, HA "Solar Alerts", web Celestial after
        Lunar): solar eclipses seen from here (UI-51) and solstices and equinoxes (UI-41b).
 UI-41g Comet Alerts (on by default): a comet bright enough to see (UI-63). The Comets map layer

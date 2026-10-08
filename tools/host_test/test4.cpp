@@ -2516,6 +2516,12 @@ int main() {
       sat::alert_override = nullptr;
       sat::draw_hud(sat_host_now);
     };
+    {  // UI-78: feed text the fonts can't draw is folded
+      char t1[96] = "Andøya Spaceport \xE2\x80\x93 \xE2\x80\x9CTest\xE2\x80\x9D Łódź\xE2\x80\xA6 ~5\xC2\xB0 \xF0\x9F\x9A\x80";
+      net::fold_text(t1);
+      printf("fold: %s\n", t1);
+      CHECK(!strcmp(t1, "Andoya Spaceport - \"Test\" Lodz... ~5\xC2\xB0 ?"), "feed text folded to the fonts (%s)", t1);
+    }
     // ---- UI-73 space weather
     host_http_bodies["products/alerts.json"] = slurp(HOST_DIR "/fixtures/swpc_alerts.json");
     net::swx_next = 0;

@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.31"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.32"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -431,7 +431,7 @@ font:
     id: mono12
     size: 12
     bpp: 4                       # anti-aliased (ESPHome default is 1: jagged edges)
-    glyphs: &glyphs " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_abcdefghijklmnopqrstuvwxyz|°·±"
+    glyphs: &glyphs " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_abcdefghijklmnopqrstuvwxyz|~°·±"
   - file: "gfonts://Roboto Mono"
     id: mono16
     size: 16
