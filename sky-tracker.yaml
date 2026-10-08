@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.28"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.29"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -302,7 +302,7 @@ web_server:                      # NET-1: built-in web UI on port 80
   local: true                    # bundle the UI so it also works on the AP (no internet)
                                  # NET-1: firmware upload from the web page is ON
   sorting_groups:                # NET-6: sections on the web page (HA is unaffected)
-    - id: grp_sky                # order: Location & Sky, Satellites, Celestial, Display, ISS, System
+    - id: grp_sky                # order: Location & Sky, Satellites, Celestial, Alerts, Display, ISS, System
       name: Location & Sky       # (the OTA upload form is always last)
       sorting_weight: 10
     - id: grp_sats
@@ -311,6 +311,9 @@ web_server:                      # NET-1: built-in web UI on port 80
     - id: grp_celestial            # NET-6: stars, trails, planets (4.5.2)
       name: Celestial
       sorting_weight: 25
+    - id: grp_alerts             # NET-6a: the status-line alert switches, in the Alerts tab's order
+      name: Alerts
+      sorting_weight: 27
     - id: grp_display
       name: Display
       sorting_weight: 30
@@ -1301,8 +1304,8 @@ switch:
     id: aurora_alerts
     name: Aurora Alerts
     web_server:
-      sorting_group_id: grp_celestial
-      sorting_weight: 8
+      sorting_group_id: grp_alerts
+      sorting_weight: 1
     icon: mdi:aurora
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -1314,8 +1317,8 @@ switch:
     id: planet_alerts
     name: Planet Alerts
     web_server:
-      sorting_group_id: grp_celestial
-      sorting_weight: 9
+      sorting_group_id: grp_alerts
+      sorting_weight: 2
     icon: mdi:orbit
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -1327,8 +1330,8 @@ switch:
     id: sky_alerts               # planet or star, eclipses, solstices and equinoxes
     name: Sky Event Alerts
     web_server:
-      sorting_group_id: grp_celestial
-      sorting_weight: 10
+      sorting_group_id: grp_alerts
+      sorting_weight: 3
     icon: mdi:weather-night
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -1353,8 +1356,8 @@ switch:
     id: station_alerts
     name: Space Station Alerts
     web_server:
-      sorting_group_id: grp_celestial
-      sorting_weight: 11
+      sorting_group_id: grp_alerts
+      sorting_weight: 10
     icon: mdi:space-station
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -1366,8 +1369,8 @@ switch:
     id: lunar_alerts
     name: Lunar Alerts
     web_server:
-      sorting_group_id: grp_celestial
-      sorting_weight: 14
+      sorting_group_id: grp_alerts
+      sorting_weight: 4
     icon: mdi:moon-full
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -1379,8 +1382,8 @@ switch:
     id: solar_alerts
     name: Solar Alerts
     web_server:
-      sorting_group_id: grp_celestial
-      sorting_weight: 14.5
+      sorting_group_id: grp_alerts
+      sorting_weight: 5
     icon: mdi:weather-sunny
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -1392,8 +1395,8 @@ switch:
     id: comet_alerts
     name: Comet Alerts
     web_server:
-      sorting_group_id: grp_celestial
-      sorting_weight: 15
+      sorting_group_id: grp_alerts
+      sorting_weight: 6
     icon: mdi:meteor
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -1405,8 +1408,8 @@ switch:
     id: splash_alerts
     name: Splashdown Alerts
     web_server:
-      sorting_group_id: grp_celestial
-      sorting_weight: 16
+      sorting_group_id: grp_alerts
+      sorting_weight: 9
     icon: mdi:parachute
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -1418,8 +1421,8 @@ switch:
     id: launch_alerts
     name: Launch Alerts
     web_server:
-      sorting_group_id: grp_celestial
-      sorting_weight: 12
+      sorting_group_id: grp_alerts
+      sorting_weight: 7
     icon: mdi:rocket-launch
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -1431,8 +1434,8 @@ switch:
     id: event_alerts
     name: Docking Alerts
     web_server:
-      sorting_group_id: grp_celestial
-      sorting_weight: 13
+      sorting_group_id: grp_alerts
+      sorting_weight: 8
     icon: mdi:connection
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON

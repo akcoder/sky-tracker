@@ -1,7 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.28 (queued): The map no longer stalls after the boot launch or every few seconds: the alignment, eclipse and Milky Way work runs on the other core (PERF-15). Alerts tab in two columns, sky and spaceflight (UI-41j); new Solar switch for solar eclipses, solstices and equinoxes (UI-41k).
+- 4.6.29 (queued): the web page has an Alerts section with all the alert switches (NET-6a).
+- 4.6.28: The map no longer stalls after the boot launch or every few seconds: the alignment, eclipse and Milky Way work runs on the other core (PERF-15). Alerts tab in two columns, sky and spaceflight (UI-41j); new Solar switch for solar eclipses, solstices and equinoxes (UI-41k).
 - 4.6.27: the screen lights at power-on with the boot screen (~2.4 s, was ~6.6 s): the backlight is switched on as the boot screen is drawn (BOOT-2). Start-up ends ~4 s sooner and Wi-Fi connects sooner: the satellite markers are made after start-up, a few at a time (BOOT-3). Two-line alerts clear the sky disc: the text sits 4 px higher with its lines 3 px closer, and the disc is 4 px lower (UI-41i).
 - 4.6.26: after a minute untouched, any open screen closes and the map returns (UI-72). At power-on the boot screen shows the logo and "Loading" before the slow start-up, then the Wi-Fi status (BOOT-2). The screen comes up ~2.7 s sooner: the animation pictures are drawn after the display starts, 10 ms at a time, and the boot launch plays when they are ready (UI-69n). A tap on an alert's icon opens the alert too (the picture icon took the tap). The splashdown's sea rises into view, and each splashdown lands in its own spot with its own sway and chute drift (UI-69m).
 - 4.6.25 (installed): pictures work again (the Sun, Moon, Earth and planet photos failed in 4.6.22-4.6.24: the orbital lists were reserved at their caps before the picture buffers and left 0.2 MB of PSRAM; the buffers are now taken first and the lists sized to what they hold, FAIL-12b). A splashdown animation: a capsule on four parachutes comes down to the ocean, splashes and bobs (UI-69m), with a Play Splashdown Animation button and a Splashdowns alert switch (UI-41h). The details card of a launch, splashdown or docking alert shows the country's flag after its title (UI-54d). The whole header left of the counts is the alert's tap zone (UI-41d). The launch card's distance follows Miles.
@@ -1288,10 +1289,13 @@ NET-6  The web page groups entities into sections (web_server v3 sorting_groups;
        Longitude, Map Heading, compass, Magnetic Declination, Aurora Kp),
        Satellites (LEO Cone, Show LEO/Starlink/MEO/GEO/Orbital Debris and the
        counts), Celestial (Show Stars & Constellations, Stars Only After Dusk, Show
-       Motion Trails, Show Planets), Display (Backlight, Auto Brightness, 24-hour
+       Motion Trails, Show Planets), Alerts (NET-6a), Display (Backlight, Auto Brightness, 24-hour
        Clock, Distances in Miles, Night Mode), ISS (Elevation,
        Azimuth, Overhead, Next Pass), System (Reboot and the NET-9 diagnostics).
        ESPHome's OTA upload form always comes last.
+NET-6a The Alerts section holds the alert switches in the settings Alerts tab's order (UI-41j):
+       Aurora, Planet, Sky Event, Lunar, Solar, Comet, Launch, Event (dockings), Splashdown,
+       Station Alerts (they were under Celestial).
 HW-9b  Guided compass calibration (sky_sensors.h): each fresh sample during a run is
        measured about a circle fitted to the samples so far (algebraic least squares,
        about the first sample), giving the 10° sectors seen, the total turn and the
