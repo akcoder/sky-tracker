@@ -558,6 +558,7 @@ int main() {
     for (int k = 0; k < 3; k++) { sat::tick(); run_jobs(); sat_host_now += 1; }
     sat::align_scan = sat::AlignScan{};
     for (int k = 0; k <= sat::ALIGN_DAYS; k++) sat::align_step(sat_host_now);
+    sat::astro_collect();
     printf("planets at %.0f:", sat_host_now);
     for (int p = 0; p < sat::planets::N_PLANETS; p++)
       printf(" %s el %.0f mag %.1f%s", sat::planets::name(p), sat::ui.planet_azel[p].el, sat::ui.planet_mag[p], sat::ui.planet_visible[p] ? "*" : "");

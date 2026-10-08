@@ -65,13 +65,13 @@ int main(int argc, char **argv) {
   lv_label_set_text(lbl_cone, "80\xC2\xB0");
   for (lv_obj_t *o : {sw_sats, sw_starlink, sw_meo, sw_trails, sw_stations, sw_stars, sw_dusk, sw_planets, sw_comets,
                       sw_milky_way, sw_aur_alerts, sw_pl_alerts, sw_sky_alerts, sw_station_alerts, sw_launch_alerts,
-                      sw_event_alerts, sw_lunar_alerts, sw_comet_alerts, sw_splash_alerts, sw_autob})
+                      sw_event_alerts, sw_lunar_alerts, sw_solar_alerts, sw_comet_alerts, sw_splash_alerts, sw_autob})
     on(o, true);
   for (lv_obj_t *o : {sw_geo, sw_debris, sw_miles, sw_night, sw_dms, sw_24h})
     on(o, false);
   static lv_image_dsc_t saturn = pic(sat::picons::BIG_PX[4], sat::picons::BIG), align = pic(sat::picons::ALIGN_PX, sat::picons::BIG);
-  image(pnl_celestial, &saturn, 130, 62);  // settings_planet_icon(pnl_celestial, 130, 62, pnl_alerts, 372, 18)
-  image(pnl_alerts, &align, 372, 18);
+  image(pnl_celestial, &saturn, 130, 62);  // settings_planet_icon(pnl_celestial, 130, 62, pnl_alerts, 130, 62)
+  image(pnl_alerts, &align, 130, 62);
   lv_obj_t *const P[5] = {pnl_display, pnl_location, pnl_celestial, pnl_satellites, pnl_alerts};
   lv_obj_t *const T[5] = {tab_display, tab_location, tab_celestial, tab_satellites, tab_alerts};
   static const char *const NAME[5] = {"DISPLAY", "LOCATION", "CELESTIAL", "SATELLITES", "ALERTS"};

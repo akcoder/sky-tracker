@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.27"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.28"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -116,6 +116,7 @@ esphome:
             sat::set_alert_kinds(id(station_alerts).state, id(launch_alerts).state, id(event_alerts).state);  // UI-41e
             sat::set_stations(id(show_stations).state);  // UI-52b
             sat::set_lunar_alerts(id(lunar_alerts).state);  // UI-41f
+            sat::set_solar_alerts(id(solar_alerts).state);  // UI-41k
             sat::set_comet_alerts(id(comet_alerts).state);  // UI-41g
             sat::set_splash_alerts(id(splash_alerts).state);  // UI-41h
             sat::set_night(id(night_mode).state);      // UI-45
@@ -1374,6 +1375,19 @@ switch:
       - lambda: sat::set_lunar_alerts(true);
     on_turn_off:
       - lambda: sat::set_lunar_alerts(false);
+  - platform: template           # UI-41k: solar eclipses, solstices and equinoxes
+    id: solar_alerts
+    name: Solar Alerts
+    web_server:
+      sorting_group_id: grp_celestial
+      sorting_weight: 14.5
+    icon: mdi:weather-sunny
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_solar_alerts(true);
+    on_turn_off:
+      - lambda: sat::set_solar_alerts(false);
   - platform: template           # UI-41g: a comet bright enough to see
     id: comet_alerts
     name: Comet Alerts
@@ -2217,7 +2231,7 @@ lvgl:
             set(id(sw_planets), id(show_planets).state);  // UI-40
             set(id(sw_autob), id(auto_bright).state);     // UI-44
             set(id(sw_night), id(night_mode).state);      // UI-45
-            sat::settings_planet_icon(id(pnl_celestial), 130, 62, id(pnl_alerts), 372, 18);
+            sat::settings_planet_icon(id(pnl_celestial), 130, 62, id(pnl_alerts), 130, 62);
             set(id(sw_aur_alerts), id(aurora_alerts).state);  // UI-41a
             set(id(sw_pl_alerts), id(planet_alerts).state);
             set(id(sw_sky_alerts), id(sky_alerts).state);  // UI-47..51
@@ -2225,6 +2239,7 @@ lvgl:
             set(id(sw_launch_alerts), id(launch_alerts).state);
             set(id(sw_event_alerts), id(event_alerts).state);
             set(id(sw_lunar_alerts), id(lunar_alerts).state);  // UI-41f
+            set(id(sw_solar_alerts), id(solar_alerts).state);  // UI-41k
             set(id(sw_comet_alerts), id(comet_alerts).state);  // UI-41g
             set(id(sw_splash_alerts), id(splash_alerts).state);  // UI-41h
             set(id(sw_stations), id(show_stations).state);  // UI-52b
@@ -2316,6 +2331,7 @@ lvgl:
                         sw(id(sw_launch_alerts), id(launch_alerts));
                         sw(id(sw_event_alerts), id(event_alerts));
                         sw(id(sw_lunar_alerts), id(lunar_alerts));  // UI-41f
+                        sw(id(sw_solar_alerts), id(solar_alerts));  // UI-41k
                         sw(id(sw_comet_alerts), id(comet_alerts));  // UI-41g
                         sw(id(sw_splash_alerts), id(splash_alerts));  // UI-41h
                         sw(id(sw_stations), id(show_stations));  // UI-52b
@@ -3358,7 +3374,7 @@ lvgl:
             clickable: false
             hidden: true
             widgets:
-              - label:                 # UI-41a: what the status line may show
+              - label:                 # UI-41a: left, the sky; right, spaceflight (UI-41j)
                   x: 16
                   y: 20
                   text: "Aurora"
@@ -3376,81 +3392,30 @@ lvgl:
                   width: 56
                   height: 28
               - label:                 # its alignment picture is added from C++
-                  x: 246
-                  y: 20
+                  x: 16
+                  y: 64
                   text: "Planets"
                   text_font: mono16
               - switch:
                   id: sw_pl_alerts
-                  x: 400
-                  y: 14
+                  x: 156
+                  y: 58
                   width: 56
                   height: 28
-              - label:                 # UI-47..51
+              - label:                 # UI-47: meteor showers
                   x: 16
-                  y: 64
+                  y: 108
                   text: "Sky events"
                   text_font: mono16
               - label:
                   x: 130
-                  y: 62
+                  y: 106
                   text: "\U000F0594"   # weather-night
                   text_font: mdi_card20
                   text_color: 0xA8D8FF
               - switch:
                   id: sw_sky_alerts
                   x: 156
-                  y: 58
-                  width: 56
-                  height: 28
-              - label:                 # UI-41e: ISS and Tiangong passes
-                  x: 246
-                  y: 64
-                  text: "Stations"
-                  text_font: mono16
-              - label:
-                  x: 372
-                  y: 62
-                  text: "\U000F1383"   # space-station
-                  text_font: mdi_card20
-                  text_color: 0xFF8A1F
-              - switch:
-                  id: sw_station_alerts
-                  x: 400
-                  y: 58
-                  width: 56
-                  height: 28
-              - label:                 # UI-54
-                  x: 16
-                  y: 108
-                  text: "Launch"
-                  text_font: mono16
-              - label:
-                  x: 130
-                  y: 106
-                  text: "\U000F14DE"   # rocket-launch
-                  text_font: mdi_card20
-                  text_color: 0xFFC46B
-              - switch:
-                  id: sw_launch_alerts
-                  x: 156
-                  y: 102
-                  width: 56
-                  height: 28
-              - label:                 # UI-54c: dockings, undockings, EVAs
-                  x: 246
-                  y: 108
-                  text: "Dockings"
-                  text_font: mono16
-              - label:
-                  x: 372
-                  y: 106
-                  text: "\U000F1616"   # connection
-                  text_font: mdi_card20
-                  text_color: 0x8FD3FF
-              - switch:
-                  id: sw_event_alerts
-                  x: 400
                   y: 102
                   width: 56
                   height: 28
@@ -3471,38 +3436,106 @@ lvgl:
                   y: 146
                   width: 56
                   height: 28
+              - label:                 # UI-41k: solar eclipses, solstices, equinoxes
+                  x: 16
+                  y: 196
+                  text: "Solar"
+                  text_font: mono16
+              - label:
+                  x: 130
+                  y: 194
+                  text: "\U000F0599"   # weather-sunny
+                  text_font: mdi_card20
+                  text_color: 0xFFD54A
+              - switch:
+                  id: sw_solar_alerts
+                  x: 156
+                  y: 190
+                  width: 56
+                  height: 28
               - label:                 # UI-41g
-                  x: 246
-                  y: 152
+                  x: 16
+                  y: 240
                   text: "Comets"
                   text_font: mono16
               - label:
-                  x: 372
-                  y: 150
+                  x: 130
+                  y: 238
                   text: "\U000F0629"   # meteor
                   text_font: mdi_card20
                   text_color: 0xA8F0E0
               - switch:
                   id: sw_comet_alerts
+                  x: 156
+                  y: 234
+                  width: 56
+                  height: 28
+              - label:                 # UI-54
+                  x: 246
+                  y: 20
+                  text: "Launch"
+                  text_font: mono16
+              - label:
+                  x: 372
+                  y: 18
+                  text: "\U000F14DE"   # rocket-launch
+                  text_font: mdi_card20
+                  text_color: 0xFFC46B
+              - switch:
+                  id: sw_launch_alerts
                   x: 400
-                  y: 146
+                  y: 14
+                  width: 56
+                  height: 28
+              - label:                 # UI-54c: dockings, undockings, EVAs
+                  x: 246
+                  y: 64
+                  text: "Dockings"
+                  text_font: mono16
+              - label:
+                  x: 372
+                  y: 62
+                  text: "\U000F1616"   # connection
+                  text_font: mdi_card20
+                  text_color: 0x8FD3FF
+              - switch:
+                  id: sw_event_alerts
+                  x: 400
+                  y: 58
                   width: 56
                   height: 28
               - label:                 # UI-41h
-                  x: 16
-                  y: 196
+                  x: 246
+                  y: 108
                   text: "Splashdowns"
                   text_font: mono16
               - label:
-                  x: 130
-                  y: 194
+                  x: 372
+                  y: 106
                   text: "\U000F0CB4"   # parachute
                   text_font: mdi_card20
                   text_color: 0xE8743B
               - switch:
                   id: sw_splash_alerts
-                  x: 156
-                  y: 190
+                  x: 400
+                  y: 102
+                  width: 56
+                  height: 28
+              - label:                 # UI-41e: ISS and Tiangong passes
+                  x: 246
+                  y: 152
+                  text: "Stations"
+                  text_font: mono16
+              - label:
+                  x: 372
+                  y: 150
+                  text: "\U000F1383"   # space-station
+                  text_font: mdi_card20
+                  text_color: 0xFF8A1F
+              - switch:
+                  id: sw_station_alerts
+                  x: 400
+                  y: 146
                   width: 56
                   height: 28
         - button:                # UI-67: About (version, device, credits), lower right

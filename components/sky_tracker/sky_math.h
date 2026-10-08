@@ -254,11 +254,17 @@ struct Crossing {
   double t;
   bool rising;
 };
+// PERF-15: the Sun's elevation alone, as compute() gives it (the Moon's series is most of its cost)
+inline float sun_el(double unix_s, double lat_deg, double lon_deg) {
+  const double j = jd(unix_s);
+  return horizontal(sun(j), lat_deg, rad(wrap360(gmst_deg(j) + lon_deg))).el;
+}
 inline int crossings(double t0, double t1, double h, bool moon, double lat, double lon, double alt_m, Crossing *out,
                      int max, double step = 600) {
   auto el = [&](double t) {
-    const SunMoon r = compute(t, lat, lon, alt_m);
-    return (double) (moon ? r.moon.el : r.sun.el) - h;
+    if (!moon)
+      return (double) sun_el(t, lat, lon) - h;
+    return (double) compute(t, lat, lon, alt_m).moon.el - h;
   };
   int n = 0;
   double ta = t0, fa = el(ta);
@@ -285,7 +291,7 @@ inline int crossings(double t0, double t1, double h, bool moon, double lat, doub
 
 // Sun's highest point in [t0, t1] (solar noon), by sampling then golden-section search.
 inline double sun_peak(double t0, double t1, double lat, double lon, double alt_m, float *peak_el) {
-  auto el = [&](double t) { return (double) compute(t, lat, lon, alt_m).sun.el; };
+  auto el = [&](double t) { return (double) sun_el(t, lat, lon); };
   double best = t0, be = -99;
   for (double t = t0; t <= t1; t += 1800) {
     const double e = el(t);

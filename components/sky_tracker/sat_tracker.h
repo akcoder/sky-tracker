@@ -8,6 +8,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <climits>
 #include <cmath>
 #include <cstdio>
@@ -406,6 +407,7 @@ struct Ui {
   bool aurora_alerts = true, planet_alerts = true, sky_alerts = true;
   bool station_alerts = true, launch_alerts = true, event_alerts = true;  // UI-41e
   bool lunar_alerts = true;  // UI-41f: full Moon, Moon near a planet or star, lunar eclipses
+  bool solar_alerts = true;  // UI-41k: solar eclipses, solstices and equinoxes
   bool comet_alerts = true;  // UI-41g: a comet bright enough to see (the layer must be on too)
   bool splash_alerts = true;  // UI-41h: capsules splashing down (Launch Library "Spacecraft Landing")
   bool stations_on = true;  // UI-52b: ISS and Tiangong drawn on the map
@@ -1478,16 +1480,15 @@ constexpr uint8_t MW_W[MW_LV + 1] = {0, 18, 30, 42, 56, 72};  // of C_MW over SK
 inline void mw_prepare() {
   const Config &c = config();
   const int n = ui.size / 2;
-  if (n == ui.mw_n && ui.mw_heading == ui.heading && ui.mw_lat == (float) c.lat)
+  const float heading = ui.heading;  // PERF-15: read once (the astro task runs this)
+  if (n == ui.mw_n && ui.mw_heading == heading && ui.mw_lat == (float) c.lat)
     return;
   ui.mw_n = n;
-  ui.mw_heading = ui.heading;
+  ui.mw_heading = heading;
   ui.mw_lat = (float) c.lat;
   ui.mw_cells.resize((size_t) n * n);
   const float sl = sinf((float) c.lat * geo::DEG), cl = cosf((float) c.lat * geo::DEG);
   for (int by = 0; by < n; by++) {
-    if ((by & 15) == 0)
-      ui_feed_wdt();
     for (int bx = 0; bx < n; bx++) {
       Ui::MwCell &m = ui.mw_cells[(size_t) by * n + bx];
       const float dx = bx * 2 + 1.0f - ui.cx, dy = by * 2 + 1.0f - ui.cy, r = sqrtf(dx * dx + dy * dy);
@@ -1495,7 +1496,7 @@ inline void mw_prepare() {
         m = {0, 0, 0};
         continue;
       }
-      const float el = 90.0f * (1.0f - r / ui.radius), az = ui.heading * geo::DEG + atan2f(dx, -dy);
+      const float el = 90.0f * (1.0f - r / ui.radius), az = heading * geo::DEG + atan2f(dx, -dy);
       const float ce = cosf(el * geo::DEG), e = ce * sinf(az), nn = ce * cosf(az), u = sinf(el * geo::DEG);
       float h = atan2f(-e, u * cl - nn * sl) / geo::DEG;
       if (h < 0)
@@ -1518,13 +1519,13 @@ inline int mw_sample(float ra, float dec) {
   const float top = r0[x0] + (r0[x1] - r0[x0]) * ax, bot = r1[x0] + (r1[x1] - r1[x0]) * ax;
   return (int) (top + (bot - top) * ay);
 }
-inline void mw_build(float lst_deg) {
+inline void mw_build(float lst_deg, pvector<Ui::MwSpan> &spans, pvector<uint32_t> &band) {
   mw_prepare();
   const int n = ui.mw_n;
-  ui.mw_spans.clear();
-  ui.mw_band.resize((size_t) n + 1);
+  spans.clear();
+  band.resize((size_t) n + 1);
   for (int by = 0; by < n; by++) {
-    ui.mw_band[by] = (uint32_t) ui.mw_spans.size();
+    band[by] = (uint32_t) spans.size();
     int run_x = -1, run_l = 0;
     for (int bx = 0; bx <= n; bx++) {
       int l = 0;
@@ -1537,14 +1538,21 @@ inline void mw_build(float lst_deg) {
       }
       if (l != run_l) {
         if (run_l > 0)
-          ui.mw_spans.push_back({(int16_t) (run_x * 2), (int16_t) (bx * 2 - 1), (uint8_t) run_l});
+          spans.push_back({(int16_t) (run_x * 2), (int16_t) (bx * 2 - 1), (uint8_t) run_l});
         run_x = bx;
         run_l = l;
       }
     }
   }
-  ui.mw_band[n] = (uint32_t) ui.mw_spans.size();
+  band[n] = (uint32_t) spans.size();
 }
+// PERF-15: the Milky Way (~150 ms; ~300 ms when the view changed) is built by the astro task
+// into these and swapped in by astro_collect; the map keeps the last one meanwhile
+inline pvector<Ui::MwSpan> mw_spans_next;
+inline pvector<uint32_t> mw_band_next;
+inline std::atomic<bool> mw_req{false}, mw_ready{false};
+inline std::atomic<float> mw_req_lst{0};
+inline void astro_wake();
 inline void draw_milky_way(lv_layer_t *layer, const lv_area_t &clip, int ox, int oy) {
   const int nb = (int) ui.mw_band.size() - 1;
   if (nb <= 0)
@@ -1616,9 +1624,15 @@ inline void draw_starmap(double t) {
     const uint8_t shade = (uint8_t) std::max(90.0f, std::min(255.0f, 255.0f - (mag - 1.0f) * 30.0f));
     ui.star_pts.push_back({(int16_t) lroundf(x), (int16_t) lroundf(y), size, shade});
   }
-  if (ui.mw_on)  // UI-64
-    mw_build(lst);
-  else {
+  if (ui.mw_on) {  // UI-64
+#ifdef SAT_HOST_TEST
+    mw_build(lst, ui.mw_spans, ui.mw_band);
+#else
+    mw_req_lst.store(lst);
+    mw_req.store(true);
+    astro_wake();
+#endif
+  } else {
     ui.mw_spans.clear();
     ui.mw_band.clear();
   }
@@ -2136,10 +2150,13 @@ inline void draw_hud(double t) {
     lv_obj_t *icon = al->img ? ui.alert_img : ui.aurora_icon;
     const lv_font_t *tf = lv_obj_get_style_text_font(ui.w.status, LV_PART_MAIN);
     if (icon && tf) {
-      lv_obj_update_layout(ui.w.status);
-      const int32_t lh = lv_font_get_line_height(tf) + lv_obj_get_style_text_line_space(ui.w.status, LV_PART_MAIN),
-                    ty = lv_obj_get_y(ui.w.status);
-      const int32_t lines = std::max<int32_t>(1, (lv_obj_get_height(ui.w.status) + lh / 2) / lh);
+      // PERF-15: the text measured, not laid out (a layout pass reaches every marker: up to 300 ms)
+      const int32_t ls = lv_obj_get_style_text_line_space(ui.w.status, LV_PART_MAIN), lh = lv_font_get_line_height(tf) + ls,
+                    ty = lv_obj_get_style_y(ui.w.status, LV_PART_MAIN);
+      lv_point_t sz;
+      lv_text_get_size(&sz, b, tf, lv_obj_get_style_text_letter_space(ui.w.status, LV_PART_MAIN), ls,
+                       lv_obj_get_style_width(ui.w.status, LV_PART_MAIN), LV_TEXT_FLAG_NONE);
+      const int32_t lines = std::max<int32_t>(1, (sz.y + lh / 2) / lh);
       int32_t cap_off, cap_h;
       glyph_ink(tf, 'H', cap_off, cap_h);
       const int32_t cap_top = ty + cap_off, last_base = ty + (lines - 1) * lh + cap_off + cap_h;
@@ -2814,6 +2831,7 @@ inline void set_alerts(bool aurora, bool planet) {
 }
 inline void set_sky_alerts(bool on) { ui.sky_alerts = on; }  // UI-47..51 (and UI-41b)
 inline void set_lunar_alerts(bool on) { ui.lunar_alerts = on; }  // UI-41f
+inline void set_solar_alerts(bool on) { ui.solar_alerts = on; }  // UI-41k
 inline void set_comet_alerts(bool on) { ui.comet_alerts = on; }  // UI-41g
 inline void set_splash_alerts(bool on) { ui.splash_alerts = on; }  // UI-41h
 inline void set_alert_kinds(bool stations, bool launches, bool events) {  // UI-41e
@@ -3020,7 +3038,9 @@ struct AlignScan {
   AlignEv c, p;
 };
 inline AlignScan align_scan;
-inline AlignEv conj_ev, parade_ev;
+inline AlignEv conj_ev, parade_ev;  // the UI's
+inline AlignEv conj_out, parade_out;  // PERF-15: from the astro task, taken by astro_collect
+inline std::atomic<bool> align_ready{false};
 inline void align_step(double t) {
   if (!clock_valid())
     return;
@@ -3073,15 +3093,18 @@ inline void align_step(double t) {
       }
   }
   if (++S.day >= ALIGN_DAYS) {
-    conj_ev = S.c;
-    parade_ev = S.p;
     S.running = false;
     S.next = t + 3600;
-    if (conj_ev.valid)
-      ESP_LOGI(UI_TAG, "alignment: %s & %s %.1f° apart at %.0f", planets::name(conj_ev.a), planets::name(conj_ev.b),
-               conj_ev.sep, conj_ev.t);
-    if (parade_ev.valid)
-      ESP_LOGI(UI_TAG, "alignment: %d-planet parade at %.0f", parade_ev.count, parade_ev.t);
+    if (S.c.valid)
+      ESP_LOGI(UI_TAG, "alignment: %s & %s %.1f° apart at %.0f", planets::name(S.c.a), planets::name(S.c.b), S.c.sep,
+               S.c.t);
+    if (S.p.valid)
+      ESP_LOGI(UI_TAG, "alignment: %d-planet parade at %.0f", S.p.count, S.p.t);
+    if (!align_ready.load(std::memory_order_acquire)) {
+      conj_out = S.c;
+      parade_out = S.p;
+      align_ready.store(true, std::memory_order_release);
+    }
   }
 }
 // "tonight", "this morning", "Nov 15 morning"
@@ -3125,8 +3148,9 @@ inline SeasonEv next_season(double t) {
 }
 // ================================================================== UI-47..51 sky events
 struct SkyEvents {
-  // UI-51 eclipses seen from here, soonest first; found one syzygy per tick
-  std::vector<ev::Eclipse> ecl, ecl_new;
+  // UI-51 eclipses seen from here, soonest first (ecl: the UI's). PERF-15: found by the astro
+  // task (ecl_new and the scan_* fields are its own), handed over through ecl_out
+  std::vector<ev::Eclipse> ecl, ecl_new, ecl_out;
   double scan_t = 0, scan_end = 0, scan_lat = 1e9, scan_lon = 1e9, scan_started = 0;
   bool scan_done = false;
   // UI-48 the next full Moon
@@ -3147,6 +3171,7 @@ constexpr double SKY_ALERT_S = 3 * 86400.0;          // sky events: announced at
 constexpr float CONJ_MAX_DEG = 5.0f;                 // UI-49: "near"
 constexpr int CONJ_STARS[5] = {8, 13, 9, 10, 11};    // ev::BRIGHT: Aldebaran, Regulus, Spica, Antares, Pollux
 
+inline std::atomic<bool> ecl_ready{false};  // PERF-15: sev.ecl_out holds a finished scan
 inline void eclipse_step(double t) {  // UI-51
   const Config &c = config();
   if (c.lat != sev.scan_lat || c.lon != sev.scan_lon || t - sev.scan_started > 86400) {
@@ -3163,9 +3188,12 @@ inline void eclipse_step(double t) {  // UI-51
   const double tn = astro::moon_phase_time(sev.scan_t, 0, 1), tf = astro::moon_phase_time(sev.scan_t, 180, 1);
   const double ts = (tn > 0 && (tf <= 0 || tn < tf)) ? tn : tf;
   if (ts <= 0 || ts > sev.scan_end || sev.ecl_new.size() >= 3) {
-    std::swap(sev.ecl, sev.ecl_new);
+    if (!ecl_ready.load(std::memory_order_acquire)) {  // PERF-15: the UI takes it (astro_collect)
+      sev.ecl_out.swap(sev.ecl_new);
+      ecl_ready.store(true, std::memory_order_release);
+    }
     sev.scan_done = true;
-    ESP_LOGI(UI_TAG, "eclipses: %u seen from here in the next 3 years", (unsigned) sev.ecl.size());
+    ESP_LOGI(UI_TAG, "eclipses: %u seen from here in the next 3 years", (unsigned) sev.ecl_out.size());
     return;
   }
   sev.scan_t = ts + 86400.0;
@@ -3302,12 +3330,69 @@ inline void sky_events_step(double t) {
   shower_update(t);
   full_moon_update(t);
   moon_conj_update(t);
+#ifdef SAT_HOST_TEST
   static double ecl_next = 0;  // one syzygy every 2 s at most: the phase searches are the cost
   if (t >= ecl_next || t < ecl_next - 10) {
     ecl_next = t + 2;
     eclipse_step(t);
   }
+#endif
 }
+// PERF-15: the look-aheads (alignments, ~120 ms a day of them; eclipses, ~85 ms a syzygy) run
+// in their own task on core 0 at the lowest priority, so the map never waits for them; their
+// results are handed to the UI here, at the start of a tick.
+inline void astro_collect() {
+  if (align_ready.load(std::memory_order_acquire)) {
+    conj_ev = conj_out;
+    parade_ev = parade_out;
+    align_ready.store(false, std::memory_order_release);
+  }
+  if (ecl_ready.load(std::memory_order_acquire)) {
+    sev.ecl.swap(sev.ecl_out);
+    ecl_ready.store(false, std::memory_order_release);
+  }
+  if (mw_ready.load(std::memory_order_acquire)) {
+    if (ui.mw_on) {
+      ui.mw_spans.swap(mw_spans_next);
+      ui.mw_band.swap(mw_band_next);
+      if (ui.stars_shown && ui.w.sky)
+        lv_obj_invalidate(ui.w.sky);
+    }
+    mw_ready.store(false, std::memory_order_release);
+  }
+}
+#ifndef SAT_HOST_TEST
+inline TaskHandle_t astro_handle = nullptr;
+inline void astro_wake() {
+  if (astro_handle)
+    xTaskNotifyGive(astro_handle);
+}
+inline void astro_task(void *) {
+  for (;;) {
+    // one step at a time (each under ~120 ms): the idle task (task watchdog) and the data task
+    // run between; a Milky Way request wakes it at once
+    const bool busy = ui.ready && clock_valid() && (align_scan.running || !sev.scan_done);
+    ulTaskNotifyTake(pdTRUE, busy ? 1 : pdMS_TO_TICKS(1000));
+    if (mw_req.load() && !mw_ready.load(std::memory_order_acquire)) {
+      mw_req.store(false);
+      mw_build(mw_req_lst.load(), mw_spans_next, mw_band_next);
+      mw_ready.store(true, std::memory_order_release);
+      continue;
+    }
+    if (!ui.ready || !clock_valid())
+      continue;
+    const double t = clock_now();
+    align_step(t);
+    eclipse_step(t);
+  }
+}
+inline void astro_start() {
+  if (xTaskCreatePinnedToCore(astro_task, "astro", 8192, nullptr, 1, &astro_handle, 0) != pdPASS)
+    ESP_LOGE(UI_TAG, "astro task not started: no alignment, eclipse or Milky Way");
+}
+#else
+inline void astro_wake() {}
+#endif
 
 // ================================================================== UI-55 solar wind
 // Bz south (negative) with a fast wind couples the solar wind to the magnetosphere:
@@ -3492,11 +3577,11 @@ inline int collect_alerts(double t, Alert *out, int max) {
         }
       break;
     }
-  if (ui.sky_alerts || ui.lunar_alerts) {  // UI-41f: the Moon's own alerts follow Lunar
+  if (ui.sky_alerts || ui.lunar_alerts || ui.solar_alerts) {  // UI-41f/k: the Moon's and Sun's alerts follow Lunar, Solar
     char w[32], h0[16], h1[16];
-    // UI-51 eclipses seen from here (lunar ones follow Lunar, solar ones Sky events)
+    // UI-51 eclipses seen from here (lunar ones follow Lunar, solar ones Solar)
     if (const ev::Eclipse *e = next_eclipse(t);
-        e && e->t0 - t <= SKY_ALERT_S && (ev::is_lunar(e->type) ? ui.lunar_alerts : ui.sky_alerts))
+        e && e->t0 - t <= SKY_ALERT_S && (ev::is_lunar(e->type) ? ui.lunar_alerts : ui.solar_alerts))
       if (Alert *a = add(C_ECLIPSE, ev::is_lunar(e->type) ? "\xF3\xB0\xBD\xA2" : "\xF3\xB0\x96\x99", nullptr)) {
         a->info = AI_ECLIPSE;
         const bool tot = e->c1 > e->c0 && e->c0 > 0;
@@ -3549,8 +3634,8 @@ inline int collect_alerts(double t, Alert *out, int max) {
         }
       }
   }
-  // UI-41b solstices and equinoxes (from 3 days before until the end of that day)
-  if (ui.sky_alerts) {
+  // UI-41b solstices and equinoxes (from 3 days before until the end of that day); UI-41k: Solar
+  if (ui.solar_alerts) {
     static double next_at = 0;
     static SeasonEv ev;
     if (t >= next_at || fabs(ev.t - t) > 400 * 86400.0) {
@@ -6247,6 +6332,7 @@ inline void setup(const Config &cfg, const Widgets &w) {
   pools_work(INT64_MAX);
 #else
   lv_timer_create(pools_timer_cb, 10, nullptr);  // BOOT-3
+  astro_start();                                 // PERF-15
 #endif
   const double t = clock_now();
   draw_sun_moon(t, t);
@@ -6466,7 +6552,10 @@ inline void tick() {
   update_planets(tv);  // UI-40
   update_comets(tv);   // UI-63
   update_radiant(tv);  // UI-47
-  align_step(t);      // UI-41: one day of the look-ahead per tick
+#ifdef SAT_HOST_TEST
+  align_step(t);      // UI-41: one day of the look-ahead per tick (the astro task's on the device)
+#endif
+  astro_collect();    // PERF-15
   sky_events_step(t);  // UI-47..51
   if (fresh & L_SAT)
     restyle_sats(t);

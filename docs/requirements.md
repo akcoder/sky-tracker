@@ -1,7 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.27 (queued): the screen lights at power-on with the boot screen (~2.4 s, was ~6.6 s): the backlight is switched on as the boot screen is drawn (BOOT-2). Start-up ends ~4 s sooner and Wi-Fi connects sooner: the satellite markers are made after start-up, a few at a time (BOOT-3). Two-line alerts clear the sky disc: the text sits 4 px higher with its lines 3 px closer, and the disc is 4 px lower (UI-41i).
+- 4.6.28 (queued): The map no longer stalls after the boot launch or every few seconds: the alignment, eclipse and Milky Way work runs on the other core (PERF-15). Alerts tab in two columns, sky and spaceflight (UI-41j); new Solar switch for solar eclipses, solstices and equinoxes (UI-41k).
+- 4.6.27: the screen lights at power-on with the boot screen (~2.4 s, was ~6.6 s): the backlight is switched on as the boot screen is drawn (BOOT-2). Start-up ends ~4 s sooner and Wi-Fi connects sooner: the satellite markers are made after start-up, a few at a time (BOOT-3). Two-line alerts clear the sky disc: the text sits 4 px higher with its lines 3 px closer, and the disc is 4 px lower (UI-41i).
 - 4.6.26: after a minute untouched, any open screen closes and the map returns (UI-72). At power-on the boot screen shows the logo and "Loading" before the slow start-up, then the Wi-Fi status (BOOT-2). The screen comes up ~2.7 s sooner: the animation pictures are drawn after the display starts, 10 ms at a time, and the boot launch plays when they are ready (UI-69n). A tap on an alert's icon opens the alert too (the picture icon took the tap). The splashdown's sea rises into view, and each splashdown lands in its own spot with its own sway and chute drift (UI-69m).
 - 4.6.25 (installed): pictures work again (the Sun, Moon, Earth and planet photos failed in 4.6.22-4.6.24: the orbital lists were reserved at their caps before the picture buffers and left 0.2 MB of PSRAM; the buffers are now taken first and the lists sized to what they hold, FAIL-12b). A splashdown animation: a capsule on four parachutes comes down to the ocean, splashes and bobs (UI-69m), with a Play Splashdown Animation button and a Splashdowns alert switch (UI-41h). The details card of a launch, splashdown or docking alert shows the country's flag after its title (UI-54d). The whole header left of the counts is the alert's tap zone (UI-41d). The launch card's distance follows Miles.
 - 4.6.24 (installed): the settings header names the open tab (DISPLAY, LOCATION, CELESTIAL, SATELLITES, ALERTS) instead of SETTINGS (UI-16a). Settings icons clear their labels: on Display and Location the icon column is at x 140 (was 128), on Celestial, Satellites and Alerts the left icons at 130 and switches at 156 (were 122 and 150). Every progress bar uses the same colours (UI-71; the picture loader's was orange). A Comets alert switch (UI-41g): the visible-comet alert follows it instead of Sky events. A Lunar alert switch (Settings > Alerts and Home Assistant): the full Moon, the Moon near a planet or bright star, and lunar eclipses now follow it instead of Sky events (UI-41f). "Launches" reads "Launch".
@@ -657,8 +658,14 @@ UI-41e Alert kinds with their own switch (Settings > Alerts and Home Assistant),
        Docking Alerts (UI-54c dockings, undockings, EVAs). Launches and events no longer
        follow Sky Event Alerts.
 UI-41f Lunar Alerts (on by default): the full Moon (UI-48), the Moon near a planet or bright
-       star (UI-49) and lunar eclipses (UI-51). Sky Event Alerts keeps solar eclipses, meteor
-       shower peaks (UI-47) and their radiant on the map, and solstices and equinoxes (UI-41b).
+       star (UI-49) and lunar eclipses (UI-51). Sky Event Alerts keeps meteor shower peaks
+       (UI-47) and their radiant on the map; solar eclipses, solstices and equinoxes follow Solar
+       (UI-41k).
+UI-41j The Alerts tab in two columns: the sky on the left (Aurora, Planets, Sky events, Lunar,
+       Solar, Comets), spaceflight on the right (Launch, Dockings, Splashdowns, Stations); rows
+       44 px apart from y 20; the planets' alignment picture at (130, 62).
+UI-41k Solar Alerts (on by default; mdi:weather-sunny, HA "Solar Alerts", web Celestial after
+       Lunar): solar eclipses seen from here (UI-51) and solstices and equinoxes (UI-41b).
 UI-41g Comet Alerts (on by default): a comet bright enough to see (UI-63). The Comets map layer
        (Celestial) must be on too: a comet not on the map raises no alert.
 UI-72  After 60 s untouched (lv_display_get_inactive_time), checked every 2 s: Settings closes as
@@ -1205,6 +1212,16 @@ PERF-10 CONFIG_SPIRAM_XIP_FROM_PSRAM and CONFIG_ESP32S3_DATA_CACHE_LINE_64B MUST
 PERF-13 CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB MUST be enabled. Code runs from PSRAM
        (PERF-10), which the panel scanout keeps busy, so an instruction-cache miss costs
        ~1 us; with 16 KB LVGL calls took milliseconds each. Costs 16 KB of internal RAM.
+PERF-15 The look-aheads run in an "astro" task on core 0 at priority 1, not in the map's 2 s
+       tick: the alignment scan (UI-41, one day of 48 samples, ~120 ms, per step), the eclipse
+       scan (UI-51, ~85 ms a syzygy) and the Milky Way (UI-64, ~150 ms; ~300 ms when the view
+       changed, asked for by the star map and built into a second buffer). One step at a time,
+       a tick's wait between (idle task, task watchdog). Results are handed over through
+       atomic flags and taken by astro_collect at the start of a tick (the UI's copies are
+       only touched there). Sunrise/sunset searches compute the Sun alone (astro::sun_el), not
+       the Moon's series too. Measured: the map's tick ~1.2 s after the boot launch and ~300 ms
+       every 2 s for 2 minutes an hour (alignments) and a few minutes a day (eclipses), 370 ms
+       every 2 minutes (Milky Way); now (see the 4.6.27 change line).
 PERF-14 Status-line changes are drawn behind the scan: the panel's vsync interrupt (an
        esp_lcd RGB panel callback; ESPHome's mipi_rgb registers none) times each frame, and
        when the status text changes draw_hud waits (at most one frame) until the scan and its
