@@ -31,6 +31,7 @@ std::string host_last_url;
 #include "sky_update.h"
 #include "sky_rocket.h"
 #include "sky_tz.h"
+#include "sky_history.h"
 extern "C" const lv_font_t mono16, mono18, mono24;
 
 static int failures = 0;
@@ -1855,7 +1856,7 @@ int main() {
       sat::img_view_open_now(sat::net::IMG_EARTH, -1);
       hold_loading(sat::net::IMG_EARTH, sat::net::STG_DOWNLOAD, 180 * 1024, 460 * 1024);
       sat::img_view_update(sat_host_now);
-      CHECK(strstr(lv_label_get_text(sat::sv.msg), "39%  -  180 of 460 KB") && sat::sv.tab[2] && !sat::sv.tab[3], "earth loading + tabs");
+      CHECK(strstr(lv_label_get_text(sat::sv.msg), "39%  -  180 of 460 KB") && sat::sv.tab[2] && sat::sv.tab[3], "earth loading + tabs (All-sky the fourth)");
       sat::net::img_stage = sat::net::STG_IDLE;
       host_last_url.clear();
       sat::net::do_image(sat::net::IMG_EARTH);
@@ -2475,6 +2476,161 @@ int main() {
     rk::check();
     CHECK(!rk::playing(), "switch off: no animation");
     rk::set_enabled(true);
+  }
+  {  // UI-73..77: space weather, re-entries, the all-sky camera, the launch countdown, on this day
+    namespace net = sat::net;
+    const double save_now = sat_host_now;
+    double t0 = 0;
+    net::parse_epoch("2026-10-08T17:00:00", t0);  // the fixtures' day (an M6.7 flare at 15:48 UTC)
+    sat_host_now = t0;
+    lv_screen_load(page1);
+    const auto st0 = sat::live.status;
+    sat::live.status.error[0] = 0;
+    sat::live.status.loaded = sat_host_now - 3600;
+    auto shoot = [&](const char *name) {
+      lv_obj_invalidate(lv_screen_active());
+      lv_refr_now(disp);
+      char fn[96];
+      snprintf(fn, sizeof(fn), OUT_DIR "/renders/%s.ppm", name);
+      save_ppm(fn);
+    };
+    // an alert of info type `info` on the status line, then its card
+    auto alert_and_card = [&](uint8_t info, const char *a_name, const char *c_name, const char *want) {
+      static sat::Alert al[sat::MAX_ALERTS];
+      const int n = sat::collect_alerts(sat_host_now, al, sat::MAX_ALERTS);
+      const sat::Alert *a = nullptr;
+      for (int i = 0; i < n; i++)
+        if (al[i].info == info) a = &al[i];
+      CHECK(a != nullptr, "%s alert raised", a_name);
+      if (!a) return;
+      printf("%s: %s\n", a_name, a->text);
+      sat::alert_override = a;
+      sat::draw_hud(sat_host_now);
+      shoot(a_name);
+      lv_obj_send_event(sat::alert_zone, LV_EVENT_CLICKED, nullptr);
+      sat::card_update(sat_host_now);
+      printf("  card: %s\n%s\n", lv_label_get_text(sat::ui.card_title), lv_label_get_text(sat::ui.card_body));
+      CHECK(sat::ui.sel_kind == sat::K_INFO && strstr(lv_label_get_text(sat::ui.card_body), want), "%s card (%s)", a_name, want);
+      shoot(c_name);
+      sat::deselect();
+      sat::alert_override = nullptr;
+      sat::draw_hud(sat_host_now);
+    };
+    // ---- UI-73 space weather
+    host_http_bodies["products/alerts.json"] = slurp(HOST_DIR "/fixtures/swpc_alerts.json");
+    net::swx_next = 0;
+    net::do_swx(sat_host_now);
+    sat::tick();
+    const net::SwxRec *fl = nullptr, *wa = nullptr;
+    for (const auto &r : sat::live.swx) {
+      if (r.kind == net::SWX_FLARE) fl = &r;
+      if (r.kind == net::SWX_WATCH) wa = &r;
+    }
+    double oct9 = 0;
+    net::parse_epoch("2026-10-09T00:00:00", oct9);
+    CHECK(fl && !strcmp(fl->cls, "M6.7") && fl->level == 2 && wa && wa->level == 2 && fabs(wa->t - oct9) < 1 &&
+              sat::live.swx.size() == 2,
+          "space weather: the M6.7 flare (R2) and the G2 watch for Oct 9 (%zu current)", sat::live.swx.size());
+    {
+      net::SwxRec r;
+      double it = 0;
+      net::parse_epoch("2026-10-04T20:58:04", it);
+      CHECK(net::swx_parse("Space Weather Message Code: ALTK06\r\nALERT: Geomagnetic K-index of 6 \nNoaa Scale: G2", it, r) &&
+                r.kind == net::SWX_STORM && r.level == 6 && !net::swx_parse("Space Weather Message Code: ALTK04\r\n", it, r) &&
+                !net::swx_parse("Space Weather Message Code: ALTEF3\r\n", it, r),
+            "space weather: storm alerts from Kp 5 (K4 and electron flux not kept)");
+    }
+    sat::set_swx_alerts(true);
+    alert_and_card(sat::AI_SWX, "r22_swx_alert", "r22_swx_card", "M6.7 solar flare");
+    // ---- UI-74 re-entries
+    host_http_bodies["SPECIAL=DECAYING"] = slurp(HOST_DIR "/fixtures/decaying.csv");
+    net::decay_next = 0;
+    net::status.next_try = 0;
+    net::do_decay(sat_host_now);
+    sat::tick();
+    bool sorted = true;
+    for (size_t i = 1; i < sat::live.decays.size(); i++)
+      sorted = sorted && sat::live.decays[i].est >= sat::live.decays[i - 1].est;
+    for (const auto &d : sat::live.decays)
+      printf("re-entry %-24s in %6.1f h +/-%4.1f %s%s over %.0f deg\n", d.name, (d.est - sat_host_now) / 3600, d.unc_h,
+             d.rb ? "R/B" : d.deb ? "DEB" : "sat", "", d.over_el);
+    CHECK(!sat::live.decays.empty() && sat::live.decays.size() <= (size_t) net::DECAY_KEEP && sorted &&
+              sat::live.decays[0].est < sat_host_now + 48 * 3600.0,
+          "re-entries: some within two days, soonest first (%zu)", sat::live.decays.size());
+    sat::set_reentry_alerts(true);
+    if (sat::reentry_top(sat_host_now))
+      alert_and_card(sat::AI_REENTRY, "r23_reentry_alert", "r23_reentry_card", "Estimated from how fast");
+    // ---- UI-75 the all-sky camera
+    host_http_bodies["checkLive.php"] =
+        "id: 1791479701\nretry: 60000\ndata: {\ndata: \"0\": \"images/poker-notdark.jpg\",\ndata: \"1\": \"images/poker-notdark.jpg\",\n"
+        "data: \"2\": \"images/poker-notdark.jpg\"\ndata: }\n\n";
+    host_http_bodies["images/poker-notdark.jpg"] = slurp(HOST_DIR "/fixtures/allsky_day.jpg");
+    net::do_image(net::IMG_ALLSKY);
+    sat::tick();
+    CHECK(sat::live.img[net::IMG_ALLSKY].ok && sat::live.img_px[net::IMG_ALLSKY] && !strcmp(sat::live.img[net::IMG_ALLSKY].src, "day"),
+          "all-sky: the camera's picture (by day, its card) (%s)", sat::live.img[net::IMG_ALLSKY].err);
+    sat::img_view_open_now(net::IMG_ALLSKY);
+    sat::img_view_update(sat_host_now);
+    CHECK(sat::sv.tab[3] && strstr(lv_label_get_text(sat::sv.cap2), "Off until dark"), "all-sky view (%s)", lv_label_get_text(sat::sv.cap2));
+    shoot("r20_allsky");
+    sat::img_view_close();
+    host_http_bodies["checkLive.php"] = "data: {\ndata: \"1\": \"images/PKR/latest.jpg\"\ndata: }\n";
+    host_http_bodies["images/PKR/latest.jpg"] = slurp(HOST_DIR "/fixtures/allsky_big.jpg");
+    net::do_image(net::IMG_ALLSKY);
+    sat::tick();
+    CHECK(sat::live.img[net::IMG_ALLSKY].ok && !strcmp(sat::live.img[net::IMG_ALLSKY].src, "UAF GI"),
+          "all-sky: a 1028x1200 frame is halved first (%s)", sat::live.img[net::IMG_ALLSKY].err);
+    // ---- UI-76 the launch countdown
+    {
+      namespace rk = sat::rocket;
+      sat::live.launches.clear();
+      net::LaunchRec l;
+      snprintf(l.name, sizeof(l.name), "Falcon 9 Block 5 | Starlink Group 10-12");
+      snprintf(l.rocket, sizeof(l.rocket), "Falcon 9 Block 5");
+      snprintf(l.where, sizeof(l.where), "Cape Canaveral SFS, FL, USA");
+      snprintf(l.status, sizeof(l.status), "Go");
+      l.net = sat_host_now + 300;
+      l.webcast = true;
+      sat::live.launches.push_back(l);
+      rk::countdown_fonts(&mono24, &mono18, &mono16, &mono16);
+      rk::set_countdown(true);
+      rk::countdown_check();
+      CHECK(rk::countdown_open() && !strcmp(lv_label_get_text(rk::cd.clock), "T-05:00") &&
+                !strcmp(lv_label_get_text(rk::cd.status), "GO for launch") && !lv_obj_has_flag(rk::cd.badge, LV_OBJ_FLAG_HIDDEN),
+            "countdown: T-05:00, GO, webcast live");
+      shoot("r21_countdown");
+      snprintf(sat::live.launches[0].status, sizeof(l.status), "Hold");
+      sat::live.launches[0].webcast = false;
+      sat_host_now += 61;
+      rk::cd_update();
+      CHECK(!strcmp(lv_label_get_text(rk::cd.clock), "T-03:59") && !strcmp(lv_label_get_text(rk::cd.status), "HOLD") &&
+                lv_obj_has_flag(rk::cd.badge, LV_OBJ_FLAG_HIDDEN),
+            "countdown: a hold");
+      shoot("r21_countdown_hold");
+      sat_host_now = l.net + 0.5;
+      rk::cd_update();
+      CHECK(!rk::countdown_open(), "countdown: closes at T-0 (the launch animation takes over)");
+      sat::live.launches[0].net = sat_host_now + 400;  // a slip back into the window: it comes back...
+      rk::countdown_check();
+      CHECK(rk::countdown_open(), "countdown: reopens for a slipped launch");
+      lv_obj_send_event(rk::cd.root, LV_EVENT_CLICKED, nullptr);  // ...until it is tapped away
+      rk::countdown_check();
+      CHECK(!rk::countdown_open(), "countdown: a tap puts it away for that launch");
+      sat::live.launches.clear();
+    }
+    // ---- UI-77 on this day
+    {
+      const sat::hist::Ev *ev[4];
+      CHECK(sat::hist::on(7, 20, ev, 4) == 2 && ev[0]->y == 1969 && ev[1]->y == 1976 && sat::hist::on(10, 8, ev, 4) == 0,
+            "on this day: Apollo 11 and Viking 1 on Jul 20");
+      double t4 = 0;
+      net::parse_epoch("2026-10-04T18:05:00", t4);  // Sputnik's day, in a "now and then" window
+      sat_host_now = floor(t4 / 1800) * 1800 + 60;
+      sat::set_history_alerts(true);
+      alert_and_card(sat::AI_HISTORY, "r24_history_alert", "r24_history_card", "Sputnik 1");
+    }
+    sat::live.status = st0;
+    sat_host_now = save_now;
   }
   if (getenv("ALERT_ICONS")) {  // UI-41c review: alert icon placement, each mode, several alert kinds
     lv_screen_load(page1);

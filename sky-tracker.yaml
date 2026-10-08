@@ -117,6 +117,9 @@ esphome:
             sat::set_stations(id(show_stations).state);  // UI-52b
             sat::set_lunar_alerts(id(lunar_alerts).state);  // UI-41f
             sat::set_solar_alerts(id(solar_alerts).state);  // UI-41k
+            sat::set_swx_alerts(id(swx_alerts).state);          // UI-73
+            sat::set_reentry_alerts(id(reentry_alerts).state);  // UI-74
+            sat::set_history_alerts(id(history_alerts).state);  // UI-77
             sat::set_comet_alerts(id(comet_alerts).state);  // UI-41g
             sat::set_splash_alerts(id(splash_alerts).state);  // UI-41h
             sat::set_night(id(night_mode).state);      // UI-45
@@ -149,6 +152,9 @@ esphome:
             sat::upd::set_source("${manifest_url}");  // NET-13a
             sat::rocket::init(id(mono18)->get_lv_font());  // UI-69
             sat::rocket::set_enabled(id(launch_anim).state);
+            sat::rocket::countdown_fonts(id(mono72)->get_lv_font(), id(mono18)->get_lv_font(), id(mono16)->get_lv_font(),
+                                         id(mono12)->get_lv_font());  // UI-76
+            sat::rocket::set_countdown(id(launch_countdown).state);
             sat::rocket::play_boot();  // UI-69k: a launch over the boot screen (Launch Animation on)
             lv_label_set_text(id(wifi_title), "Connecting to Wi-Fi");  // BOOT-2: start-up done
             sat::tz::init();  // UI-70
@@ -425,7 +431,7 @@ font:
     id: mono12
     size: 12
     bpp: 4                       # anti-aliased (ESPHome default is 1: jagged edges)
-    glyphs: &glyphs " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_abcdefghijklmnopqrstuvwxyz|°·"
+    glyphs: &glyphs " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]_abcdefghijklmnopqrstuvwxyz|°·±"
   - file: "gfonts://Roboto Mono"
     id: mono16
     size: 16
@@ -451,6 +457,11 @@ font:
     size: 24
     bpp: 4                       # anti-aliased (ESPHome default is 1: jagged edges)
     glyphs: " -0123456789:ABCDEFGHIJKLMNOPQRSTUVWXYZ"  # clock ("--:--" before time sync), AM/PM, OTA panel title
+  - file: "gfonts://Roboto Mono@500"
+    id: mono72                   # UI-76: the launch countdown's T-minus digits
+    size: 72
+    bpp: 4
+    glyphs: "T-+0123456789:"
   # NET-2b Wi-Fi status page: Roboto Light 34 (name, firmware prompt titles), Roboto 22
   - file:
       type: web
@@ -472,7 +483,7 @@ font:
     # monitor, map-marker, weather-night (UI-16a settings tabs); star-shooting, star-four-points,
     # weather-sunset-down (UI-33 Sat Trails, Stars, After dusk)
     # moon-full (UI-48/49 alerts, 4.5.15)
-    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F1BB9", "\U000F0379", "\U000F034E", "\U000F0594", "\U000F1741", "\U000F0AE2", "\U000F059B", "\U000F0F62", "\U000F018C", "\U000F14DE", "\U000F0629", "\U000F00B8", "\U000F0150", "\U000F00DF", "\U000F00E1", "\U000F08F0", "\U000F0F57", "\U000F0F5A", "\U000F1382", "\U000F009E", "\U000F1616", "\U000F0937", "\U000F0CB4"]  # moon-full, compass-outline, rocket-launch, meteor (UI-63), blur-radial (UI-64); settings row icons (UI-16a, 4.5.38): clock-outline, brightness-6, brightness-auto, map-marker-distance; latitude, longitude, compass-rose
+    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F1BB9", "\U000F0379", "\U000F034E", "\U000F0594", "\U000F1741", "\U000F0AE2", "\U000F059B", "\U000F0F62", "\U000F018C", "\U000F14DE", "\U000F0629", "\U000F00B8", "\U000F0150", "\U000F00DF", "\U000F00E1", "\U000F08F0", "\U000F0F57", "\U000F0F5A", "\U000F1382", "\U000F009E", "\U000F1616", "\U000F0937", "\U000F0CB4", "\U000F17FE", "\U000F15D7", "\U000F09D3", "\U000F051B"]  # moon-full, compass-outline, rocket-launch, meteor (UI-63), blur-radial (UI-64); settings row icons (UI-16a, 4.5.38): clock-outline, brightness-6, brightness-auto, map-marker-distance; latitude, longitude, compass-rose; sun-wireless, fire-alert, calendar-star, timer-outline (UI-73/74/77/76)
   - file:
       type: web
       url: https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf
@@ -481,7 +492,7 @@ font:
     bpp: 4
     # UI-30 (4.5.5): details-card icons at the Moon picture's size: space-station, satellite-uplink,
     # satellite-variant, earth, crosshairs-gps, trash-can, weather-sunny, star-four-points
-    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F0AE2", "\U000F1741", "\U000F0629", "\U000F14DE", "\U000F1BB9", "\U000F0F62", "\U000F0CB4"]  # + star-shooting (UI-47 shower card), meteor (UI-63 comet card), rocket-launch, aurora, moon-full (UI-41d alert cards)
+    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F0AE2", "\U000F1741", "\U000F0629", "\U000F14DE", "\U000F1BB9", "\U000F0F62", "\U000F0CB4", "\U000F17FE", "\U000F15D7", "\U000F09D3"]  # + star-shooting (UI-47 shower card), meteor (UI-63 comet card), rocket-launch, aurora, moon-full (UI-41d alert cards); sun-wireless, fire-alert, calendar-star (UI-73/74/77 cards)
   - file: "gfonts://Roboto@300"
     id: setup_title
     size: 34
@@ -1404,6 +1415,58 @@ switch:
       - lambda: sat::set_solar_alerts(true);
     on_turn_off:
       - lambda: sat::set_solar_alerts(false);
+  - platform: template           # UI-73: NOAA storm watches, storms, flares, radiation
+    id: swx_alerts
+    name: Space Weather Alerts
+    web_server:
+      sorting_group_id: grp_alerts
+      sorting_weight: 11
+    icon: mdi:sun-wireless
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_swx_alerts(true);
+    on_turn_off:
+      - lambda: sat::set_swx_alerts(false);
+  - platform: template           # UI-74: rocket stages and satellites coming down
+    id: reentry_alerts
+    name: Re-entry Alerts
+    web_server:
+      sorting_group_id: grp_alerts
+      sorting_weight: 12
+    icon: mdi:fire-alert
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_reentry_alerts(true);
+    on_turn_off:
+      - lambda: sat::set_reentry_alerts(false);
+  - platform: template           # UI-77: a space-history event for the date
+    id: history_alerts
+    name: On This Day
+    web_server:
+      sorting_group_id: grp_alerts
+      sorting_weight: 13
+    icon: mdi:calendar-star
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::set_history_alerts(true);
+    on_turn_off:
+      - lambda: sat::set_history_alerts(false);
+  - platform: template           # UI-76: full screen from T-10 min
+    id: launch_countdown
+    name: Launch Countdown
+    web_server:
+      sorting_group_id: grp_alerts
+      sorting_weight: 14
+    icon: mdi:timer-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    on_turn_on:
+      - lambda: sat::rocket::set_countdown(true);
+    on_turn_off:
+      - lambda: sat::rocket::set_countdown(false);
   - platform: template           # UI-41g: a comet bright enough to see
     id: comet_alerts
     name: Comet Alerts
@@ -2266,6 +2329,10 @@ lvgl:
             set(id(sw_event_alerts), id(event_alerts).state);
             set(id(sw_lunar_alerts), id(lunar_alerts).state);  // UI-41f
             set(id(sw_solar_alerts), id(solar_alerts).state);  // UI-41k
+            set(id(sw_swx_alerts), id(swx_alerts).state);          // UI-73
+            set(id(sw_reentry_alerts), id(reentry_alerts).state);  // UI-74
+            set(id(sw_history_alerts), id(history_alerts).state);  // UI-77
+            set(id(sw_countdown), id(launch_countdown).state);     // UI-76
             set(id(sw_comet_alerts), id(comet_alerts).state);  // UI-41g
             set(id(sw_splash_alerts), id(splash_alerts).state);  // UI-41h
             set(id(sw_stations), id(show_stations).state);  // UI-52b
@@ -2358,6 +2425,10 @@ lvgl:
                         sw(id(sw_event_alerts), id(event_alerts));
                         sw(id(sw_lunar_alerts), id(lunar_alerts));  // UI-41f
                         sw(id(sw_solar_alerts), id(solar_alerts));  // UI-41k
+                        sw(id(sw_swx_alerts), id(swx_alerts));          // UI-73
+                        sw(id(sw_reentry_alerts), id(reentry_alerts));  // UI-74
+                        sw(id(sw_history_alerts), id(history_alerts));  // UI-77
+                        sw(id(sw_countdown), id(launch_countdown));     // UI-76
                         sw(id(sw_comet_alerts), id(comet_alerts));  // UI-41g
                         sw(id(sw_splash_alerts), id(splash_alerts));  // UI-41h
                         sw(id(sw_stations), id(show_stations));  // UI-52b
@@ -3479,6 +3550,40 @@ lvgl:
                   y: 190
                   width: 56
                   height: 28
+              - label:                 # UI-73: NOAA space weather
+                  x: 16
+                  y: 240
+                  text: "Space wx"
+                  text_font: mono16
+              - label:
+                  x: 130
+                  y: 238
+                  text: "\U000F17FE"   # sun-wireless
+                  text_font: mdi_card20
+                  text_color: 0xFFD27F
+              - switch:
+                  id: sw_swx_alerts
+                  x: 156
+                  y: 234
+                  width: 56
+                  height: 28
+              - label:                 # UI-77: on this day in space history
+                  x: 16
+                  y: 284
+                  text: "This day"
+                  text_font: mono16
+              - label:
+                  x: 130
+                  y: 282
+                  text: "\U000F09D3"   # calendar-star
+                  text_font: mdi_card20
+                  text_color: 0xC5B3F0
+              - switch:
+                  id: sw_history_alerts
+                  x: 156
+                  y: 278
+                  width: 56
+                  height: 28
               - label:                 # UI-54
                   x: 246
                   y: 20
@@ -3562,6 +3667,40 @@ lvgl:
                   id: sw_comet_alerts
                   x: 400
                   y: 190
+                  width: 56
+                  height: 28
+              - label:                 # UI-74: rocket stages and satellites coming down
+                  x: 246
+                  y: 240
+                  text: "Re-entry"
+                  text_font: mono16
+              - label:
+                  x: 372
+                  y: 238
+                  text: "\U000F15D7"   # fire-alert
+                  text_font: mdi_card20
+                  text_color: 0xFF8A65
+              - switch:
+                  id: sw_reentry_alerts
+                  x: 400
+                  y: 234
+                  width: 56
+                  height: 28
+              - label:                 # UI-76: full screen from T-10 min
+                  x: 246
+                  y: 284
+                  text: "Countdown"
+                  text_font: mono16
+              - label:
+                  x: 372
+                  y: 282
+                  text: "\U000F051B"   # timer-outline
+                  text_font: mdi_card20
+                  text_color: 0xFFC46B
+              - switch:
+                  id: sw_countdown
+                  x: 400
+                  y: 278
                   width: 56
                   height: 28
         - button:                # UI-67: About (version, device, credits), lower right

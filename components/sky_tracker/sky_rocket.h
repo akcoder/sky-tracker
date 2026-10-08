@@ -26,6 +26,12 @@ void play_undock_now();  // UI-69f button: the next ISS undocking's name (or a g
 bool active();    // playing now (sat::tick pauses, UI-69b)
 void play_boot();  // UI-69k on the boot screen: no banner, smoke over black
 void play_splash_now();  // UI-69m button: the next splashdown's name (or a generic one)
+// UI-76: the launch countdown, from T-10 min to liftoff
+void set_countdown(bool on);
+void countdown_fonts(const lv_font_t *digits, const lv_font_t *title, const lv_font_t *body, const lv_font_t *small);
+bool countdown_open();
+void countdown_close();
+void countdown_show(int launch);  // host tests / comps: that launch now (index into live.launches)
 }  // namespace rocket
 }  // namespace sat
 #else
@@ -944,6 +950,161 @@ inline void play_scene(bool undock, const char *name, bool boot = false, bool sp
 }
 inline void play(const char *name) { play_scene(false, name); }
 
+// UI-76: the launch countdown: from T-10 min a full-screen card over everything with the
+// mission, rocket and pad, the T-minus clock, Launch Library's status (GO / HOLD / TBC) and a
+// live-webcast badge. A tap puts it away for that launch. It closes itself at T-0 so the launch
+// animation (check(), which waits for the top layer to be clear) takes over; a slip of more than
+// the window, a scrub or a flown status closes it too.
+constexpr double CD_WINDOW_S = 600;
+struct Cd {
+  bool on = true;
+  const lv_font_t *digits = nullptr, *title = nullptr, *body = nullptr, *small = nullptr;
+  lv_obj_t *root = nullptr, *mission = nullptr, *sub = nullptr, *clock = nullptr, *status = nullptr, *when = nullptr,
+           *badge = nullptr;
+  lv_timer_t *timer = nullptr;
+  uint32_t key = 0, dismissed = 0;  // the launch (by name), and the one put away
+  char name[64] = "";
+  int shown_s = -1;
+};
+inline Cd cd;
+inline const net::LaunchRec *cd_launch() {
+  for (const auto &l : live.launches)
+    if (key_of(l.name, 0) == cd.key)
+      return &l;
+  return nullptr;
+}
+void countdown_close() {
+  if (cd.timer) {
+    lv_timer_delete(cd.timer);
+    cd.timer = nullptr;
+  }
+  if (cd.root)
+    lv_obj_delete(cd.root);
+  cd.root = cd.mission = cd.sub = cd.clock = cd.status = cd.when = cd.badge = nullptr;
+  cd.shown_s = -1;
+}
+bool countdown_open() { return cd.root != nullptr; }
+inline void cd_update() {
+  const net::LaunchRec *l = cd_launch();
+  const double t = clock_now();
+  if (l == nullptr || !launch_pending(*l) || l->net - t > CD_WINDOW_S + 30 || l->net <= t) {
+    countdown_close();  // (at T-0: check() plays the launch next second)
+    return;
+  }
+  const int rem = (int) ceil(l->net - t);
+  if (rem != cd.shown_s) {
+    cd.shown_s = rem;
+    char b[24];
+    snprintf(b, sizeof(b), "T-%02d:%02d", rem / 60, rem % 60);
+    lv_label_set_text(cd.clock, b);
+  }
+  const bool hold = !strcmp(l->status, "Hold"), go = !strcmp(l->status, "Go");
+  const char *st = go ? "GO for launch" : hold ? "HOLD" : !strcmp(l->status, "TBC") ? "Time to be confirmed" : l->status;
+  if (strcmp(lv_label_get_text(cd.status), st) != 0) {
+    lv_label_set_text(cd.status, st);
+    lv_obj_set_style_text_color(cd.status, lv_color_hex(go ? 0x7EE0B0 : hold ? 0xFF5A5A : 0xFFD27F), 0);
+  }
+  char hm[16], w[40];
+  local_hm((int64_t) l->net, hm, sizeof(hm));
+  snprintf(w, sizeof(w), "Liftoff %s", hm);
+  if (strcmp(lv_label_get_text(cd.when), w) != 0)
+    lv_label_set_text(cd.when, w);
+  if (l->webcast)
+    lv_obj_remove_flag(cd.badge, LV_OBJ_FLAG_HIDDEN);
+  else
+    lv_obj_add_flag(cd.badge, LV_OBJ_FLAG_HIDDEN);
+}
+inline lv_obj_t *cd_label(lv_obj_t *p, const lv_font_t *f, uint32_t col, int y, const char *text) {
+  lv_obj_t *l = lv_label_create(p);
+  if (f)
+    lv_obj_set_style_text_font(l, f, 0);
+  lv_obj_set_style_text_color(l, lv_color_hex(col), 0);
+  lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(l, 440);
+  lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+  lv_label_set_text(l, text);
+  lv_obj_align(l, LV_ALIGN_TOP_MID, 0, y);
+  return l;
+}
+inline void cd_open(const net::LaunchRec &l) {
+  countdown_close();
+  cd.key = key_of(l.name, 0);
+  net::copy_cstr(cd.name, sizeof(cd.name), l.name);
+  lv_obj_t *r = lv_obj_create(lv_layer_top());
+  cd.root = r;
+  lv_obj_remove_style_all(r);
+  lv_obj_set_size(r, 480, 480);
+  lv_obj_set_style_bg_color(r, lv_color_hex(0x070B18), 0);
+  lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
+  lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(r, [](lv_event_t *) {  // a tap: away for this launch
+    cd.dismissed = cd.key;
+    countdown_close();
+  }, LV_EVENT_CLICKED, nullptr);
+  const char *bar = strchr(l.name, '|');
+  const char *mission = bar ? bar + 1 : l.name;
+  while (*mission == ' ')
+    mission++;
+  char sub[96];
+  snprintf(sub, sizeof(sub), "%s%s%s", l.rocket, l.rocket[0] && l.where[0] ? " - " : "", short_site(l.where));
+  cd_label(r, cd.body, 0xFF8A1F, 26, "LAUNCH COUNTDOWN");
+  cd.mission = cd_label(r, cd.title, 0xFFFFFF, 64, mission);
+  cd.sub = cd_label(r, cd.body, 0x9AA6C8, 124, sub);
+  cd.clock = cd_label(r, cd.digits ? cd.digits : cd.title, 0xFFC46B, 168, "T-10:00");
+  cd.status = cd_label(r, cd.title, 0x7EE0B0, 280, "");
+  cd.when = cd_label(r, cd.body, 0x9AA6C8, 314, "");
+  cd.badge = lv_obj_create(r);  // UI-76: the webcast is live
+  lv_obj_remove_style_all(cd.badge);
+  lv_obj_set_size(cd.badge, 200, 34);
+  lv_obj_align(cd.badge, LV_ALIGN_TOP_MID, 0, 360);
+  lv_obj_set_style_radius(cd.badge, 17, 0);
+  lv_obj_set_style_bg_color(cd.badge, lv_color_hex(0xC62828), 0);
+  lv_obj_set_style_bg_opa(cd.badge, LV_OPA_COVER, 0);
+  lv_obj_remove_flag(cd.badge, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t *bl = lv_label_create(cd.badge);
+  if (cd.body)
+    lv_obj_set_style_text_font(bl, cd.body, 0);
+  lv_obj_set_style_text_color(bl, lv_color_hex(0xFFFFFF), 0);
+  lv_label_set_text(bl, "WEBCAST LIVE");
+  lv_obj_center(bl);
+  cd_label(r, cd.small, 0x7E8BB3, 446, "Tap to close");
+  cd_update();
+#ifndef SAT_HOST_TEST
+  cd.timer = lv_timer_create([](lv_timer_t *) { cd_update(); }, 200, nullptr);
+#endif
+  ESP_LOGI("rocket", "countdown: %s", l.name);
+}
+// every second: a launch inside the window that is not put away (and nothing else on top)
+inline void countdown_check() {
+  if (!cd.on || cd.root || playing() || !clock_valid() || lv_obj_get_child_count(lv_layer_top()) > 0)
+    return;
+  const double t = clock_now();
+  for (const auto &l : live.launches) {
+    const double dt = l.net - t;
+    if (!launch_pending(l) || !strcmp(l.status, "TBD") || dt <= 0 || dt > CD_WINDOW_S)
+      continue;
+    if (key_of(l.name, 0) == cd.dismissed)
+      continue;
+    cd_open(l);
+    return;
+  }
+}
+void set_countdown(bool on) {
+  cd.on = on;
+  if (!on)
+    countdown_close();
+}
+void countdown_fonts(const lv_font_t *digits, const lv_font_t *title, const lv_font_t *body, const lv_font_t *small) {
+  cd.digits = digits;
+  cd.title = title;
+  cd.body = body;
+  cd.small = small;
+}
+void countdown_show(int launch) {
+  if (launch >= 0 && launch < (int) live.launches.size())
+    cd_open(live.launches[launch]);
+}
+
 // every second: a launch at T-0 that has not been shown
 inline void check() {
   if (!st.enabled || playing() || !clock_valid())
@@ -1065,7 +1226,10 @@ void init(const lv_font_t *banner) {
       lv_timer_delete(t);
   }, 25, nullptr);
 #endif
-  lv_timer_create([](lv_timer_t *) { check(); }, 1000, nullptr);
+  lv_timer_create([](lv_timer_t *) {
+    countdown_check();  // UI-76 (first: at T-0 it has closed, and check() then plays the launch)
+    check();
+  }, 1000, nullptr);
 }
 void set_enabled(bool on) {
   st.enabled = on;

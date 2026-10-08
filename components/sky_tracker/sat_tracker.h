@@ -27,6 +27,7 @@
 #include "sky_lore.h"
 #include "sky_cfig.h"
 #include "sky_events.h"
+#include "sky_history.h"
 #include "sky_mw.h"
 
 #ifndef SAT_HOST_TEST
@@ -189,6 +190,12 @@ constexpr uint32_t C_ALIGN = 0xB8C4F0;   // UI-41 alignment alerts
 constexpr uint32_t C_CSS = 0xFF5C6C;     // UI-52 Tiangong
 constexpr uint32_t C_METEOR = 0xA8D8FF;  // UI-47 meteor showers
 constexpr uint32_t C_ECLIPSE = 0xFFB070; // UI-51 eclipses
+constexpr uint32_t C_SWX = 0xFFD27F;     // UI-73 space weather
+constexpr uint32_t C_REENTRY = 0xFF8A65; // UI-74 re-entries
+constexpr uint32_t C_HISTORY = 0xC5B3F0; // UI-77 on this day
+#define ICON_SWX "\xF3\xB1\x9F\xBE"      // sun-wireless
+#define ICON_REENTRY "\xF3\xB1\x97\x97"  // fire-alert
+#define ICON_HISTORY "\xF3\xB0\xA7\x93"  // calendar-star
 constexpr uint32_t C_LAUNCH = 0xFFC46B;  // UI-54 rocket launches
 constexpr uint32_t C_EVENT = 0x8FD3FF;   // UI-54c dockings, undockings, EVAs
 constexpr uint32_t C_DSO = 0xC3B2F5;     // UI-56 deep-sky objects
@@ -456,6 +463,9 @@ struct Ui {
   bool station_alerts = true, launch_alerts = true, event_alerts = true;  // UI-41e
   bool lunar_alerts = true;  // UI-41f: full Moon, Moon near a planet or star, lunar eclipses
   bool solar_alerts = true;  // UI-41k: solar eclipses, solstices and equinoxes
+  bool swx_alerts = true;      // UI-73: space weather (NOAA SWPC)
+  bool reentry_alerts = true;  // UI-74: re-entries
+  bool history_alerts = true;  // UI-77: on this day
   bool comet_alerts = true;  // UI-41g: a comet bright enough to see (the layer must be on too)
   bool splash_alerts = true;  // UI-41h: capsules splashing down (Launch Library "Spacecraft Landing")
   bool stations_on = true;  // UI-52b: ISS and Tiangong drawn on the map
@@ -2066,7 +2076,7 @@ inline bool is_splashdown(const net::EventRec &e) {
   return strstr(e.type, "Landing") != nullptr && (strstr(e.name, "plashdown") || strstr(e.name, "plash Down"));
 }
 enum AlertInfo : uint8_t { AI_NONE, AI_ISS_PASS, AI_CSS_PASS, AI_AURORA, AI_WIND, AI_LAUNCH, AI_EVENT, AI_CONJ, AI_PARADE,
-                           AI_ECLIPSE, AI_SEASON };
+                           AI_ECLIPSE, AI_SEASON, AI_SWX, AI_REENTRY, AI_HISTORY };
 inline Alert shown_alert;          // UI-41d the alert on the status line now
 inline bool shown_alert_ok = false;
 inline Alert info_alert;           // the one whose details card is open (K_INFO)
@@ -2891,6 +2901,9 @@ inline void set_alerts(bool aurora, bool planet) {
 inline void set_sky_alerts(bool on) { ui.sky_alerts = on; }  // UI-47..51 (and UI-41b)
 inline void set_lunar_alerts(bool on) { ui.lunar_alerts = on; }  // UI-41f
 inline void set_solar_alerts(bool on) { ui.solar_alerts = on; }  // UI-41k
+inline void set_swx_alerts(bool on) { ui.swx_alerts = on; }          // UI-73
+inline void set_reentry_alerts(bool on) { ui.reentry_alerts = on; }  // UI-74
+inline void set_history_alerts(bool on) { ui.history_alerts = on; }  // UI-77
 inline void set_comet_alerts(bool on) { ui.comet_alerts = on; }  // UI-41g
 inline void set_splash_alerts(bool on) { ui.splash_alerts = on; }  // UI-41h
 inline void set_alert_kinds(bool stations, bool launches, bool events) {  // UI-41e
@@ -3489,6 +3502,69 @@ inline bool wind_warning(double t) { return net::wind_warns(live.wind, t); }
 
 constexpr double SEASON_ALERT_S = 3 * 86400.0;  // like the alignments: at most 3 days ahead
 
+// UI-73: the space weather notice for the alert line: a storm now, then a warning, a watch, a
+// flare, a proton event
+inline const net::SwxRec *swx_top(double t) {
+  static const uint8_t ORDER[] = {net::SWX_STORM, net::SWX_WARN, net::SWX_WATCH, net::SWX_FLARE, net::SWX_PROTON};
+  for (uint8_t k : ORDER)
+    for (const auto &r : live.swx)
+      if (r.kind == k && r.until > t)
+        return &r;
+  return nullptr;
+}
+inline void swx_text(const net::SwxRec &r, double t, char *b, size_t n) {
+  char hm[16], w[24];
+  switch (r.kind) {
+    case net::SWX_WATCH:
+      day_word(t, r.t + 43200.0, w, sizeof(w));  // (the watch is for a UTC day: its middle)
+      snprintf(b, n, "G%d storm watch %s - aurora possible", r.level, w);
+      break;
+    case net::SWX_STORM:
+      snprintf(b, n, "G%d geomagnetic storm now - Kp %d", std::max(1, r.level - 4), r.level);
+      break;
+    case net::SWX_WARN:
+      local_hm((int64_t) r.until, hm, sizeof(hm));
+      snprintf(b, n, "Kp %d storm expected until %s", r.level, hm);
+      break;
+    case net::SWX_FLARE:
+      local_hm((int64_t) r.t, hm, sizeof(hm));
+      if (r.level > 0)
+        snprintf(b, n, "%s solar flare at %s - R%d radio blackout", r.cls, hm, r.level);
+      else
+        snprintf(b, n, "%s solar flare at %s", r.cls, hm);
+      break;
+    default:
+      snprintf(b, n, "S%d solar radiation storm", r.level);
+      break;
+  }
+}
+// UI-74: the re-entry for the alert line: a rocket stage or satellite (not debris) within 24 h,
+// one passing high over the observer first, else the soonest
+inline const net::DecayRec *reentry_top(double t) {
+  const net::DecayRec *best = nullptr;
+  for (const auto &d : live.decays) {
+    if (d.deb || d.est < t - 3600.0 || d.est - t > 24 * 3600.0)
+      continue;
+    const bool over = d.over_el >= 10 && d.over_t > t, best_over = best && best->over_el >= 10 && best->over_t > t;
+    if (!best || (over && !best_over) || (over == best_over && d.est < best->est))
+      best = &d;
+  }
+  return best;
+}
+inline void reentry_text(const net::DecayRec &d, double t, char *b, size_t n) {
+  char in[24], hm[16];
+  if (d.est > t)
+    fmt_dur(d.est - t, in, sizeof(in));
+  if (d.over_el >= 10 && d.over_t > t) {
+    local_hm((int64_t) d.over_t, hm, sizeof(hm));
+    snprintf(b, n, "%s re-enters %s%s - over you %s, %.0f\xC2\xB0 %s", d.name, d.est > t ? "in ~" : "now",
+             d.est > t ? in : "", hm, d.over_el, d.over_dir);
+  } else if (d.est > t) {
+    snprintf(b, n, "%s re-enters in ~%s (\xC2\xB1%.0fh)", d.name, in, std::max(1.0f, d.unc_h));
+  } else {
+    snprintf(b, n, "%s re-entering about now", d.name);
+  }
+}
 inline int collect_alerts(double t, Alert *out, int max) {
   int n = 0;
   auto add = [&](uint32_t col, const char *glyph, const lv_image_dsc_t *img) -> Alert * {
@@ -3728,6 +3804,31 @@ inline int collect_alerts(double t, Alert *out, int max) {
         else
           local_md(ev.t, when, sizeof(when));
         snprintf(a->text, sizeof(a->text), "%s %s - %s", NAME[named], when, what);
+      }
+  }
+  if (ui.swx_alerts)  // UI-73
+    if (const net::SwxRec *r = swx_top(t))
+      if (Alert *a = add(C_SWX, ICON_SWX, nullptr)) {
+        a->info = AI_SWX;
+        swx_text(*r, t, a->text, sizeof(a->text));
+      }
+  if (ui.reentry_alerts)  // UI-74
+    if (const net::DecayRec *d = reentry_top(t))
+      if (Alert *a = add(C_REENTRY, ICON_REENTRY, nullptr)) {
+        a->info = AI_REENTRY;
+        reentry_text(*d, t, a->text, sizeof(a->text));
+      }
+  // UI-77: on this day, now and then (10 min in every 30) so it doesn't hold a place all day
+  if (ui.history_alerts && clock_valid() && ((int64_t) (t / 600) % 3) == 0) {
+    int mo, d, h, mi, se;
+    local_parts(t, mo, d, h, mi, se);
+    const hist::Ev *ev[4];
+    const int ne = hist::on(mo, d, ev, 4);
+    if (ne > 0)
+      if (Alert *a = add(C_HISTORY, ICON_HISTORY, nullptr)) {
+        a->info = AI_HISTORY;
+        const hist::Ev &e = *ev[(int64_t) (t / 1800) % ne];
+        snprintf(a->text, sizeof(a->text), "This day in %d: %s", e.y, e.text);
       }
   }
   return n;
@@ -4447,6 +4548,70 @@ inline void info_card_update(double t) {
     case AI_SEASON:
       snprintf(title, sizeof(title), "Season");
       break;
+    case AI_SWX: {  // UI-73: every current notice, in plain words
+      snprintf(title, sizeof(title), "Space weather");
+      int k = 0;
+      body[0] = 0;
+      static const uint8_t ORDER[] = {net::SWX_STORM, net::SWX_WARN, net::SWX_WATCH, net::SWX_FLARE, net::SWX_PROTON};
+      for (uint8_t kind : ORDER)
+        for (const auto &r : live.swx) {
+          if (r.kind != kind || r.until <= t || k >= (int) sizeof(body) - 2)
+            continue;
+          char line[96];
+          swx_text(r, t, line, sizeof(line));
+          const char *why = r.kind == net::SWX_FLARE  ? "Shortwave radio fades on Earth's day side."
+                            : r.kind == net::SWX_PROTON ? "Radiation for polar flights and satellites."
+                                                        : "Aurora reaches further from the poles than usual.";
+          k += snprintf(body + k, sizeof(body) - k, "%s%s\n%s", k ? "\n" : "", line, why);
+        }
+      if (k == 0)
+        snprintf(body, sizeof(body), "Quiet: no storms, flares or watches from NOAA.");
+      else if (k < (int) sizeof(body))
+        snprintf(body + k, sizeof(body) - k, "\nFrom NOAA's Space Weather Prediction Center.");
+      break;
+    }
+    case AI_REENTRY: {  // UI-74: the coming re-entries (debris too), soonest first
+      snprintf(title, sizeof(title), "Re-entries");
+      int k = 0, shown = 0;
+      for (const auto &d : live.decays) {
+        if (d.est < t - 3600.0 || shown >= 5 || k >= (int) sizeof(body) - 2)
+          continue;
+        shown++;
+        char in[24];
+        if (d.est > t)
+          fmt_dur(d.est - t, in, sizeof(in));
+        else
+          snprintf(in, sizeof(in), "about now");
+        k += snprintf(body + k, sizeof(body) - k, "%s%s (%s): %s%s, \xC2\xB1%.0fh", k ? "\n" : "", d.name,
+                      d.rb ? "rocket stage" : d.deb ? "debris" : "satellite", d.est > t ? "in ~" : "", in,
+                      std::max(1.0f, d.unc_h));
+        if (d.over_el >= 10 && d.over_t > t && k < (int) sizeof(body)) {
+          local_hm((int64_t) d.over_t, h0, sizeof(h0));
+          k += snprintf(body + k, sizeof(body) - k, "\n  over you %s, %.0f\xC2\xB0 up in the %s", h0, d.over_el, d.over_dir);
+        }
+      }
+      if (k == 0)
+        snprintf(body, sizeof(body), "None expected in the next day.");
+      else if (k < (int) sizeof(body))
+        snprintf(body + k, sizeof(body) - k, "\nEstimated from how fast each orbit is decaying: the real time "
+                                             "can differ by hours, the place by thousands of km.");
+      break;
+    }
+    case AI_HISTORY: {  // UI-77
+      snprintf(title, sizeof(title), "On this day");
+      int mo, d, h, mi, se;
+      local_parts(t, mo, d, h, mi, se);
+      const hist::Ev *ev[4];
+      const int ne = hist::on(mo, d, ev, 4);
+      time_t tt = (time_t) t;
+      struct tm lt;
+      localtime_r(&tt, &lt);
+      int k = 0;
+      for (int i = 0; i < ne && k < (int) sizeof(body) - 2; i++)
+        k += snprintf(body + k, sizeof(body) - k, "%s%d, %d years ago\n%s", i ? "\n" : "", ev[i]->y,
+                      lt.tm_year + 1900 - ev[i]->y, ev[i]->text);
+      break;
+    }
     default:
       break;
   }
@@ -4507,12 +4672,21 @@ inline void card_update(double t) {
       lv_obj_remove_flag(card_find_btn, LV_OBJ_FLAG_HIDDEN);
   }
   if (ui.sel_kind == K_INFO) {
-    if (ui.card_img_btn)
-      lv_obj_add_flag(ui.card_img_btn, LV_OBJ_FLAG_HIDDEN);
+    if (ui.card_img_btn) {  // UI-75: the aurora and space weather cards open the all-sky camera
+      const bool sky = info_alert.info == AI_AURORA || info_alert.info == AI_WIND || info_alert.info == AI_SWX;
+      if (sky)
+        lv_obj_remove_flag(ui.card_img_btn, LV_OBJ_FLAG_HIDDEN);
+      else
+        lv_obj_add_flag(ui.card_img_btn, LV_OBJ_FLAG_HIDDEN);
+      if (ui.card_img_lbl)
+        set_text_if(ui.card_img_lbl, sky ? "Sky cam" : "Image");
+    }
     info_card_update(t);
     return;
   }
   if (ui.card_img_btn) {  // UI-59/60: Sun and Moon cards; the picture is fetched as the card opens
+    if (ui.card_img_lbl)
+      set_text_if(ui.card_img_lbl, "Image");
     if (ui.sel_kind == K_SUN || ui.sel_kind == K_MOON || ui.sel_kind == K_PLANET) {
       lv_obj_remove_flag(ui.card_img_btn, LV_OBJ_FLAG_HIDDEN);
       if (ui.sel_kind != K_PLANET)  // (UI-61e: the planet photos are ready in the firmware)
@@ -5352,19 +5526,22 @@ struct ImgReq {
   bool asked = false;
 };
 inline ImgReq img_req[net::IMG_N];
-constexpr double IMG_REFRESH_S = 600, IMG_RETRY_S = 90;
+constexpr double IMG_REFRESH_S = 600, IMG_RETRY_S = 90, ALLSKY_REFRESH_S = 120;
 inline bool img_view_open() { return sv.root != nullptr; }
 inline bool img_loading(int k) { return img_req[k].asked && live.img[k].seq == img_req[k].seq; }
 inline void img_request(int k, double t) {
   ImgReq &q = img_req[k];
   if (!net::link_up || img_loading(k))
     return;
-  const double wait = q.asked && !live.img[k].ok ? IMG_RETRY_S : IMG_REFRESH_S;
+  const double wait = q.asked && !live.img[k].ok ? IMG_RETRY_S
+                     : k == net::IMG_ALLSKY            ? ALLSKY_REFRESH_S  // UI-75: a new frame every minute or two
+                                                       : IMG_REFRESH_S;
   if (q.asked && t - q.at < wait)
     return;
   if (!enqueue(k == net::IMG_SUN    ? JOB_SUNIMG
                : k == net::IMG_MOON ? JOB_MOONIMG
                : k == net::IMG_EARTH ? JOB_EARTHIMG
+               : k == net::IMG_ALLSKY ? JOB_ALLSKYIMG
                                      : JOB_REGIONIMG))
     return;
   q.at = t;
@@ -5668,7 +5845,9 @@ inline void img_view_update(double t) {
     }
   } else {
     const bool earth = k == net::IMG_EARTH || k == net::IMG_REGION;
-    if (k == net::IMG_SUN)
+    if (k == net::IMG_ALLSKY)  // UI-75
+      snprintf(c1, sizeof(c1), "%s", "UAF Poker Flat all-sky camera, Alaska");
+    else if (k == net::IMG_SUN)
       snprintf(c1, sizeof(c1), "%.11s SUVI, 30.4 nm ultraviolet", in.src[0] ? in.src : "GOES");
     else if (k == net::IMG_REGION && my_region())
       snprintf(c1, sizeof(c1), "%s from %.11s: day in colour, night lights", my_region()->name, in.src[0] ? in.src : "GOES");
@@ -5692,7 +5871,9 @@ inline void img_view_update(double t) {
       }
       return;
     }
-    if (have && in.obs > 0) {
+    if (k == net::IMG_ALLSKY && have && !strcmp(in.src, "day")) {
+      snprintf(c2, sizeof(c2), "Off until dark - north at the top%s", tail);
+    } else if (have && in.obs > 0) {
       char ago[16];
       local_hm((int64_t) in.obs, hm, sizeof(hm));
       fmt_dur(t - in.obs, ago, sizeof(ago));
@@ -5700,8 +5881,9 @@ inline void img_view_update(double t) {
     } else if (have) {
       snprintf(c2, sizeof(c2), "The latest picture%s", tail);
     } else {
-      snprintf(c2, sizeof(c2), "%s", k == net::IMG_SUN ? "Bright: active regions   Edge: prominences"
-                                                         : "Seen from 35,786 km above the equator");
+      snprintf(c2, sizeof(c2), "%s", k == net::IMG_SUN      ? "Bright: active regions   Edge: prominences"
+                                     : k == net::IMG_ALLSKY ? "The whole sky over Poker Flat, dusk to dawn"
+                                                            : "Seen from 35,786 km above the equator");
     }
   }
   set_text_if(sv.cap1, c1);
@@ -5756,7 +5938,7 @@ inline void img_view_open_now(int kind, int planet) {
     lv_obj_center(l);
     return b;
   };
-  // tabs: Sun, Moon, Earth (+ the planet); Close at the top right as everywhere
+  // tabs: Sun, Moon, Earth, then the planet or else the all-sky camera (UI-75); Close at the top right
   struct T {
     int kind, x, w;
     const char *name;
@@ -5764,7 +5946,8 @@ inline void img_view_open_now(int kind, int planet) {
   const T tabs[4] = {{net::IMG_SUN, 8, 80, "Sun"},
                      {net::IMG_MOON, 92, 80, "Moon"},
                      {kind == net::IMG_REGION || kind == net::IMG_EARTH ? kind : earth_kind(), 176, 84, "Earth"},
-                     {planet >= 0 ? VIEW_PLANET + planet : -1, 264, 100, planet >= 0 ? planets::name(planet) : ""}};
+                     {planet >= 0 ? VIEW_PLANET + planet : (int) net::IMG_ALLSKY, 264, 104,
+                      planet >= 0 ? planets::name(planet) : "All-sky"}};
   for (int i = 0; i < 4; i++) {
     if (tabs[i].kind < 0)
       continue;
@@ -5863,6 +6046,7 @@ inline void card_img_cb(lv_event_t *e) {
   lv_event_stop_bubbling(e);  // not a tap on the card (which closes it)
   const int kind = ui.sel_kind == K_MOON     ? (int) net::IMG_MOON
                    : ui.sel_kind == K_PLANET ? VIEW_PLANET + ui.sel_id
+                   : ui.sel_kind == K_INFO   ? (int) net::IMG_ALLSKY  // UI-75 (the aurora cards)
                                              : (int) net::IMG_SUN;
   deselect();
   img_view_open_now(kind);

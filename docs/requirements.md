@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.31 (queued): the picture viewer's < and > buttons (the picture before, earlier frames) are gone; the latest picture only (UI-59c). Frees a 259 KB picture buffer.
+- 4.6.31 (queued): the picture viewer's < and > buttons (the picture before, earlier frames) are gone; the latest picture only (UI-59c). Frees a 259 KB picture buffer. New: space weather alerts from NOAA (UI-73), re-entry alerts (UI-74), the UAF Poker Flat all-sky camera as a picture tab and from the aurora cards (UI-75), a full-screen launch countdown from T-10 min (UI-76), and "On this day" in space history (UI-77). The Alerts tab gains Space wx, This day, Re-entry and Countdown.
 - 4.6.30: the display can no longer stay shifted 10 rows with noise: the frame-start bug in the display driver is put right every frame (PERF-16; Display Resyncs counts it). Lighter on the PSRAM bus the panel refills from (PERF-15a): the astro task works in small pieces with rests, and a streaming picture redraws only its new rows. Last Crash shows the firmware and when (FAIL-10a; older records are dropped).
 - 4.6.29: the web page has an Alerts section with all the alert switches (NET-6a). Comets moves under Stations in the Alerts tab (UI-41j). A shooting star crosses the About page's logo now and then, burning out at the end (UI-67a). The Sun, Moon, Earth and region pictures appear top down as they download, already round-edged, over the picture before (UI-59f).
 - 4.6.28: The map no longer stalls after the boot launch or every few seconds: the alignment, eclipse and Milky Way work runs on the other core (PERF-15). Alerts tab in two columns, sky and spaceflight (UI-41j); new Solar switch for solar eclipses, solstices and equinoxes (UI-41k).
@@ -664,10 +664,48 @@ UI-41f Lunar Alerts (on by default): the full Moon (UI-48), the Moon near a plan
        star (UI-49) and lunar eclipses (UI-51). Sky Event Alerts keeps meteor shower peaks
        (UI-47) and their radiant on the map; solar eclipses, solstices and equinoxes follow Solar
        (UI-41k).
-UI-41j The Alerts tab in two columns: the sky on the left (Aurora, Planets, Sky events, Lunar,
-       Solar), spaceflight and comets on the right (Launch, Dockings, Splashdowns, Stations,
-       Comets); the web Alerts section follows the same order (NET-6a); rows
+UI-41j The Alerts tab in two columns of seven: the sky on the left (Aurora, Planets, Sky events,
+       Lunar, Solar, Space wx, This day), spaceflight and comets on the right (Launch, Dockings,
+       Splashdowns, Stations, Comets, Re-entry, Countdown); the web Alerts section follows the same order (NET-6a); rows
        44 px apart from y 20; the planets' alignment picture at (130, 62).
+UI-73  Space weather (NOAA SWPC products/alerts.json, ~40 KB, every 30 min; net::do_swx): the
+       newest current notice of each kind: geomagnetic storm watches (WATA: the forecast day with
+       the highest G level, shown until that UTC day ends), storm alerts (ALTK, Kp 5 up, 4 h) and
+       warnings (WARK, Kp 5 up, until "Valid To" / "Now Valid Until"), flare summaries (SUMX: the
+       class, its maximum, the R level; 12 h) and proton events (ALTPX: S level; 24 h). One on the
+       status line (storm now, warning, watch, flare, proton), mdi:sun-wireless in 0xFFD27F:
+       "G2 storm watch tomorrow - aurora possible", "G2 geomagnetic storm now - Kp 6", "Kp 5 storm
+       expected until 21:00", "M6.7 solar flare at 07:48 - R2 radio blackout", "S1 solar radiation
+       storm". Its card lists them all, each with what it means. Switch Space Weather Alerts (on).
+UI-74  Re-entries (CelesTrak SPECIAL=DECAYING CSV, ~17 KB, every 6 h, after the CelesTrak hold
+       check; a failure other than a 403 says nothing): the time from the decay rate, epoch +
+       (16.55 - n) / (2 x MEAN_MOTION_DOT) days, +/-30 % (at least 1 h); those within 2 days (from
+       6 h past), soonest first, at most 12; for each, the highest pass above the horizon before it
+       comes down (SGP4, 60 s steps). The status line shows a rocket stage or satellite (not
+       debris) due within 24 h, one passing 10 deg or more over the observer first, mdi:fire-alert
+       in 0xFF8A65: "FLOCK 4Q-31 re-enters in ~5h 19m - over you 23:48, 12 deg W". Its card lists
+       up to five (debris too) and says how rough the estimates are. Switch Re-entry Alerts (on).
+       (The Aerospace Corporation refuses automated requests; ESA's predictions need an account.)
+UI-75  All-sky camera: the University of Alaska Fairbanks Geophysical Institute's Poker Flat camera
+       (allsky.gi.alaska.edu): its live feed (src/checkLive.php?cam=poker-flat, an event stream: the
+       first event, view "1") names the picture; by day a card saying when it runs. The fisheye
+       fills the top square of the 514x600 JPEG: decoded as it arrives (UI-59f) with a 176/180 px
+       round edge; frames over 2:1 are halved by TJpgDec first. The picture viewer's fourth tab
+       ("All-sky", when no planet tab) and a "Sky cam" button on the aurora, solar wind and space
+       weather cards; refreshed every 2 min while open. Caption "UAF Poker Flat all-sky camera,
+       Alaska"; by day "Off until dark".
+UI-76  Launch countdown (sky_rocket.h): from T-10 min to liftoff a full-screen card on the top
+       layer: "LAUNCH COUNTDOWN", the mission (mono18), rocket and pad (mono16), T-MM:SS in mono72
+       (0xFFC46B), Launch Library's status (GO for launch / HOLD / Time to be confirmed), the local
+       liftoff time and a red "WEBCAST LIVE" pill (LL2 webcast_live). Updated 5 times a second;
+       closes at T-0 (the launch animation, UI-69, then plays), on a slip past the window or a
+       scrub; a tap puts it away for that launch. Not for "TBD" times. In the last 90 min (and 20
+       min after) the launch list is fetched every 15 min, the last 20 min every 10 (Launch
+       Library only). Switch Launch Countdown (on). Comp: docs/comps/launch_countdown.png.
+UI-77  On this day (sky_history.h, 108 built-in events, in sky_extra.cpp): the event for the local
+       date, shown in the alert rotation for 10 minutes in every 30 ("This day in 1957: Sputnik 1,
+       the first artificial satellite, is launched"), mdi:calendar-star in 0xC5B3F0; its card
+       lists the day's events with how many years ago. Switch On This Day (on).
 UI-41k Solar Alerts (on by default; mdi:weather-sunny, HA "Solar Alerts", web Celestial after
        Lunar): solar eclipses seen from here (UI-51) and solstices and equinoxes (UI-41b).
 UI-41g Comet Alerts (on by default): a comet bright enough to see (UI-63). The Comets map layer
@@ -1324,7 +1362,8 @@ NET-6  The web page groups entities into sections (web_server v3 sorting_groups;
        ESPHome's OTA upload form always comes last.
 NET-6a The Alerts section holds the alert switches in the settings Alerts tab's order (UI-41j):
        Aurora, Planet, Sky Event, Lunar, Solar, Launch, Event (dockings), Splashdown, Station,
-       Comet Alerts (they were under Celestial).
+       Comet Alerts (they were under Celestial), then Space Weather, Re-entry, On This Day and
+       Launch Countdown.
 HW-9b  Guided compass calibration (sky_sensors.h): each fresh sample during a run is
        measured about a circle fitted to the samples so far (algebraic least squares,
        about the first sample), giving the 10° sectors seen, the total turn and the

@@ -164,7 +164,7 @@ inline skyjpg_rom::out_ret_t fit_out(skyjpg_rom::JDEC *jd, void *bitmap, skyjpg_
   return 1;
 }
 // `keep`: the fraction of the height kept from the top, centred square window (UI-62a: NOAA's
-// regional frames carry a label strip along the bottom). 1 = the whole picture.
+// regional frames carry a label strip along the bottom). 1 = the whole picture; < 0: the top square.
 // `stride`: pixels per destination row (0 = tw), to decode into part of a larger picture.
 inline const char *decode_fit(const uint8_t *jpg, size_t len, uint16_t *dst, int tw, int th, uint16_t *acc,
                               int *sw = nullptr, int *sh = nullptr, float keep = 1.0f, int stride = 0,
@@ -183,29 +183,37 @@ inline const char *decode_fit(const uint8_t *jpg, size_t len, uint16_t *dst, int
     *sw = W;
   if (sh)
     *sh = H;
-  const int wh = keep >= 1.0f ? H : (int) (H * keep), ww = keep >= 1.0f ? W : std::min(W, wh);
-  const int x0 = (W - ww) / 2, y0 = centre ? (H - wh) / 2 : 0;
-  if (ww < tw || wh < th || W > 2048 || H > 2048 || ww >= 2 * tw || wh >= 2 * th)
+  // keep < 0: the top square (UI-75: the all-sky camera's fisheye above its caption strip)
+  const int wh = keep < 0 ? std::min(W, H) : keep >= 1.0f ? H : (int) (H * keep), ww = keep >= 1.0f ? W : std::min(W, wh);
+  if (ww < tw || wh < th || W > 2048 || H > 2048)
     return "unexpected picture size";
+  // more than 2:1 (the sums would overflow): TJpgDec's own halving first (UI-75), 1/2..1/8
+  int sc = 0;
+  while (sc < 3 && (((ww >> sc) >= 2 * tw) || ((wh >> sc) >= 2 * th)))
+    sc++;
+  const int Ws = W >> sc, Hs = H >> sc, wws = ww >> sc, whs = wh >> sc;
+  if (wws < tw || whs < th || wws >= 2 * tw || whs >= 2 * th)
+    return "unexpected picture size";
+  const int x0 = (Ws - wws) / 2, y0 = centre ? (Hs - whs) / 2 : 0;
   uint8_t *cx = fit_cx, *cy = fit_cy;
   memset(fit_cx, 0, sizeof(fit_cx));
   memset(fit_cy, 0, sizeof(fit_cy));
   memset(fit_last, 0, sizeof(fit_last));
-  for (int x = 0; x < W; x++)
-    xm[x] = x < x0 || x >= x0 + ww ? 0xFFFF : (uint16_t) ((int64_t) (x - x0) * tw / ww);
-  for (int y = 0; y < H; y++)
-    ym[y] = y < y0 || y >= y0 + wh ? 0xFFFF : (uint16_t) ((int64_t) (y - y0) * th / wh);
-  for (int x = 0; x < W; x++)
+  for (int x = 0; x < Ws; x++)
+    xm[x] = x < x0 || x >= x0 + wws ? 0xFFFF : (uint16_t) ((int64_t) (x - x0) * tw / wws);
+  for (int y = 0; y < Hs; y++)
+    ym[y] = y < y0 || y >= y0 + whs ? 0xFFFF : (uint16_t) ((int64_t) (y - y0) * th / whs);
+  for (int x = 0; x < Ws; x++)
     if (xm[x] != 0xFFFF)
       cx[xm[x]]++;
-  for (int y = 0; y < H; y++)
+  for (int y = 0; y < Hs; y++)
     if (ym[y] != 0xFFFF) {
       cy[ym[y]]++;
       fit_last[ym[y]] = (uint16_t) y;
     }
-  f = Fit{dst, acc, tw, th, W, H, xm, ym, stride, 0};
+  f = Fit{dst, acc, tw, th, Ws, Hs, xm, ym, stride, 0};
   memset(acc, 0, sizeof(uint16_t) * 3 * tw * th);
-  if (skyjpg_rom::jd_decomp(&jd, fit_out, 0) != 0)
+  if (skyjpg_rom::jd_decomp(&jd, fit_out, (uint8_t) sc) != 0)
     return "corrupt JPEG data";
   while (f.next < th)  // (normally all done by the last row of blocks)
     fit_row(&f, f.next++);

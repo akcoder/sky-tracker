@@ -136,7 +136,7 @@ template<class T, class A> inline bool room_for(std::vector<T, A> &v, size_t n, 
 }
 
 enum Layer : uint8_t { L_SAT = 1, L_STARLINK = 2, L_ISS = 4, L_PASS = 8, L_STATUS = 16, L_GEO = 32, L_KP = 64, L_EXTRA = 128 };  // L_EXTRA: solar wind, launches
-enum Job : uint8_t { JOB_ABOVE = 0, JOB_STARLINK = 1, JOB_ISS = 2, JOB_PASS = 3, JOB_ELEMENTS = 4, JOB_SUNIMG = 5, JOB_MOONIMG = 6, JOB_EARTHIMG = 7, JOB_REGIONIMG = 8, JOB_PLANETIMG = 9,
+enum Job : uint8_t { JOB_ABOVE = 0, JOB_STARLINK = 1, JOB_ISS = 2, JOB_PASS = 3, JOB_ELEMENTS = 4, JOB_SUNIMG = 5, JOB_MOONIMG = 6, JOB_EARTHIMG = 7, JOB_REGIONIMG = 8, JOB_PLANETIMG = 9, JOB_ALLSKYIMG = 10,
                      JOB_SD = 11, JOB_SDFLASH = 12 };  // UI-66 (sky_sdfw.h, through extra_job)
 inline void (*extra_job)(uint8_t job) = nullptr;  // UI-66: jobs served by headers included later
 enum Kind : uint8_t { K_SAT = 0, K_STARLINK = 1, K_ISS = 2, K_GEO = 3 };
@@ -265,6 +265,7 @@ struct LaunchRec {
   char cc[4] = "";        // UI-54d: the launching country (ISO 3166 alpha-3, from the pad; "ESA" for Kourou)
   double net = 0;         // UTC seconds
   float lat = NAN, lon = NAN;
+  bool webcast = false;   // UI-76: Launch Library says its webcast is live
 };
 // UI-54c: an upcoming space event (Launch Library 2 events: dockings, undockings, EVAs...)
 struct EventRec {
@@ -274,6 +275,30 @@ struct EventRec {
   bool exact = false;     // time known to the hour or better
   bool iss = false;       // UI-69f: at the International Space Station (its "location")
   char cc[4] = "";        // UI-54d: the spacecraft's country, from its name (Dragon -> USA...)
+};
+// UI-73: NOAA SWPC space weather (products/alerts.json): the newest notice of each kind that
+// is still current
+enum SwxKind : uint8_t { SWX_WATCH = 0, SWX_STORM = 1, SWX_WARN = 2, SWX_FLARE = 3, SWX_PROTON = 4, SWX_KINDS = 5 };
+struct SwxRec {
+  uint8_t kind = 0;
+  uint8_t level = 0;  // WATCH: G; STORM, WARN: Kp; FLARE: R (0: none); PROTON: S
+  char cls[8] = "";   // FLARE: "M6.7"
+  double issued = 0;  // UTC seconds
+  double t = 0;       // WATCH: the predicted day (UTC midnight); FLARE: its maximum; else issued
+  double until = 0;   // shown until
+};
+// UI-74: a re-entry expected within two days (CelesTrak's decaying list): the time from how
+// fast the orbit is shrinking; the highest pass over the observer in the window
+struct DecayRec {
+  char name[26] = "";
+  char intl[12] = "";
+  int32_t id = 0;
+  double est = 0;       // UTC seconds
+  float unc_h = 0;      // +/- hours
+  bool rb = false, deb = false;  // rocket body, debris (else a satellite)
+  double over_t = 0;    // the highest pass above the horizon before the estimate (0: none)
+  float over_el = -90;
+  char over_dir[4] = "";
 };
 // UI-54d: the country a flag is shown for. A launch: its pad's country, but the launching
 // nation where the site is someone else's (Kourou: ESA; Baikonur: Russia). An event: from the
@@ -320,9 +345,10 @@ struct AuroraChance {
 //   IMG_MOON NASA SVS Dial-A-Moon (730 px JPEG, ~110 KB, one frame per hour)
 //   IMG_EARTH NOAA GOES-18 or GOES-19 GeoColor full disk (678 px JPEG, ~450 KB, every 10 min)
 //   IMG_REGION the observer's region from the same satellite (500-600 px JPEG, ~250 KB, UI-62a)
+//   IMG_ALLSKY UAF's Poker Flat all-sky camera (UI-75: 514x600 JPEG, ~50 KB, while it is dark)
 //   IMG_PLANET a NASA photo of the planet asked for (Wikimedia Commons, ~15-55 KB, UI-61a)
-enum ImgKind : uint8_t { IMG_SUN = 0, IMG_MOON = 1, IMG_EARTH = 2, IMG_REGION = 3, IMG_PLANET = 4, IMG_N = 5 };
-constexpr int IMG_LIVE_N = 4;  // the live kinds (Sun .. region): streamed in as they arrive (UI-59f)
+enum ImgKind : uint8_t { IMG_SUN = 0, IMG_MOON = 1, IMG_EARTH = 2, IMG_REGION = 3, IMG_ALLSKY = 4, IMG_PLANET = 5, IMG_N = 6 };
+constexpr int IMG_LIVE_N = 5;  // the live kinds (Sun .. all-sky): streamed in as they arrive (UI-59f)
 // UI-61a: public-domain NASA photos, 500 px thumbnails from Wikimedia Commons (baseline JPEG)
 struct PlanetPhoto {
   const char *path, *credit;
@@ -423,6 +449,10 @@ struct Pending {
   pvector<EventRec> events;       // UI-54c
   pvector<comets::El> comet_list;     // UI-63 (empty: nothing new)
   bool comets_new = false;
+  pvector<SwxRec> swx;            // UI-73
+  bool swx_new = false;
+  pvector<DecayRec> decays;       // UI-74
+  bool decays_new = false;
   AuroraChance ovation;           // UI-58
   ImageInfo img[IMG_N];           // UI-59/60
   DataStatus status;
@@ -1854,6 +1884,15 @@ inline void launch_cache_load() {
 inline void launches_publish(pvector<LaunchRec> &out, double now, const char *src) {
   std::sort(out.begin(), out.end(), [](const LaunchRec &a, const LaunchRec &b) { return a.net < b.net; });
   launch_next = now + LAUNCH_EVERY_S;
+  // UI-76: in the last 90 min before a launch (and just after it) every 15 min, the last 20 min
+  // every 10, so the countdown follows holds and scrubs (Launch Library allows 15 calls an hour)
+  for (const LaunchRec &l : out) {  // (not when it was refused and the backup filled in)
+    if (strcmp(src, "Launch Library") != 0)
+      break;
+    const double dt = l.net - now;
+    if (dt > -20 * 60.0 && dt < 90 * 60.0)
+      launch_next = std::min(launch_next, now + (dt > 0 && dt < 20 * 60.0 ? 600.0 : 900.0));
+  }
   ESP_LOGI(TAG, "launches: %u upcoming (%s)", (unsigned) out.size(), src);
   launch_cache_save(out, now);
   xSemaphoreTake(mutex, portMAX_DELAY);
@@ -1973,6 +2012,7 @@ inline void do_launches(double now) {
   f["pad"]["country"]["alpha_3_code"] = true;  // UI-54d
   f["pad"]["location"]["name"] = true;
   f["rocket"]["configuration"]["name"] = true;
+  f["webcast_live"] = true;  // UI-76
   JsonDocument doc(&psram_alloc);
   // the 2.3.0 reply nests 11 deep (ArduinoJson stops at 10 unless told)
   if (const DeserializationError de = deserializeJson(doc, buf, (size_t) len, DeserializationOption::Filter(filter),
@@ -1997,6 +2037,7 @@ inline void do_launches(double now) {
       continue;
     l.lat = num(r["pad"]["latitude"]);
     l.lon = num(r["pad"]["longitude"]);
+    l.webcast = r["webcast_live"] | false;
     out.push_back(l);
   }
   launches_publish(out, now, "Launch Library");
@@ -2167,6 +2208,187 @@ inline void do_comets(double now) {
   xSemaphoreTake(mutex, portMAX_DELAY);
   std::swap(pending.comet_list, out);
   pending.comets_new = true;
+  pending.fresh |= L_EXTRA;
+  xSemaphoreGive(mutex);
+}
+
+// ------------------------------------------------------------------ UI-73 space weather
+// NOAA SWPC's alerts (products/alerts.json, ~40 KB, the last month, newest first), every 30
+// min: geomagnetic storm watches (WATA: the day with the highest level), storm alerts and
+// warnings (ALTK/WARK, Kp 5 and up), flare summaries (SUMX: M5 and up) and proton events
+// (ALTPX). The newest of each kind that is still current is kept.
+constexpr double SWX_EVERY_S = 1800, SWX_RETRY_S = 600;
+inline double swx_next = 0;
+inline bool swpc_time(const char *s, double &t) {  // "2026 Oct 08 1548 UTC"
+  static const char *const MON = "JanFebMarAprMayJunJulAugSepOctNovDec";
+  int y, d, hm;
+  char m[4] = "";
+  if (s == nullptr || sscanf(s, " %d %3s %d %d", &y, m, &d, &hm) != 4)
+    return false;
+  const char *f = strstr(MON, m);
+  if (!f || m[0] == 0)
+    return false;
+  t = (double) days_from_civil(y, (unsigned) ((f - MON) / 3 + 1), (unsigned) d) * 86400.0 + (hm / 100) * 3600.0 +
+      (hm % 100) * 60.0;
+  return true;
+}
+inline const char *after(const char *s, const char *key) {
+  const char *p = strstr(s, key);
+  return p ? p + strlen(key) : nullptr;
+}
+// one notice -> r (false: not a kind kept)
+inline bool swx_parse(const char *m, double issued, SwxRec &r) {
+  const char *code = after(m, "Message Code: ");
+  if (code == nullptr)
+    return false;
+  r = SwxRec();
+  r.issued = r.t = issued;
+  if (!strncmp(code, "WATA", 4)) {
+    const char *g = after(m, "Category G");
+    if (g == nullptr)
+      return false;
+    r.kind = SWX_WATCH;
+    r.level = (uint8_t) atoi(g);
+    // "Oct 07:  None (Below G1)   Oct 08:  None (Below G1)   Oct 09:  G2 (Moderate)"
+    static const char *const MON = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    int iy, im, id;
+    {
+      const int64_t dn = (int64_t) floor(issued / 86400.0);  // civil from days (issue date)
+      int64_t z = dn + 719468;
+      const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+      const unsigned doe = (unsigned) (z - era * 146097);
+      const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+      const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100), mp = (5 * doy + 2) / 153;
+      id = (int) (doy - (153 * mp + 2) / 5 + 1);
+      im = (int) (mp < 10 ? mp + 3 : mp - 9);
+      iy = (int) (yoe + era * 400 + (im <= 2));
+    }
+    (void) id;
+    int best = 0;
+    double best_day = 0;
+    const char *p = after(m, "Predicted by Day:");
+    for (int k = 0; p && k < 4; k++) {
+      char mon[4] = "";
+      int d = 0, n = 0;
+      while (*p == ' ' || *p == '\r' || *p == '\n')
+        p++;
+      if (sscanf(p, "%3s %d:%n", mon, &d, &n) != 2)
+        break;
+      const char *f = strstr(MON, mon);
+      if (!f || mon[0] == 0)
+        break;
+      p += n;
+      while (*p == ' ')
+        p++;
+      const int lvl = *p == 'G' ? atoi(p + 1) : 0;
+      const int mo = (int) ((f - MON) / 3 + 1);
+      const int y = mo < im - 6 ? iy + 1 : iy;  // a watch issued in December for January
+      const double day = (double) days_from_civil(y, (unsigned) mo, (unsigned) d) * 86400.0;
+      if (lvl > best) {
+        best = lvl;
+        best_day = day;
+      }
+      const char *nx = strstr(p, "   ");  // the next day, after the gap
+      p = nx ? nx : nullptr;
+    }
+    if (best > 0) {
+      r.level = (uint8_t) best;
+      r.t = best_day;
+      r.until = best_day + 86400.0;
+    } else {
+      r.until = issued + 3 * 86400.0;
+    }
+    return true;
+  }
+  if (!strncmp(code, "ALTK", 4) || !strncmp(code, "WARK", 4)) {
+    const int k = atoi(code + 4);
+    if (k < 5)
+      return false;  // below storm level (the aurora alerts cover those, UI-38)
+    r.level = (uint8_t) k;
+    if (code[0] == 'A') {
+      r.kind = SWX_STORM;
+      r.until = issued + 4 * 3600.0;
+    } else {
+      r.kind = SWX_WARN;
+      double u = 0;
+      const char *v = after(m, "Valid To:");
+      if (v == nullptr)
+        v = after(m, "Now Valid Until:");
+      r.until = swpc_time(v, u) ? u : issued + 6 * 3600.0;
+    }
+    return true;
+  }
+  if (!strncmp(code, "SUMX", 4)) {
+    r.kind = SWX_FLARE;
+    const char *c = after(m, "Xray Class:");
+    if (c) {
+      while (*c == ' ')
+        c++;
+      int n = 0;
+      while (n < 7 && c[n] && c[n] != ' ' && c[n] != '\r' && c[n] != '\n') {
+        r.cls[n] = c[n];
+        n++;
+      }
+      r.cls[n] = 0;
+    }
+    double mx;
+    if (swpc_time(after(m, "Maximum Time:"), mx))
+      r.t = mx;
+    const char *sc = after(m, "Scale: R");
+    r.level = sc ? (uint8_t) atoi(sc) : 0;
+    r.until = r.t + 12 * 3600.0;
+    return r.cls[0] != 0;
+  }
+  if (!strncmp(code, "ALTPX", 5)) {
+    r.kind = SWX_PROTON;
+    r.level = (uint8_t) atoi(code + 5);  // 10, 100, 1000 pfu: S1, S2, S3
+    r.until = issued + 24 * 3600.0;
+    return r.level > 0;
+  }
+  return false;
+}
+inline void do_swx(double now) {
+  if (now < swx_next || now < 1.7e9 || json_buf == nullptr)
+    return;
+  swx_next = now + SWX_RETRY_S;
+  const int len = http_get("https://services.swpc.noaa.gov/products/alerts.json", json_buf, JSON_BUF, "space weather");
+  if (len <= 0)
+    return;
+  JsonDocument filter;
+  filter[0]["issue_datetime"] = true;
+  filter[0]["message"] = true;
+  JsonDocument doc(&psram_alloc);
+  if (const DeserializationError de = deserializeJson(doc, json_buf, (size_t) len, DeserializationOption::Filter(filter))) {
+    ESP_LOGW(TAG, "space weather: unreadable reply (%d bytes, %s)", len, de.c_str());
+    return;
+  }
+  SwxRec best[SWX_KINDS];
+  bool have[SWX_KINDS] = {};
+  for (JsonObject o : doc.as<JsonArray>()) {
+    char iso[32];
+    copy_cstr(iso, sizeof(iso), o["issue_datetime"] | "");
+    if (char *sp = strchr(iso, ' '))
+      *sp = 'T';
+    double issued;
+    if (!parse_epoch(iso, issued))
+      continue;
+    SwxRec r;
+    if (!swx_parse(o["message"] | "", issued, r) || r.until <= now)
+      continue;
+    if (!have[r.kind] || r.issued > best[r.kind].issued) {
+      best[r.kind] = r;
+      have[r.kind] = true;
+    }
+  }
+  pvector<SwxRec> out;
+  for (int k = 0; k < SWX_KINDS; k++)
+    if (have[k])
+      out.push_back(best[k]);
+  swx_next = now + SWX_EVERY_S;
+  ESP_LOGI(TAG, "space weather: %u current", (unsigned) out.size());
+  xSemaphoreTake(mutex, portMAX_DELAY);
+  std::swap(pending.swx, out);
+  pending.swx_new = true;
   pending.fresh |= L_EXTRA;
   xSemaphoreGive(mutex);
 }
@@ -2361,7 +2583,7 @@ inline uint16_t *img_work_take() {
   }
   return nullptr;
 }
-inline double img_have[IMG_N] = {-1, -1, -1, -1, -1};  // frame already decoded (a repeat is skipped)
+inline double img_have[IMG_N] = {-1, -1, -1, -1, -1, -1};  // frame already decoded (a repeat is skipped)
 constexpr size_t IMG_JPG_MAX = 768 * 1024;  // the Moon (~110 KB) and the Earth (~450 KB) JPEGs
 // the box filter's sums (777 KB): one buffer for the Earth, the region and the planets (the
 // net task decodes one picture at a time), taken once and kept, so it cannot be squeezed out
@@ -2830,6 +3052,87 @@ inline const char *planet_image(ImageInfo &info, uint16_t *work, char *e, size_t
   info.fresh = true;
   return nullptr;
 }
+// UI-75: the University of Alaska Fairbanks Geophysical Institute's all-sky camera at Poker
+// Flat (allsky.gi.alaska.edu): its live feed (an event stream) names the current picture,
+// "images/...jpg" (a "not dark yet" card by day, saying when it runs); the fisheye circle fills
+// the top square of the 514x600 frame, decoded as it arrives (UI-59f) with a round edge.
+constexpr const char *ALLSKY_BASE = "https://allsky.gi.alaska.edu/";
+inline const char *allsky_image(ImageInfo &info, uint16_t *work, char *e, size_t en) {
+  img_stage = STG_LIST;
+  char path[120] = "";
+  bool stop = false;
+  {
+    LineSplitter ls;  // data: "1": "images/PKR/....jpg",  (view 1, the site's default)
+    ls.on_line = [&](char *line) {
+      const char *q = strstr(line, "\"1\":");
+      if (q && path[0] == 0) {
+        q = strchr(q + 4, '"');
+        const char *z = q ? strchr(q + 1, '"') : nullptr;
+        if (q && z && z - q - 1 < (int) sizeof(path)) {
+          memcpy(path, q + 1, z - q - 1);
+          path[z - q - 1] = 0;
+        }
+      }
+      if (strstr(line, "data: }"))
+        stop = true;  // one event is all we need (the stream would stay open)
+    };
+    char url[96];
+    snprintf(url, sizeof(url), "%ssrc/checkLive.php?cam=poker-flat", ALLSKY_BASE);
+    http_stream(url, "all-sky list", [&](const char *d, int len) { ls.feed(d, len); }, &stop);
+    ls.finish();
+  }
+  if (path[0] == 0 || strstr(path, "..") || !strstr(path, ".jpg"))
+    return "no picture named by the camera";
+  uint32_t hsh = 2166136261u;  // FNV-1a of the name: the same picture is not fetched again
+  for (const char *c = path; *c; c++)
+    hsh = (hsh ^ (uint8_t) *c) * 16777619u;
+  const double key = (double) hsh;
+  copy_cstr(info.src, sizeof(info.src), strstr(path, "notdark") ? "day" : "UAF GI");
+  if (key == img_have[IMG_ALLSKY])
+    return nullptr;
+  uint8_t *jpg = img_jpg();
+  uint16_t *acc = fit_acc();
+  if (jpg == nullptr || acc == nullptr)
+    return "out of memory";
+  size_t n = 0;
+  bool big = false;
+  JpgStream js;
+  js.jpg = jpg;
+  js.work = work;
+  js.acc = acc;
+  js.keep = -1.0f;            // the top square
+  js.r0 = 176, js.r1 = 180;   // the fisheye's rim
+  js.show = true;
+  img_prog_fill(work, IMG_ALLSKY);
+  img_stage = STG_DOWNLOAD;
+  dl_track = true;
+  http_last_modified[0] = 0;
+  char url[200];
+  snprintf(url, sizeof(url), "%s%s", ALLSKY_BASE, path);
+  const HttpResult r = http_stream(url, "all-sky image", [&](const char *d, int k) {
+    if (n + k > IMG_JPG_MAX) {
+      big = true;
+      return;
+    }
+    memcpy(jpg + n, d, k);
+    n += k;
+    js.feed(n);
+  });
+  dl_track = false;
+  if (!r.ok || big) {
+    js.abandon();
+    return !r.ok ? http_err(r, "the camera", e, en) : "picture larger than expected";
+  }
+  img_stage = STG_DECODE;
+  if (const char *de = js.finish(n))
+    return de;
+  double lm = 0;
+  info.obs = http_date(http_last_modified, lm) ? lm : clock_now();
+  ESP_LOGI(TAG, "all-sky image %s (%u bytes, %dx%d)", path, (unsigned) n, js.w, js.h);
+  img_have[IMG_ALLSKY] = key;
+  info.fresh = true;
+  return nullptr;
+}
 inline void do_image(uint8_t kind) {
   ImageInfo info;
   xSemaphoreTake(mutex, portMAX_DELAY);
@@ -2846,6 +3149,7 @@ inline void do_image(uint8_t kind) {
                     : kind == IMG_SUN         ? sun_image(info, work, e, sizeof(e))
                     : kind == IMG_MOON        ? moon_image(info, work, clock_now(), e, sizeof(e))
                     : kind == IMG_PLANET      ? planet_image(info, work, e, sizeof(e))
+                    : kind == IMG_ALLSKY      ? allsky_image(info, work, e, sizeof(e))
                                               : earth_image(info, work, e, sizeof(e), kind == IMG_REGION);
   img_stage = STG_IDLE;
   img_prog_rows = -1;
@@ -2890,6 +3194,7 @@ inline void finish_fallback() {
 }
 
 // JOB_ELEMENTS: refresh whatever is due. Called every few minutes; cheap when nothing is.
+inline void do_decay(double now);
 inline void do_elements() {
   const double now = clock_now();
   do_kp(now);  // UI-37: NOAA, not CelesTrak: its own schedule, never held by a CelesTrak 403
@@ -2898,6 +3203,7 @@ inline void do_elements() {
   do_events(now);    // UI-54c: Launch Library 2 events
   do_comets(now);    // UI-63: JPL small bodies
   do_ovation(now);   // UI-58: NOAA OVATION
+  do_swx(now);       // UI-73: NOAA SWPC space weather
   // DATA-10: a layer just switched on is drawn from flash first; a stale list is refreshed
   // on the next element pass (ELEM_PERIOD) rather than holding the display for downloads
   if (cache_fill_missing())
@@ -2909,6 +3215,9 @@ inline void do_elements() {
   }
   bool any = false, failed = false, iss_new = false, save_a = false, save_b = false;
   auto due = [&](double loaded) { return loaded == 0 || now - loaded >= ELEM_REFRESH_S; };
+  do_decay(now);  // UI-74: CelesTrak's decaying objects (its own 6 h schedule)
+  if (now < status.next_try)
+    return;  // (it was refused: CelesTrak's hold, DATA-12)
 
   if (!failed && (!have_iss || due(iss_loaded))) {
     SgpSat s;
@@ -3089,6 +3398,85 @@ inline geo::Observer observer() {
   geo::Observer o;
   o.set((float) jc.lat, (float) jc.lon, (float) jc.alt_m);
   return o;
+}
+
+// ------------------------------------------------------------------ UI-74 re-entries
+// CelesTrak's decaying objects (SPECIAL=DECAYING, ~100 rows, ~17 KB CSV), every 6 h. The
+// time left is estimated from how fast the orbit is shrinking: the mean motion grows at
+// 2 x MEAN_MOTION_DOT rev/day^2 towards ~16.55 rev/day (~120 km, where a stage breaks up).
+// That rate itself grows near the end, so the estimate runs late: +/-30 %, at least an hour.
+// For the ones due within two days, the highest pass over the observer before then.
+constexpr double DECAY_EVERY_S = 6 * 3600.0, DECAY_RETRY_S = 3600.0, DECAY_N_END = 16.55;
+constexpr int DECAY_KEEP = 12;
+inline double decay_next = 0;
+inline double decay_estimate(const Omm &o) {  // UTC seconds, 0: not decaying
+  if (!(o.ndot > 0))
+    return 0;
+  return o.epoch + std::max(0.0, DECAY_N_END - o.n_revday) / (2.0 * o.ndot) * 86400.0;
+}
+inline void do_decay(double now) {
+  if (now < decay_next || now < 1.7e9)
+    return;
+  decay_next = now + DECAY_RETRY_S;
+  pvector<DecayRec> out;
+  pvector<Omm> els;
+  char err0[sizeof(status.error)];
+  memcpy(err0, status.error, sizeof(err0));
+  const double next0 = status.next_try;
+  const bool ok = download(ct_url("/NORAD/elements/gp.php?SPECIAL=DECAYING&FORMAT=csv").c_str(), "re-entries",
+                           [&](const Omm &o) {
+                             const double est = decay_estimate(o);
+                             if (est > now - 6 * 3600.0 && est < now + 48 * 3600.0)
+                               els.push_back(o);
+                           },
+                           now);
+  if (!ok) {
+    if (!strstr(status.error, "403")) {  // only CelesTrak refusing everything holds the rest back
+      memcpy(status.error, err0, sizeof(err0));
+      status.next_try = next0;
+    }
+    return;
+  }
+  std::sort(els.begin(), els.end(), [](const Omm &a, const Omm &b) { return decay_estimate(a) < decay_estimate(b); });
+  const geo::Observer obs = observer();
+  for (const Omm &o : els) {
+    if ((int) out.size() >= DECAY_KEEP)
+      break;
+    DecayRec d;
+    copy_cstr(d.name, sizeof(d.name), o.name);
+    copy_cstr(d.intl, sizeof(d.intl), o.intl);
+    d.id = o.id;
+    d.est = decay_estimate(o);
+    d.unc_h = (float) std::max(1.0, 0.3 * fabs(d.est - now) / 3600.0);
+    d.rb = strstr(o.name, " R/B") != nullptr;
+    d.deb = strstr(o.name, " DEB") != nullptr || strncmp(o.name, "DEB", 3) == 0;
+    SgpSat sat;
+    if (make_sgp(o, sat)) {  // its passes until it comes down: the highest one
+      const double end = std::min(d.est + d.unc_h * 3600.0, now + 48 * 3600.0);
+      int k = 0;
+      for (double t = now; t < end; t += 60, k++) {
+        double x[3];
+        if (!sgp_ecef(sat, t, x))
+          break;  // (SGP4 gives up as the orbit decays)
+        const geo::AzEl ae = azel_of(obs, x);
+        if (ae.el > 0 && ae.el > d.over_el) {
+          d.over_el = ae.el;
+          d.over_t = t;
+          copy_cstr(d.over_dir, sizeof(d.over_dir), compass(ae.az));
+        }
+        if ((k & 255) == 255)
+          vTaskDelay(1);
+      }
+    }
+    out.push_back(d);
+  }
+  decay_next = now + DECAY_EVERY_S;
+  ESP_LOGI(TAG, "re-entries: %u within two days (of %u decaying soon)", (unsigned) out.size(), (unsigned) els.size());
+  xSemaphoreTake(mutex, portMAX_DELAY);
+  std::swap(pending.decays, out);
+  pending.decays_new = true;
+  pending.fresh |= L_EXTRA;
+  xSemaphoreGive(mutex);
 }
 
 inline bool sgp_rec(SgpSat &s, double t, SatRec &r, const geo::Observer &o, float *el = nullptr) {
@@ -3422,11 +3810,13 @@ inline void run_job(uint8_t job) {
     case JOB_EARTHIMG:  // UI-62
     case JOB_REGIONIMG:  // UI-62a
     case JOB_PLANETIMG:  // UI-61a
+    case JOB_ALLSKYIMG:  // UI-75
       if (link_up || job == JOB_PLANETIMG)  // UI-61d: the planets are built in
         do_image(job == JOB_SUNIMG     ? IMG_SUN
                  : job == JOB_MOONIMG  ? IMG_MOON
                  : job == JOB_EARTHIMG ? IMG_EARTH
                  : job == JOB_REGIONIMG ? IMG_REGION
+                 : job == JOB_ALLSKYIMG ? IMG_ALLSKY
                                         : IMG_PLANET);
       break;
     default:
@@ -3569,6 +3959,9 @@ struct Live {
   pvector<net::EventRec> events;     // UI-54c
   pvector<comets::El> comet_list;        // UI-63
   double comets_at = 0;              // when that list arrived (0: never)
+  pvector<net::SwxRec> swx;          // UI-73: current space weather notices
+  pvector<net::DecayRec> decays;     // UI-74: re-entries within two days
+  double decays_at = 0;
   DataStatus status;
   pvector<net::KpPt> kp;  // UI-37
 };
@@ -3627,6 +4020,17 @@ inline uint8_t drain() {
     if (!p.events.empty()) {  // UI-54c
       std::swap(live.events, p.events);
       p.events.clear();
+    }
+    if (p.swx_new) {  // UI-73
+      std::swap(live.swx, p.swx);
+      p.swx.clear();
+      p.swx_new = false;
+    }
+    if (p.decays_new) {  // UI-74
+      std::swap(live.decays, p.decays);
+      p.decays.clear();
+      p.decays_new = false;
+      live.decays_at = clock_now();
     }
     if (p.comets_new) {  // UI-63
       std::swap(live.comet_list, p.comet_list);
