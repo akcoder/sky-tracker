@@ -193,7 +193,7 @@ int main() {
   w.clock = label(page1, 0, 0, "--:--", f16, 0xC9D3F2);
   lv_obj_align(w.clock, LV_ALIGN_TOP_RIGHT, -10, 1);
   w.sky = lv_obj_create(page1);
-  lv_obj_set_pos(w.sky, 56, 58);
+  lv_obj_set_pos(w.sky, 56, 62);
   lv_obj_set_size(w.sky, 368, 368);
   lv_obj_set_style_radius(w.sky, 184, 0);
   lv_obj_set_style_bg_color(w.sky, lv_color_hex(sat::SKY_BG), 0);

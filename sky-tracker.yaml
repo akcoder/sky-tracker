@@ -1829,7 +1829,7 @@ lvgl:
         - obj:                   # the sky disc; SKY_BG in sat_tracker.h must match (UI-11)
             id: sky_box
             x: 56
-            y: 58
+            y: 62                # UI-41i: 4 px lower, room for two alert lines (was 58)
             width: 368
             height: 368
             radius: 184

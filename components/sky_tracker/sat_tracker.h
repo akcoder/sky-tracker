@@ -2001,7 +2001,8 @@ inline lv_obj_t *alert_zone = nullptr;  // the alert's tap zone (UI-41d)
 inline lv_obj_t *card_find_btn = nullptr;  // the card's Find button (hidden on K_INFO)
 inline void alert_click_cb(lv_event_t *e);
 constexpr int MAX_ALERTS = 12;
-constexpr int ALERT_DY = 3;  // UI-41: alerts sit this much lower than the status line (4.5.4)
+constexpr int ALERT_DY = -1;  // UI-41i: alerts sit this much below the status line (was 3; 4 px up for two lines)
+constexpr int ALERT_LINE_SPACE = -3;  // UI-41i: two alert lines 17 px apart (mono15: 20), clear of the disc
 constexpr double ALERT_ROTATE_S = 60;  // UI-41: each alert for a minute (was 6 s)
 inline int collect_alerts(double t, Alert *out, int max);
 // UI-41c where an alert's icon sits against its text: 1 its top on the text's cap height,
@@ -2071,11 +2072,11 @@ inline void draw_hud(double t) {
       status_font = lv_obj_get_style_text_font(ui.w.status, LV_PART_MAIN);
       // UI-41d a tap on an alert opens its details; anything else still reaches the page.
       // The tap zone is the header's left part above the map (icon, both text lines and the
-      // space round them): 400 x 56 from the top left, clear of the counts and the sky disc
+      // space round them): 400 x 60 from the top left, clear of the counts and the sky disc (y 62)
       lv_obj_t *zone = alert_zone = lv_obj_create(lv_obj_get_parent(ui.w.status));
       lv_obj_remove_style_all(zone);
       lv_obj_set_pos(zone, 0, 0);
-      lv_obj_set_size(zone, 400, 56);
+      lv_obj_set_size(zone, 400, 60);
       lv_obj_add_flag(zone, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE));
       lv_obj_remove_flag(zone, LV_OBJ_FLAG_SCROLLABLE);
       lv_obj_add_event_cb(zone, alert_click_cb, LV_EVENT_CLICKED, nullptr);
@@ -2123,6 +2124,7 @@ inline void draw_hud(double t) {
       const lv_font_t *af = ui.w.alert_font ? ui.w.alert_font : ui.w.card_font;
       const lv_font_t *want = al && af ? af : status_font;
       lv_obj_set_style_text_font(ui.w.status, want, 0);
+      lv_obj_set_style_text_line_space(ui.w.status, al && af ? ALERT_LINE_SPACE : 0, 0);
       lv_obj_set_y(ui.w.status, base_y + (al && af ? ALERT_DY : 0));
     }
   }
@@ -2135,7 +2137,8 @@ inline void draw_hud(double t) {
     const lv_font_t *tf = lv_obj_get_style_text_font(ui.w.status, LV_PART_MAIN);
     if (icon && tf) {
       lv_obj_update_layout(ui.w.status);
-      const int32_t lh = lv_font_get_line_height(tf), ty = lv_obj_get_y(ui.w.status);
+      const int32_t lh = lv_font_get_line_height(tf) + lv_obj_get_style_text_line_space(ui.w.status, LV_PART_MAIN),
+                    ty = lv_obj_get_y(ui.w.status);
       const int32_t lines = std::max<int32_t>(1, (lv_obj_get_height(ui.w.status) + lh / 2) / lh);
       int32_t cap_off, cap_h;
       glyph_ink(tf, 'H', cap_off, cap_h);

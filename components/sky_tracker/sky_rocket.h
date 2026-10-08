@@ -47,7 +47,7 @@ constexpr int PUFFS = 32, PADS = 6;
 // managed 3-5 fps with translucent smoke. Each puff is a solid disc whose colour is the smoke
 // colour pre-mixed with the background under its centre (sky or page), so fading is a colour
 // change, not transparency.
-constexpr int MAP_CX = 240, MAP_CY = 242, MAP_R = 184;  // sky_box in the YAML
+constexpr int MAP_CX = 240, MAP_CY = 246, MAP_R = 184;  // sky_box in the YAML
 constexpr int FLAMES = 5;
 // UI-69c: flame shapes (length and width scale, sideways lean of the tip, in body widths)
 struct Flame {
