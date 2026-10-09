@@ -2499,6 +2499,13 @@ int main() {
       CHECK(rk::playing() && rk::st.undock && !strcmp(lv_label_get_text(rk::st.label), "SpaceX Crew-12 Crew Dragon Undocking"), "undocking plays at its time");
       if (getenv("UNDOCK_GIF")) {
         system("rm -rf " OUT_DIR "/ugif && mkdir -p " OUT_DIR "/ugif");
+        static sat::Alert ua = {};  // the alert line says what is happening, as on the device
+        snprintf(ua.text, sizeof(ua.text), "SpaceX Crew-12 Crew Dragon Undocking now");
+        ua.col = sat::C_EVENT;
+        ua.glyph = "\xF3\xB1\x8E\x83";
+        ua.kind = -1;
+        sat::alert_override = &ua;
+        sat::draw_hud(sat_host_now);
         rk::play_scene(true, e.name);
         for (int f = 0; rk::playing(); f++) {
           sat_host_now += 0.033;
@@ -2508,6 +2515,7 @@ int main() {
           snprintf(fn, sizeof(fn), OUT_DIR "/ugif/f%03d.ppm", f);
           save_ppm(fn);
         }
+        sat::alert_override = nullptr;
       }
       sat_host_now += 7;
       rk::frame();

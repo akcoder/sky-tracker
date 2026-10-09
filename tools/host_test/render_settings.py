@@ -36,7 +36,8 @@ def generate():
 def extract(src):
     m = open(os.path.join(src, "main.cpp"), encoding="utf-8").read().split("\n")
     s = next(i for i, l in enumerate(m) if "new(settings_page) LvPageType" in l)
-    e = next(i for i in range(s, len(m)) if "top_layer_VAR_ = " in m[i] or re.search(r"new\(\w+_page\) LvPageType", m[i]) and i > s)
+    # the page's widgets end where the generated event wiring begins (the settings page is the last one)
+    e = next(i for i in range(s + 1, len(m)) if re.search(r"new\(\w+_page\) LvPageType", m[i]) or m[i].lstrip().startswith("new(trigger"))
     body, objs, fonts, wrap = [], set(), set(), set()
     for l in m[s:e]:
         t = l.strip()

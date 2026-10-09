@@ -42,6 +42,8 @@ pictures you ask for.
   get their own animations:
 
   ![Launch animation](docs/renders/launch.gif)
+
+  More in [docs/renders](docs/renders/): the splashdown and undocking animations and every screen.
 - **Home Assistant.** ISS overhead, next pass, aurora chance, solar wind and
   more show up as entities. Location, heading and layers can be set from HA,
   the touch screen, or the built-in web page.

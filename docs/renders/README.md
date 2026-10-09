@@ -1,6 +1,17 @@
 # Renders
 
-Every screen of the firmware, drawn by the desktop test build (`tools/host_test`, `make_comps.sh`) from the real UI code, on test data. Each is 480×480, the panel's size. `screens.png` and `launch.gif` are the pictures used by the project README and the install page.
+Every screen of the firmware, drawn by the desktop test build (`tools/host_test`, `make_comps.sh`) from the real UI code, on test data. Each is 480×480, the panel's size. `screens.png` and `launch.gif` are also used by the project README and the install page.
+
+## Animations
+
+| | |
+|---|---|
+| ![launch](launch.gif)<br>**launch**<br>A rocket flies across the sky view at lift-off, with the mission name. | ![splashdown](splashdown.gif)<br>**splashdown**<br>A capsule comes down on parachutes into the sea at the bottom of the map. |
+| ![undocking](undocking.gif)<br>**undocking**<br>A spacecraft backs away from the ISS in a close-up of the station. | |
+
+Strips of four frames each: [splashdown_strip.png](splashdown_strip.png), [undocking_strip.png](undocking_strip.png).
+
+## Screens
 
 | | |
 |---|---|
