@@ -117,7 +117,7 @@ from.
 sky-tracker.yaml          the device config (what the Builder and CI build)
 components/sky_tracker/   the C++: orbit propagation, drawing, data download
 docs/requirements.md      how every piece is supposed to behave, and why
-docs/renders/             screen renders (PNG) of every screen
+docs/renders/             screen renders (PNG) of every screen, with a README
 tools/                    generators for the star catalogue, Milky Way, logo
 tools/host_test/          a desktop build of the UI and the tests (./build.sh, ./t4)
 ```
