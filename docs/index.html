@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sky Tracker</title>
+<meta name="description" content="What is overhead right now, on a 480x480 touchscreen. Made for ESPHome.">
+<link rel="icon" type="image/svg+xml" href="logo.svg">
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; background: #0a0d14; color: #c9d3f2;
+         font: 16px/1.6 ui-monospace, "Roboto Mono", SFMono-Regular, Menlo, monospace; }
+  main { max-width: 46rem; margin: 0 auto; padding: 3rem 1.25rem 5rem; }
+  header { display: flex; align-items: center; gap: 1.25rem; margin-bottom: 2rem; }
+  header img { width: 88px; height: 88px; }
+  h1 { font-size: 1.6rem; margin: 0; color: #f2f5fc; font-weight: 500; }
+  .sub { color: #7e8bb3; margin: .25rem 0 0; font-size: .95rem; }
+  h2 { font-size: 1.05rem; color: #ff8a1f; font-weight: 500;
+       margin: 2.5rem 0 .75rem; }
+  p, li { color: #a8b3cc; }
+  a { color: #6c98ff; }
+  code { background: #121a2b; padding: .1rem .35rem; border-radius: 3px; color: #c9d3f2; }
+  pre { background: #121a2b; padding: .9rem 1rem; border-radius: 8px; overflow-x: auto;
+        border: 1px solid #1e2a44; }
+  img.shot { max-width: 100%; height: auto; border-radius: 8px; margin: .5rem 0; }
+  .install { background: #121a2b; border: 1px solid #2d5bd0; border-radius: 10px;
+             padding: 1.25rem; margin: 1.5rem 0; }
+  .muted { color: #5a6687; font-size: .85rem; }
+  table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+  td, th { text-align: left; padding: .35rem .6rem .35rem 0;
+           border-bottom: 1px solid #1a2238; vertical-align: top; }
+  th { color: #7e8bb3; font-weight: 500; }
+  footer { margin-top: 3rem; color: #5a6687; font-size: .82rem; }
+</style>
+<script type="module"
+        src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module"></script>
+</head>
+<body>
+<main>
+  <header>
+    <img src="logo.svg" alt="">
+    <div>
+      <h1>Sky Tracker</h1>
+      <p class="sub">What is overhead right now, on a 480&times;480 touchscreen.<br>
+         Made for ESPHome &middot; Guition ESP32-4848S040</p>
+    </div>
+  </header>
+
+  <img class="shot" src="screens.png" alt="The sky map, a planet card and the About page">
+
+  <div class="install">
+    <p><strong>Install it from this page.</strong> Plug the board in over USB and
+       press the button. Chrome or Edge on a desktop; Web Serial is not available
+       in Safari or on a phone.</p>
+    <esp-web-install-button manifest="manifest.json">
+      <button slot="activate">Install Sky Tracker</button>
+      <span slot="unsupported">This browser cannot flash over USB &mdash; use Chrome or Edge.</span>
+      <span slot="not-allowed">Serial access was blocked.</span>
+    </esp-web-install-button>
+    <p class="muted">Wi-Fi is set up afterwards: connect over USB with
+       <a href="https://www.improv-wifi.com">Improv</a>, or join the
+       <em>Sky Tracker - XXXX</em> access point from your phone. No credentials
+       are compiled in.</p>
+  </div>
+
+  <h2>What it does</h2>
+  <ul>
+    <li><strong>Sky map</strong> &mdash; the ISS, Tiangong, Starlink trains, a few
+        hundred other satellites, the Sun, Moon and planets, stars,
+        constellations, the Milky Way and bright comets, all worked out on the
+        chip. Tap anything for details.</li>
+    <li><strong>Alerts</strong> &mdash; visible passes, aurora, meteor showers,
+        eclipses, space weather, launches, splashdowns and objects about to
+        re-enter, each with its own switch.</li>
+    <li><strong>Launches</strong> &mdash; a full-screen countdown with a QR code to
+        the webcast, and a cartoon rocket at lift-off.</li>
+    <li><strong>Pictures</strong> &mdash; today's Sun, the Moon as it looks now,
+        the Earth from GOES, and the Poker Flat all-sky camera.</li>
+    <li><strong>Home Assistant</strong> &mdash; ISS overhead, next pass, aurora
+        chance and more as entities; settings from HA, the screen or the built-in
+        web page.</li>
+    <li><strong>Add-ons</strong> &mdash; a GPS module sets the location, a GY-271
+        compass turns the map.</li>
+  </ul>
+  <img class="shot" src="launch.gif" alt="The launch animation">
+
+  <h2>Adopt it in ESPHome</h2>
+  <p>The configuration is open and builds unmodified. Add it to your dashboard:</p>
+  <pre>github://akcoder/sky-tracker/sky-tracker.yaml@main</pre>
+
+  <h2>Updates</h2>
+  <p>The device checks the project's releases once an hour and asks before
+     installing anything; Home Assistant shows the same update. With no network,
+     copy <code>sky-tracker-esp32s3.ota.bin</code> from the
+     <a href="https://github.com/akcoder/sky-tracker/releases/latest">latest
+     release</a> to the root of a microSD card and put it in the slot.</p>
+
+  <h2>Data</h2>
+  <table>
+    <tr><th>Source</th><th>Used for</th></tr>
+    <tr><td><a href="https://celestrak.org">CelesTrak</a>, SatNOGS</td><td>orbits, objects about to re-enter</td></tr>
+    <tr><td><a href="https://www.swpc.noaa.gov">NOAA SWPC</a></td><td>Kp, solar wind, aurora nowcast, space weather</td></tr>
+    <tr><td>NOAA GOES-19</td><td>Sun and Earth pictures</td></tr>
+    <tr><td><a href="https://allsky.gi.alaska.edu">UAF Geophysical Institute</a></td><td>all-sky camera</td></tr>
+    <tr><td><a href="https://svs.gsfc.nasa.gov/help/#apis-dialamoon">NASA SVS Dial-A-Moon</a></td><td>the Moon</td></tr>
+    <tr><td><a href="https://ssd.jpl.nasa.gov">JPL Small-Body Database</a></td><td>comets</td></tr>
+    <tr><td><a href="https://thespacedevs.com">The Space Devs</a>, <a href="https://www.rocketlaunch.live">RocketLaunch.Live</a></td><td>launches, dockings, splashdowns</td></tr>
+    <tr><td>NASA, ESA via Wikimedia Commons</td><td>planet photos</td></tr>
+    <tr><td><a href="https://github.com/ofrohn/d3-celestial">d3-celestial</a></td><td>stars, constellations, Milky Way</td></tr>
+  </table>
+  <p class="muted">All free, no API key needed.</p>
+
+  <footer>
+    <p>GPL-3.0. Made in Wasilla, Alaska by Dan Morphis.</p>
+    <p><a href="https://github.com/akcoder/sky-tracker">Source on GitHub</a></p>
+  </footer>
+</main>
+</body>
+</html>

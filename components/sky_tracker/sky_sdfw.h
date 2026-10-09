@@ -530,10 +530,8 @@ inline void ui_update() {
   }
   if (st == S_FLASHING) {
     const uint32_t d = done_bytes.load(), t = offer.size ? offer.size : 1;
-    const int pc = (int) ((uint64_t) d * 100 / t);
-    snprintf(b, sizeof(b), "%d%%  -  %.1f of %.1f MB", pc, d / 1048576.0, t / 1048576.0);
-    lv_label_set_text(sui.l1, b);
-    lv_bar_set_value(sui.bar, pc, LV_ANIM_OFF);
+    lv_label_set_text(sui.l1, "Copying from the card");  // UI-12: the bar alone, as the other updates
+    lv_bar_set_value(sui.bar, (int) ((uint64_t) d * 100 / t), LV_ANIM_OFF);
   } else if (st == S_DONE && ms() - sui.done_at > 1500) {
     restart();
   }

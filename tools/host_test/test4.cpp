@@ -2073,7 +2073,7 @@ int main() {
     lv_refr_now(disp);
     save_ppm(OUT_DIR "/renders/r12_sd_progress.ppm");
     printf("sd progress: \"%s\"\n", lv_label_get_text(sd::sui.l1));
-    CHECK(strstr(lv_label_get_text(sd::sui.l1), "45%"), "progress shown");
+    CHECK(lv_bar_get_value(sd::sui.bar) == 45 && !strchr(lv_label_get_text(sd::sui.l1), '%'), "progress: the bar, no percentage");
     run_jobs();
     sd::ui_update();
     CHECK(sd::state == sd::S_DONE && sd::host_flashed.size() == 400000 && sd::host_flashed[1] == 'b' &&
@@ -2160,8 +2160,20 @@ int main() {
     up::host.has_progress = true;
     up::host.progress = 37;
     up::tick();
-    CHECK(strstr(lv_label_get_text(up::ui_.l1), "37%"), "install progress");
+    CHECK(lv_bar_get_value(up::ui_.bar) == 37 && !strchr(lv_label_get_text(up::ui_.l1), '%'), "install progress: the bar, no percentage");
     CHECK(lv_obj_has_flag(ub, LV_OBJ_FLAG_HIDDEN), "no icon while installing");
+    up::close();
+    // the web page's / HA's upload: the same card and bar; a failure says so and can be closed
+    up::ota_begin("Receiving the file");
+    CHECK(up::ui_.mode == up::M_INSTALLING && !strcmp(lv_label_get_text(up::ui_.l1), "Receiving the file") &&
+              !lv_obj_has_flag(up::ui_.bar, LV_OBJ_FLAG_HIDDEN),
+          "upload: the install card");
+    up::ota_progress(52);
+    CHECK(lv_bar_get_value(up::ui_.bar) == 52, "upload: bar");
+    up::ota_end(false);
+    CHECK(up::ui_.mode == up::M_INSTALL_FAILED && !strcmp(lv_label_get_text(up::ui_.title), "Update failed") &&
+              !lv_obj_has_flag(up::ui_.btn[0], LV_OBJ_FLAG_HIDDEN),
+          "upload failed: says so, Close");
     up::close();
     up::set_button(nullptr);
     lv_obj_delete(ub);

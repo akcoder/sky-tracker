@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.34"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.35"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -263,40 +263,22 @@ ota:
         - lambda: sat::upd::ota_end(false);
   - platform: esphome
     id: ota_esphome
-    on_begin:
+    on_begin:                      # UI-12: the web page's / HA's / the IDE's upload, on the same card
       then:
         - lambda: sat::ota_begin();
         - lvgl.page.show: sky_page
-        - lambda: |-
-            lv_label_set_text(id(ota_title), "UPGRADING");
-            lv_label_set_text(id(ota_pct), "starting");
-            lv_obj_remove_flag(id(ota_panel), LV_OBJ_FLAG_HIDDEN);
-            lv_refr_now(NULL);
+        - lambda: sat::upd::ota_begin("Receiving the file");
     on_progress:
       then:
-        - lambda: |-
-            static int last = -10;
-            int p = (int) x;
-            if (p < last + 5 && p < 100) return;
-            last = p;
-            char b[16];
-            snprintf(b, sizeof(b), "%d%%", p);
-            lv_label_set_text(id(ota_pct), b);
-            lv_refr_now(NULL);
+        - lambda: sat::upd::ota_progress(x);
     on_end:
       then:
-        - lambda: |-
-            lv_label_set_text(id(ota_pct), "rebooting");
-            lv_refr_now(NULL);
+        - lambda: sat::upd::ota_end(true);
     on_error:
       then:
         - lambda: |-
-            lv_label_set_text(id(ota_title), "UPGRADE FAILED");
-            lv_label_set_text(id(ota_pct), "resuming");
-            lv_refr_now(NULL);
+            sat::upd::ota_end(false);
             sat::ota_error();
-        - delay: 5s
-        - lambda: lv_obj_add_flag(id(ota_panel), LV_OBJ_FLAG_HIDDEN);
 
 wifi:
   id: wifi_comp
@@ -1792,36 +1774,6 @@ lvgl:
   bg_color: 0x000000
   text_color: 0xC9D3F2
   text_font: mono16
-  top_layer:
-    widgets:
-      - obj:                     # UI-12
-          id: ota_panel
-          align: CENTER
-          width: 300
-          height: 130
-          hidden: true
-          bg_color: 0x101B3D
-          bg_opa: COVER
-          border_color: 0xFF8A1F
-          border_width: 2
-          radius: 12
-          scrollable: false
-          pad_all: 0
-          widgets:
-            - label:
-                id: ota_title
-                align: CENTER            # UI-12: title + progress centred as a pair (measured:
-                y: -14                   # ink centre within 0.5 px of the panel centre)
-                text: "UPGRADING"
-                text_font: mono24
-                text_color: 0xFF8A1F
-            - label:
-                id: ota_pct
-                align: CENTER
-                y: 18                    # below the title
-                text: ""
-                text_color: 0xC9D3F2     # the theme default is dark grey: invisible on this panel
-                text_font: mono16
   pages:
     - id: wifi_page              # NET-2b: first page, so it is what boots; skipped by page flips
       skip: true

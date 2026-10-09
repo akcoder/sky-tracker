@@ -26,7 +26,7 @@ void offer_now();              // that icon tapped
 void idle_close();             // UI-72: after a minute untouched, the screen closes (not while installing)
 // UI-68b the internet install's own callbacks (begin, progress %, end, error): the download
 // blocks the main loop, so the screen is updated and redrawn from here
-void ota_begin();
+void ota_begin(const char *what = "Downloading");
 void ota_progress(float pc);
 void ota_end(bool ok);
 }  // namespace upd
@@ -46,7 +46,7 @@ namespace upd {
 
 inline const char *source = "";  // the manifest URL (NET-13a)
 
-enum Mode : uint8_t { M_NONE = 0, M_CHECKING, M_LATEST, M_AVAILABLE, M_INSTALLING, M_FAILED };
+enum Mode : uint8_t { M_NONE = 0, M_CHECKING, M_LATEST, M_AVAILABLE, M_INSTALLING, M_FAILED, M_INSTALL_FAILED };
 
 #ifdef SAT_HOST_TEST
 // host stand-in for ESPHome's entity: the tests set state/info and count calls
@@ -95,6 +95,7 @@ struct Ui {
   int btn_y = 196, card_w = 400;
   Mode mode = M_NONE;
   uint32_t since = 0;      // when CHECKING / INSTALLING began
+  char what[24] = "Downloading";  // the first line while installing: where the firmware comes from
   bool asked = false;      // the check was started from Settings (show "Up to date" too)
 };
 inline Ui ui_;
@@ -292,12 +293,19 @@ inline void show(Mode m) {
       break;
     case M_INSTALLING:
       lv_label_set_text(ui_.title, "Updating firmware");
-      lv_label_set_text(ui_.l1, "Downloading");
+      lv_label_set_text(ui_.l1, ui_.what);
       lv_label_set_text(ui_.l2, "Keep the power on");
       lv_obj_set_style_text_color(ui_.l2, lv_color_hex(0xFFB547), 0);
       lv_obj_remove_flag(ui_.bar, LV_OBJ_FLAG_HIDDEN);
       lv_bar_set_value(ui_.bar, 0, LV_ANIM_OFF);
       buttons(nullptr, nullptr);
+      break;
+    case M_INSTALL_FAILED:  // UI-12: a failed install, from any source (web page, HA, GitHub)
+      lv_label_set_text(ui_.title, "Update failed");
+      lv_label_set_text(ui_.l1, "The new firmware was not installed");
+      snprintf(b, sizeof(b), "Still running %s", cur.c_str());
+      lv_label_set_text(ui_.l2, b);
+      buttons("Close", nullptr);
       break;
     case M_FAILED:
       lv_label_set_text(ui_.title, "Couldn't check");
@@ -312,6 +320,7 @@ inline void show(Mode m) {
 inline void btn_cb(lv_event_t *e) {
   const int i = (int) (intptr_t) lv_event_get_user_data(e);
   if (ui_.mode == M_AVAILABLE && i == 1) {
+    snprintf(ui_.what, sizeof(ui_.what), "Downloading");
     ui_.since = now_ms();
     show(M_INSTALLING);
     do_perform();
@@ -360,31 +369,35 @@ inline void log_result(int s) {
 // UI-68b ESPHome's http_request OTA downloads and writes in one blocking call on the main
 // loop: no lv_timer runs and nothing redraws until it ends, so the bar sat at 0. Its own
 // callbacks move the bar and force a redraw (every 2%, ~25 ms each).
-void ota_begin() {
+void ota_begin(const char *what) {
+  snprintf(ui_.what, sizeof(ui_.what), "%s", what);
   if (ui_.mode != M_INSTALLING) {  // started from the web page or HA: show the screen too
     ui_.since = now_ms();
     show(M_INSTALLING);
   }
   lv_refr_now(nullptr);
 }
+// UI-12: the same card for every source (GitHub, the web page, HA, the microSD card); the bar
+// alone shows how far it is, no percentage
 void ota_progress(float pc) {
   static int last = -10;
   const int p = (int) pc;
   if (ui_.mode != M_INSTALLING || (p < last + 2 && p >= last && p < 100))
     return;
   last = p;
-  char b[32];
-  snprintf(b, sizeof(b), "Downloading  %d%%", p);
-  lv_label_set_text(ui_.l1, b);
   lv_bar_set_value(ui_.bar, p, LV_ANIM_OFF);
   lv_refr_now(nullptr);
 }
 void ota_end(bool ok) {
   if (ui_.mode != M_INSTALLING)
     return;
-  lv_label_set_text(ui_.l1, ok ? "Installed, restarting" : "Install failed");
-  if (ok)
-    lv_bar_set_value(ui_.bar, 100, LV_ANIM_OFF);
+  if (!ok) {
+    show(M_INSTALL_FAILED);
+    lv_refr_now(nullptr);
+    return;
+  }
+  lv_label_set_text(ui_.l1, "Installed, restarting");
+  lv_bar_set_value(ui_.bar, 100, LV_ANIM_OFF);
   lv_refr_now(nullptr);
 }
 void idle_close() {  // UI-72: "Update available" counts as Not now; an install is never closed
@@ -409,11 +422,7 @@ inline void tick() {
       break;
     case M_INSTALLING:
       if (has_prog()) {
-        const int pc = (int) (prog() + 0.5f);
-        char b[32];
-        snprintf(b, sizeof(b), "Downloading  %d%%", pc);
-        lv_label_set_text(ui_.l1, b);
-        lv_bar_set_value(ui_.bar, pc, LV_ANIM_OFF);
+        lv_bar_set_value(ui_.bar, (int) (prog() + 0.5f), LV_ANIM_OFF);
       }
       if (s == 2 && now_ms() - ui_.since > 120000)  // back to "available": the install failed
         show(M_AVAILABLE);

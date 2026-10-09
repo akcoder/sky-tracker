@@ -1,7 +1,8 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.34 (queued): the microSD card update looks for sky-tracker-esp32s3.ota.bin, the release's own file name, instead of sky_tracker_firmware_<version>.bin; the version shown is read from the image's app descriptor, where the build now stores fw_version (older images: from the project text inside) (UI-66). The list page scrolls instead of stopping at 18 rows with "+ N more" (UI-10).
+- 4.6.35 (queued): all firmware installs (GitHub, web upload, microSD) share one card with a progress bar and no percentage (UI-12). An install page at akcoder.github.io/sky-tracker, flashing over USB from the browser.
+- 4.6.34 (installed): the microSD card update looks for sky-tracker-esp32s3.ota.bin, the release's own file name, instead of sky_tracker_firmware_<version>.bin; the version shown is read from the image's app descriptor, where the build now stores fw_version (older images: from the project text inside) (UI-66). The list page scrolls instead of stopping at 18 rows with "+ N more" (UI-10).
 - 4.6.33 (queued): a re-entry plays as a random fireball across the sky view when its estimated time comes (UI-79). The countdown's "WEBCAST LIVE" shows a QR code to the webcast (UI-80). The web UI's logo links to the GitHub page (NET-1). HA: the satellite counts show as whole numbers, not "18.0", and Data Status no longer changes every minute. The Firmware entity has an icon. Re-entry cards say "+/-" (was a box), and cards with no button no longer leave space for one.
 - 4.6.32: every glyph checked: "~" (the re-entry times, "in ~5h") was missing from the fonts and drew as a box; added. Text from the feeds (launch, pad, event, comet names) is folded to what the fonts hold (UI-78). The update prompt shows the release notes (UI-68c).
 - 4.6.31: the picture viewer's < and > buttons (the picture before, earlier frames) are gone; the latest picture only (UI-59c). Frees a 259 KB picture buffer. New: space weather alerts from NOAA (UI-73), re-entry alerts (UI-74), the UAF Poker Flat all-sky camera as a picture tab and from the aurora cards (UI-75), a full-screen launch countdown from T-10 min (UI-76), and "On this day" in space history (UI-77). The Alerts tab gains Space wx, This day, Re-entry and Countdown.
@@ -389,14 +390,14 @@ UI-11  Palette (4.3.2): pages are black (#000000, PAGE_BG); the sky disc is a de
        The sky colour is duplicated in the drawing code as SKY_BG and MUST be kept
        in step with sky_box bg_color in the YAML. The panel is IPS: black shows as
        dark grey with some edge glow, which the blue disc helps hide.
-UI-12  During a firmware upload the screen MUST show an UPGRADING panel with the
-       percentage, then "rebooting". If the upload fails, the panel MUST say so.
-       The UPGRADING title (label CENTER, y -14) and the status line (y +18) are
-       centred in the box as a pair: the ink of both lines is centred within 0.5 px
-       (4.3.1). The status has an explicit text colour: without one it took the
-       theme's dark grey and the percentage was invisible on the panel. mono24 carries every
-       uppercase letter and "-" so the title and the "--:--" clock never show
-       missing-glyph boxes.
+UI-12  Every firmware install MUST show the same card: the title "Updating firmware",
+       a line for where it comes from ("Downloading" from GitHub, "Receiving the file"
+       for the web page's, HA's or the IDE's upload, "Copying from the card" from the
+       microSD card), "Keep the power on" in amber, and a progress bar. The bar alone
+       shows how far it is: no percentage and no byte counts. When it is written the line
+       reads "Installed, restarting". If the install fails the card MUST say "Update
+       failed" and "Still running <version>", with a Close button. (Before 4.6.34 the
+       upload had its own UPGRADING panel with a percentage and no bar.)
 UI-13  A refresh restyles one layer in one pass, and only on a tick where drain()
        reported that layer fresh: SAT restyles satellites, STARLINK restyles
        Starlink, ISS restyles the ISS. No layer is ever restyled on a tick
