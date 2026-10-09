@@ -92,8 +92,8 @@ The device checks this repo's releases every hour and asks before installing
 anything. You can also check by hand from **Settings > Upgrade Check**. Home Assistant
 shows the same update as a normal firmware update.
 
-No network? Copy the release's `.ota.bin` to a microSD card as
-`sky_tracker_firmware_<version>.bin` and put it in the slot. The panel offers
+No network? Copy the release's `sky-tracker-esp32s3.ota.bin` to the root of a microSD
+card, with that name, and put it in the slot. The panel offers
 to install it, checks that the file really is Sky Tracker firmware for this
 board, and leaves your current version in place if anything goes wrong.
 

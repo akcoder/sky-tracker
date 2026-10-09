@@ -248,7 +248,7 @@ constexpr int STARLINK_POOL = 200;  // UI-14: markers made at boot (80° cone fr
 constexpr int SAT_PX = 7, STARLINK_PX = 4, ISS_PX = 16, SUN_PX = 20, SUN_HALO_PX = 30, MOON_PX = 20;
 constexpr float DECAY = 0.55f;      // MOTION-5, per 2 s tick
 constexpr float SNAP_DEG = 30.0f;   // MOTION-5
-constexpr int LIST_ROWS = 18;       // UI-10: table rows including the header
+constexpr int LIST_ROWS = 400;      // UI-10: a sanity limit on table rows (the page scrolls), header included
 
 // DATA-4: propagation cadence (on-board maths, no API limits) and the element check
 constexpr double SAT_PERIOD = 10, STARLINK_PERIOD = 30, STARLINK_OFFSET = 5, ISS_PERIOD = 5;
@@ -2528,15 +2528,16 @@ inline void draw_list(double t) {
     rows_for(live.sats, t, sat_rows, 0.0f);
   if (ui.geo_on)
     rows_for(live.geo, t, geo_rows, 0.0f);
+  // UI-10: every object gets a row and the page scrolls; LIST_ROWS only guards memory
   const int room = LIST_ROWS - (int) rows.size();
-  const int sl_shown = std::min((int) sl_rows.size(), std::max(0, std::min(5, room / 3)));
-  const int sl_more = (int) sl_rows.size() - sl_shown;
-  // UI-28: GEO gets what LEO/MEO leave, at most 4 rows, below them
-  const int geo_cap = geo_rows.empty() ? 0 : 4;
-  int sat_room = room - sl_shown - (sl_more > 0 ? 1 : 0) - (geo_cap ? std::min((int) geo_rows.size(), geo_cap) + 1 : 0);
-  const int sat_n = (int) sat_rows.size();
-  const int sat_shown = sat_n <= sat_room ? sat_n : std::max(0, sat_room - 1);
-  char name[20];
+  const int sat_n = (int) sat_rows.size(), geo_n = (int) geo_rows.size(), sl_n = (int) sl_rows.size();
+  int left = std::max(0, room - 3);  // (room for the three possible "+ N more" lines)
+  const int sat_shown = std::min(sat_n, left);
+  left -= sat_shown;
+  const int geo_shown = std::min(geo_n, left);
+  left -= geo_shown;
+  const int sl_shown = std::min(sl_n, left);
+  char name[20], more[32];
   for (int i = 0; i < sat_shown; i++) {
     const SatRec &r = *sat_rows[i].r;
     fmt_pos({sat_rows[i].az, sat_rows[i].el});
@@ -2544,24 +2545,20 @@ inline void draw_list(double t) {
     snprintf(name, sizeof(name), "%.15s", r.name);
     add(RK_SAT, card_icon_for(K_SAT, r), name, r.cc, orbit_class(r.cls), dir, el, alt);
   }
-  char more[32];
   if (sat_shown < sat_n) {
     snprintf(more, sizeof(more), "+ %d more", sat_n - sat_shown);
     add(RK_NOTE, "", more, "", "", "", "", "");
   }
-  if (geo_cap) {
-    const int gshow = std::min((int) geo_rows.size(), geo_cap);
-    for (int i = 0; i < gshow; i++) {
-      const SatRec &r = *geo_rows[i].r;
-      fmt_pos({geo_rows[i].az, geo_rows[i].el});
-      snprintf(alt, sizeof(alt), "%.0f %s", dist(r.alt_km), dist_unit());
-      snprintf(name, sizeof(name), "%.15s", r.name);
-      add(RK_SAT, card_icon_for(K_GEO, r), name, r.cc, "GEO", dir, el, alt);
-    }
-    if ((int) geo_rows.size() > gshow) {
-      snprintf(more, sizeof(more), "+ %d GEO", (int) geo_rows.size() - gshow);
-      add(RK_NOTE, "", more, "", "", "", "", "");
-    }
+  for (int i = 0; i < geo_shown; i++) {
+    const SatRec &r = *geo_rows[i].r;
+    fmt_pos({geo_rows[i].az, geo_rows[i].el});
+    snprintf(alt, sizeof(alt), "%.0f %s", dist(r.alt_km), dist_unit());
+    snprintf(name, sizeof(name), "%.15s", r.name);
+    add(RK_SAT, card_icon_for(K_GEO, r), name, r.cc, "GEO", dir, el, alt);
+  }
+  if (geo_shown < geo_n) {
+    snprintf(more, sizeof(more), "+ %d GEO", geo_n - geo_shown);
+    add(RK_NOTE, "", more, "", "", "", "", "");
   }
   for (int i = 0; i < sl_shown; i++) {
     const SatRec &r = *sl_rows[i].r;
@@ -2570,8 +2567,8 @@ inline void draw_list(double t) {
     snprintf(name, sizeof(name), "%.15s", r.name);
     add(RK_STARLINK, card_icon_for(K_STARLINK, r), name, r.cc, "LEO", dir, el, alt);
   }
-  if (sl_more > 0) {
-    snprintf(more, sizeof(more), "+ %d Starlink", sl_more);
+  if (sl_shown < sl_n) {
+    snprintf(more, sizeof(more), "+ %d Starlink", sl_n - sl_shown);
     add(RK_NOTE, "", more, "", "", "", "", "");
   }
   lv_table_set_row_count(tb, rows.size());

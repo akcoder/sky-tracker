@@ -9,7 +9,7 @@
 // 47/48 are also the panel's 3-wire init interface, and card traffic on them once the panel
 // is running turns the whole screen red (4.6.0/4.6.1). So the card is looked at once, at boot,
 // before the panel's software reset and init (on_boot priority 1100): its root searched for
-// sky_tracker_firmware_<anything>.bin (the newest by version order when there are several),
+// sky-tracker-esp32s3.ota.bin (the release's own file name; the version is read from inside it),
 // the image header checked (ESP32-S3, this project, not the build already running), and the
 // card unmounted again. Once the screen is up it asks "Firmware update" Update / Not now.
 // Not now (or leaving it) is not asked again until the next boot. Update runs JOB_SDFLASH:
@@ -48,13 +48,13 @@ namespace sat {
 namespace sdfw {
 
 static const char *const TAG = "sdfw";
-constexpr const char *PREFIX = "sky_tracker_firmware_";
+constexpr const char *FILE_NAME = "sky-tracker-esp32s3.ota.bin";  // as attached to a release
 
 enum State : uint8_t { S_NONE = 0, S_CARD, S_OFFER, S_FLASHING, S_DONE, S_FAILED };
 
 struct Offer {
   char file[96] = "";     // name on the card
-  char ver[40] = "";      // the <anything> part, shown
+  char ver[40] = "";      // the project version inside the image, shown
   char built[24] = "";    // from the image: "Oct  2 2026"
   uint32_t size = 0;
   uint32_t key = 0;       // file name + size: what "Not now" remembers
@@ -89,13 +89,60 @@ inline int vcmp(const char *a, const char *b) {
   return *a ? 1 : *b ? -1 : 0;
 }
 
-// sky_tracker_firmware_<ver>.bin (case-insensitive) -> ver
-inline bool match_name(const char *name, char *ver, size_t n) {
-  const size_t pl = strlen(PREFIX), k = strlen(name);
-  if (k <= pl + 4 || strncasecmp(name, PREFIX, pl) != 0 || strcasecmp(name + k - 4, ".bin") != 0)
-    return false;
-  snprintf(ver, n, "%.*s", (int) (k - pl - 4), name + pl);
-  return true;
+#ifndef ESPHOME_VERSION
+#define ESPHOME_VERSION "2026.9.0"  // host test
+#endif
+
+// the release's file (case-insensitive)
+inline bool match_name(const char *name) { return strcasecmp(name, FILE_NAME) == 0; }
+
+// The project version: the app descriptor's version field (set from fw_version), else for older
+// images the "Project <name> version <ver>" text ESPHome builds in (about 22 KB in).
+// The file name no longer carries it. "unknown" if neither is there.
+inline void read_version(const char *path, char *ver, size_t n) {
+  snprintf(ver, n, "unknown");
+  FILE *f = fopen(path, "rb");
+  if (!f)
+    return;
+  {  // the app descriptor's version field (image header 24 + segment header 8 + 16 into the descriptor)
+    char d[32 + 1] = "";
+    if (fseek(f, 48, SEEK_SET) == 0 && fread(d, 1, 32, f) == 32 && d[0] >= '0' && d[0] <= '9' &&
+        strcmp(d, ESPHOME_VERSION) != 0) {  // older images hold ESPHome's own version there
+      snprintf(ver, n, "%s", d);
+      fclose(f);
+      return;
+    }
+    fseek(f, 0, SEEK_SET);
+  }
+  static const char KEY[] = "Project akcoder.sky_tracker version ";
+  constexpr size_t BLOCK = 4096, KL = sizeof(KEY) - 1, LIMIT = 256 * 1024;
+  static uint8_t *buf = nullptr;
+  if (buf == nullptr)
+    buf = (uint8_t *) malloc(BLOCK + 128);
+  if (buf != nullptr) {
+    size_t have = 0, total = 0;  // the tail of the last block is kept, a match may straddle two
+    while (total < LIMIT) {
+      const size_t got = fread(buf + have, 1, BLOCK, f);
+      if (got == 0)
+        break;
+      total += got;
+      const size_t len = have + got;
+      for (size_t i = 0; i + KL < len; i++)
+        if (buf[i] == 'P' && memcmp(buf + i, KEY, KL) == 0) {
+          size_t k = 0, j = i + KL;
+          for (; j < len && buf[j] >= 0x20 && buf[j] < 0x7F && k + 1 < n; j++)
+            ver[k++] = (char) buf[j];
+          if (k > 0 && j < len) {  // (cut short by the end of the block: found again with the next one)
+            ver[k] = 0;
+            fclose(f);
+            return;
+          }
+        }
+      have = std::min<size_t>(len, KL + 40);  // keeps room for the version after a match at the very end
+      memmove(buf, buf + len - have, have);
+    }
+  }
+  fclose(f);
 }
 
 #ifdef SAT_HOST_TEST
@@ -192,10 +239,7 @@ inline void probe() {
   Offer best;
   if (DIR *d = opendir(mount_dir())) {
     while (dirent *e = readdir(d)) {
-      char ver[40];
-      if (!match_name(e->d_name, ver, sizeof(ver)))
-        continue;
-      if (best.file[0] && vcmp(ver, best.ver) <= 0)
+      if (!match_name(e->d_name))
         continue;
       struct stat sb;
       const std::string p = path_of(e->d_name);
@@ -203,12 +247,12 @@ inline void probe() {
         continue;
       Offer o;
       snprintf(o.file, sizeof(o.file), "%.95s", e->d_name);
-      snprintf(o.ver, sizeof(o.ver), "%s", ver);
       o.size = (uint32_t) sb.st_size;
       if (const char *why = check_image(p.c_str(), o.built, sizeof(o.built))) {
         ESP_LOGI(TAG, "%s: %s", e->d_name, why);
         continue;
       }
+      read_version(p.c_str(), o.ver, sizeof(o.ver));
       char k[16];
       snprintf(k, sizeof(k), "/%u", (unsigned) o.size);
       o.key = fnv(k, fnv(o.file));

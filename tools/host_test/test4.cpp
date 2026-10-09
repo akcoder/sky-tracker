@@ -2017,16 +2017,31 @@ int main() {
     sd::init("4.5.38", &mono16, &mono16, &mono16);
     const std::string dir = OUT_DIR "/sdcard";
     system(("rm -rf " + dir + " && mkdir -p " + dir).c_str());
-    auto img = [&](const char *name, size_t n, char fill) {
+    auto img = [&](const char *name, size_t n, char fill, const char *ver) {
       std::string b(n, fill);
       b[0] = (char) 0xE9;
       memcpy(&b[32 + 112], "Oct  2 2026", 11);
+      char tag[80];
+      snprintf(tag, sizeof(tag), "Project akcoder.sky_tracker version %s", ver);
+      if (ver[0] != '!')  // '!' = an older image: no descriptor version, only the tag
+        memcpy(&b[48], ver, strlen(ver) + 1);  // esp_app_desc_t.version
+      else
+        snprintf(tag, sizeof(tag), "Project akcoder.sky_tracker version %s", ver + 1), memcpy(&b[48], ESPHOME_VERSION, sizeof(ESPHOME_VERSION));
+      memcpy(&b[22000], tag, strlen(tag) + 1);  // as in a real build (the first 256 KB)
       std::ofstream(dir + "/" + name, std::ios::binary) << b;
     };
-    img("sky_tracker_firmware_4.5.9.bin", 300000, 'a');
-    img("SKY_TRACKER_FIRMWARE_4.10.0.bin", 400000, 'b');  // newest by version order, any case
-    std::ofstream(dir + "/sky_tracker_firmware_junk.bin") << "not firmware";
+    img("sky_tracker_firmware_4.5.9.bin", 300000, 'a', "4.5.9");  // the old name: not looked for any more
+    img("SKY-Tracker-ESP32S3.OTA.BIN", 400000, 'b', "4.10.0");    // the release's file name, any case
     std::ofstream(dir + "/notes.txt") << "hi";
+    {
+      img("old.bin", 300000, 'c', "!4.2.1");  // descriptor holds ESPHome's version: fall back to the tag
+      char v[24];
+      sd::read_version((dir + "/old.bin").c_str(), v, sizeof(v));
+      CHECK(!strcmp(v, "4.2.1"), "older image: version from the tag");
+      sd::read_version((dir + "/SKY-Tracker-ESP32S3.OTA.BIN").c_str(), v, sizeof(v));
+      CHECK(!strcmp(v, "4.10.0"), "version from the app descriptor");
+      remove((dir + "/old.bin").c_str());
+    }
     auto boot = [&]() { sd::state = sd::S_NONE; sd::declined = 0; sd::boot_probe(); sd::ui_update(); };  // RAM starts clean
     auto probe = [&]() { sd::ui_update(); };
     sd::host_dir.clear();

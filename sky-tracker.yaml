@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.33"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.34"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -181,7 +181,11 @@ esp32:
       include_builtin_idf_components: [fatfs, sdmmc, esp_driver_sdmmc, wear_levelling]
       disable_vfs_support_dir: false   # opendir/readdir on the card
     sdkconfig_options:
-      # UI-66: long file names on the card (sky_tracker_firmware_<version>.bin)
+      # UI-66: the image's app descriptor carries the project version (ESPHome puts its own
+      # there otherwise), so a card update can read it at a fixed offset
+      CONFIG_APP_PROJECT_VER_FROM_CONFIG: y
+      CONFIG_APP_PROJECT_VER: '"${fw_version}"'   # (Kconfig strings need their own quotes)
+      # UI-66: long file names on the card (sky-tracker-esp32s3.ota.bin)
       CONFIG_FATFS_LFN_HEAP: y
       CONFIG_FATFS_MAX_LFN: "255"
       # PERF-2: re-sync the RGB panel DMA every vblank so a stall can't leave the
@@ -2173,7 +2177,11 @@ lvgl:
     - id: list_page              # UI-2 / UI-10
       bg_color: 0x000000
       bg_opa: COVER
-      scrollable: false
+      scroll_dir: VER              # UI-10: every object gets a row; drag to scroll (a tap still flips)
+      scrollbar_mode: AUTO
+      pad_bottom: 8
+      on_load:
+        - lambda: lv_obj_scroll_to_y(lv_obj_get_parent(id(list_table)->obj), 0, LV_ANIM_OFF);
       on_click:
         - lvgl.page.next:
             animation: FADE_IN
@@ -2292,7 +2300,7 @@ lvgl:
         - label:
             x: 8
             y: 452
-            text: "Update from a microSD card: sky_tracker_firmware_<ver>.bin"
+            text: "Update from a microSD card: sky-tracker-esp32s3.ota.bin"
             text_font: mono12
             text_color: 0x5A6687
     - id: settings_page          # UI-16

@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.34 (queued): the microSD card update looks for sky-tracker-esp32s3.ota.bin, the release's own file name, instead of sky_tracker_firmware_<version>.bin; the version shown is read from the image's app descriptor, where the build now stores fw_version (older images: from the project text inside) (UI-66). The list page scrolls instead of stopping at 18 rows with "+ N more" (UI-10).
 - 4.6.33 (queued): a re-entry plays as a random fireball across the sky view when its estimated time comes (UI-79). The countdown's "WEBCAST LIVE" shows a QR code to the webcast (UI-80). The web UI's logo links to the GitHub page (NET-1). HA: the satellite counts show as whole numbers, not "18.0", and Data Status no longer changes every minute. The Firmware entity has an icon. Re-entry cards say "+/-" (was a box), and cards with no button no longer leave space for one.
 - 4.6.32: every glyph checked: "~" (the re-entry times, "in ~5h") was missing from the fonts and drew as a box; added. Text from the feeds (launch, pad, event, comet names) is folded to what the fonts hold (UI-78). The update prompt shows the release notes (UI-68c).
 - 4.6.31: the picture viewer's < and > buttons (the picture before, earlier frames) are gone; the latest picture only (UI-59c). Frees a 259 KB picture buffer. New: space weather alerts from NOAA (UI-73), re-entry alerts (UI-74), the UAF Poker Flat all-sky camera as a picture tab and from the aurora cards (UI-75), a full-screen launch countdown from T-10 min (UI-76), and "On this day" in space history (UI-77). The Alerts tab gains Space wx, This day, Re-entry and Countdown.
@@ -376,11 +377,12 @@ UI-8   Header: title, satellite counts, clock. Under the title sits a two-line
        disabled). It updates on the 2 s tick, so it steps by 2 by design.
 UI-9   Footer: the ISS direction, height and sunlit state, then the next pass with
        its time, countdown, peak height and direction.
-UI-10  The list page MUST fit 20 lines, allocated in this order: header, ISS, Sun,
-       Moon (4 lines); then the STARLINK section if the layer has any members
-       (a section line, up to 8 rows, and "+ N more" if needed, so 10 lines at
-       most); satellites, sorted by elevation, get the lines left over. If they
-       don't fit, their last line becomes "+ N more". The list sorts a copy.
+UI-10  The list page MUST show a row for every object, in this order: header, ISS,
+       Tiangong, Sun, Moon, planets, comets, the next launches; then satellites
+       sorted by elevation, GEO, and the Starlink in the cone. The page scrolls
+       vertically (drag; a tap still flips the page, and it opens at the top). Only
+       a sanity limit of 400 rows ends the list, with a "+ N more" line. The list
+       sorts a copy.
 UI-11  Palette (4.3.2): pages are black (#000000, PAGE_BG); the sky disc is a deep,
        slightly desaturated blue (#0B1220, SKY_BG); cards and panels #101B3D. Dim
        colours (Starlink icons, moon edge, arcs, trails) are mixed against SKY_BG.
@@ -1040,8 +1042,8 @@ UI-66  Firmware from a microSD card (sky_sdfw.h). The TF slot is wired for SPI w
        high did not stop it). So the card is looked at once per boot, in on_boot priority
        1100 before the panel's software reset and init (boot_probe): mount FAT (fatfs, sdmmc,
        esp_driver_sdmmc and wear_levelling re-included in the IDF build, long names on,
-       VFS directories on), find sky_tracker_firmware_<anything>.bin in the root (any case;
-       the highest <anything> by version order), check the image header (0xE9, ESP32-S3,
+       VFS directories on), find sky-tracker-esp32s3.ota.bin (the release asset's name) in the root (any case;
+       its version is read from the app descriptor, 48 bytes in, which the build fills with fw_version; older images: from the "Project <name> version <ver>" text in the first 256 KB), check the image header (0xE9, ESP32-S3,
        app descriptor of the same project, not the running build's ELF SHA-256), unmount.
        Then a modal over everything (lv_layer_top, screen dimmed): "Firmware update",
        "On the card: <ver>", "Installed: <ver>", the file name; Not now / Update. Not now
