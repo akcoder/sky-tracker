@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Renders the design comps into docs/comps (PNG): the settings tabs (render_settings.py) and, when
+# Renders the design comps into docs/comps (PNG, not checked in): the settings tabs (render_settings.py) and, when
 # ./t4 has written them, the boot-screen launch and the test suite's screen renders (out/renders,
-# into docs/comps/renders), all drawn on the cached CelesTrak lists (RENDER_REAL=1). Needs Pillow.
+# into docs/renders, which is checked in), all drawn on the cached CelesTrak lists (RENDER_REAL=1). Needs Pillow.
 set -euo pipefail
 cd "$(dirname "$0")"
 ./fetch_images.py >/dev/null || true   # the real Sun, Moon, Earth, planets (and comets)
@@ -34,10 +34,11 @@ if fs:
     sheet.save(f"{out}/splashdown_strip.png")
     fr = [Image.open(f).convert("P", palette=Image.ADAPTIVE, colors=128) for f in fs[::2]]
     fr[0].save(f"{out}/splashdown.gif", save_all=True, append_images=fr[1:], duration=66, loop=0, optimize=True)
-os.makedirs(f"{out}/renders", exist_ok=True)
+rdir = "../../docs/renders"
+os.makedirs(rdir, exist_ok=True)
 n = 0
 for f in sorted(glob.glob("out/renders/*.ppm")):  # the test suite's screens (./t4)
-    Image.open(f).save(f"{out}/renders/" + os.path.basename(f)[:-4] + ".png", optimize=True)
+    Image.open(f).save(f"{rdir}/" + os.path.basename(f)[:-4] + ".png", optimize=True)
     n += 1
 print("comps:", sorted(os.listdir(out)), f"+ {n} renders")
 PY

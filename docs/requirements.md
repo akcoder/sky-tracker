@@ -1528,10 +1528,10 @@ FAIL-10 Crash capture (sky_diag.h): ESPHome's crash handler keeps the last panic
        was lost at the next launch-list save.
 
 ## 9. Verification (VER)
-VER-3  Design comps live in docs/comps (PNG/GIF), rendered by tools/host_test/make_comps.sh:
+VER-3  Design comps are made in docs/comps (PNG/GIF, not checked in), rendered by tools/host_test/make_comps.sh:
        the settings tabs by render_settings.py (the page's LVGL calls lifted from ESPHome's
        generated main.cpp, LVGL built with ESPHome's lv_conf.h, fonts rebuilt from the YAML),
-       the boot launch (BOOT_GIF=1) and the test suite's screens (docs/comps/renders), drawn on
+       the boot launch (BOOT_GIF=1) and the test suite's screens (docs/renders), drawn on
        the cached CelesTrak lists (RENDER_REAL=1; fake data where CelesTrak refuses). The checks
        run separately on the test data.
        Pictures are the real ones (tools/host_test/fetch_images.py: GOES SUVI, Dial-A-Moon
