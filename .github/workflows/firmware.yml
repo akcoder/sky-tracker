@@ -90,7 +90,7 @@ jobs:
           mkdir -p site
           cp -r "$(dirname "$manifest")"/* site/
           rm -f site/*.elf   # debug symbols: not needed to install (kept in the build artifact)
-          cp docs/index.html docs/logo.svg docs/img/screens.png docs/img/launch.gif site/   # the install page
+          cp docs/index.html docs/logo.svg docs/renders/screens.png docs/renders/launch.gif site/   # the install page
           ls -la site
           cat site/manifest.json
       - uses: actions/upload-pages-artifact@v3

@@ -8,7 +8,7 @@ orbit math on the chip. From the internet it only needs fresh orbital elements a
 couple of times a day, plus a few small feeds (space weather, launches) and the
 pictures you ask for.
 
-![Sky map, Jupiter, About](docs/img/screens.png)
+![Sky map, Jupiter, About](docs/renders/screens.png)
 
 *Screens from the desktop test build, with test data.*
 
@@ -41,7 +41,7 @@ pictures you ask for.
   turn it off with the Launch Animation switch); ISS undockings and splashdowns
   get their own animations:
 
-  ![Launch animation](docs/img/launch.gif)
+  ![Launch animation](docs/renders/launch.gif)
 - **Home Assistant.** ISS overhead, next pass, aurora chance, solar wind and
   more show up as entities. Location, heading and layers can be set from HA,
   the touch screen, or the built-in web page.

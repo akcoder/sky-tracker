@@ -1,6 +1,6 @@
 # Renders
 
-Every screen of the firmware, drawn by the desktop test build (`tools/host_test`, `make_comps.sh`) from the real UI code, on test data. Each is 480×480, the panel's size.
+Every screen of the firmware, drawn by the desktop test build (`tools/host_test`, `make_comps.sh`) from the real UI code, on test data. Each is 480×480, the panel's size. `screens.png` and `launch.gif` are the pictures used by the project README and the install page.
 
 | | |
 |---|---|
