@@ -64,12 +64,13 @@ pictures you ask for.
 
 ### Flash it
 
-The firmware is built by GitHub Actions on every release and published at
-[akcoder.github.io/sky-tracker](https://akcoder.github.io/sky-tracker/), a page that
-installs it from a browser: plug the panel in over USB (Chrome or Edge) and press
-**Install**. To build it yourself, take
-[`sky-tracker.yaml`](sky-tracker.yaml) into the ESPHome Builder (it pulls the C++
-from this repo on its own), plug the panel in over USB and install.
+**From a browser.** Plug the panel in over USB and open
+[akcoder.github.io/sky-tracker](https://akcoder.github.io/sky-tracker/), then press
+**Install**. Chrome or Edge on a desktop; Web Serial isn't available in Safari or on
+a phone.
+
+**From source.** Put [`sky-tracker.yaml`](sky-tracker.yaml) in the ESPHome Builder
+and install over USB. It pulls the C++ from this repo on its own.
 
 ### Wi-Fi
 
