@@ -8,7 +8,23 @@
 #include <cstring>
 #include <initializer_list>
 #include "sky_picons.h"  // the firmware's planet and alignment pictures
+#define SAT_HOST_TEST
+#define SKY_IMPL
+namespace sat { double sat_host_now = 0; }  // the meteor animation reads the host clock
+#define ESP_LOGW(tag, fmt, ...) printf("W [%s] " fmt "\n", tag, ##__VA_ARGS__)
+namespace sat {  // sat_tracker.h's fmt_dur (UI-17a), which sky_about.h's device text calls; that header is too big to pull in
+inline void fmt_dur(double s, char *buf, size_t n) {
+  const int m = (int) (s / 60.0);
+  if (m >= 24 * 60) snprintf(buf, n, "%dd %dh", m / 1440, (m % 1440) / 60);
+  else if (m >= 60) snprintf(buf, n, "%dh %dm", m / 60, m % 60);
+  else if (s >= 60) snprintf(buf, n, "%dm", m);
+  else snprintf(buf, n, "%ds", (int) s);
+}
+}  // namespace sat
+#include "sky_about.h"  // the About page's logo and device text
+#include "fonts_gen.inc"
 #include "settings_gen.inc"
+#include "about_gen.inc"
 
 static uint16_t fb[480 * 480];
 static void flush(lv_display_t *d, const lv_area_t *a, uint8_t *px) {
@@ -36,6 +52,18 @@ static void image(lv_obj_t *parent, const lv_image_dsc_t *d, int x, int y) {
   lv_obj_remove_style_all(i);
   lv_image_set_src(i, d);
   lv_obj_set_pos(i, x, y);
+}
+static void save(const char *fn) {
+  FILE *f = fopen(fn, "wb");
+  fprintf(f, "P6 480 480 255\n");
+  for (int i = 0; i < 480 * 480; i++) {
+    const uint16_t c = (uint16_t) ((fb[i] >> 8) | (fb[i] << 8));  // LV_COLOR_16_SWAP (lv_conf.h)
+    const unsigned char rgb[3] = {(unsigned char) ((c >> 11) << 3), (unsigned char) (((c >> 5) & 63) << 2),
+                                  (unsigned char) ((c & 31) << 3)};
+    fwrite(rgb, 1, 3, f);
+  }
+  fclose(f);
+  printf("%s\n", fn);
 }
 static void on(lv_obj_t *o, bool v) {
   if (v)
@@ -125,5 +153,21 @@ int main(int argc, char **argv) {
       }
     }
   }
+  // the About page (UI-67): the YAML's widgets, the logo and device text as the firmware fills them
+  lv_obj_t *about = lv_obj_create(nullptr);
+  build_about(about);
+  lv_screen_load(about);
+  sat::logo_show(about_logo, 112);
+  lv_label_set_text(about_built, "ESPHome 2026.9.1, built Oct 10 2026");
+  char b[200];
+  sat::about_device_text(b, sizeof(b), "sky-tracker-9cad68", "192.168.1.42", "home-wifi", -51, "34:85:18:9C:AD:68", 3 * 3600 + 12 * 60);
+  lv_label_set_text(about_dev, b);
+  ms += 1000;
+  lv_timer_handler();
+  lv_obj_invalidate(about);
+  lv_refr_now(disp);
+  char fn[512];
+  snprintf(fn, sizeof(fn), "%s/about.ppm", dir);
+  save(fn);
   return 0;
 }
