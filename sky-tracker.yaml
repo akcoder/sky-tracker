@@ -2134,10 +2134,17 @@ lvgl:
       pad_bottom: 8
       on_load:
         - lambda: lv_obj_scroll_to_y(lv_obj_get_parent(id(list_table)->obj), 0, LV_ANIM_OFF);
-      on_click:
-        - lvgl.page.next:
-            animation: FADE_IN
-            time: 200ms
+      on_click:                  # UI-10: a tap on a row opens its card on the map, elsewhere the page flips
+        - if:
+            condition:
+              lambda: return sat::list_tap();
+            then:
+              - lvgl.page.show: sky_page
+              - lambda: sat::list_open();
+            else:
+              - lvgl.page.next:
+                  animation: FADE_IN
+                  time: 200ms
       widgets:
         - table:                 # UI-10: columns and row colours set in sat::list_build / draw_list
             id: list_table

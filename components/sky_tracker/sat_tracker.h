@@ -332,6 +332,9 @@ struct Ui {
   std::vector<GeoPt> geo_pts;
   lv_area_t geo_area{0, 0, -1, -1};
   Marker geo_sel;  // UI-28: the tapped GEO satellite, for the details card
+  Marker list_sel;  // UI-10: a satellite picked from the list that has no marker on the map
+  std::vector<int8_t> row_sel_kind;   // UI-10: what each list row opens (K_* selection, -1: nothing)
+  std::vector<int32_t> row_sel_id;
   bool stars_on = true, stars_dusk = true;  // stars_dusk: only after civil twilight
   bool stars_shown = false;
   bool net_down = false;          // NET-8: Wi-Fi was down on the last schedule() call
@@ -2433,8 +2436,10 @@ inline void draw_list(double t) {
   };
   std::vector<Cells> rows;
   std::vector<uint8_t> kinds;
+  std::vector<int8_t> sel_kind;  // UI-10: what a tap on the row opens
+  std::vector<int32_t> sel_id;
   auto add = [&](uint8_t k, const char *ic, const char *a, const char *b, const char *cl, const char *c, const char *d,
-                 const char *e) {
+                 const char *e, int sk = -1, int32_t sid = 0) {
     Cells x;
     const char *v[7] = {ic, a, b, cl, c, d, e};
     for (int i = 0; i < 7; i++) {
@@ -2443,6 +2448,8 @@ inline void draw_list(double t) {
     }
     rows.push_back(x);
     kinds.push_back(k);
+    sel_kind.push_back((int8_t) sk);
+    sel_id.push_back(sid);
   };
   char dir[16], el[16], alt[16];
   auto fmt_pos = [&](geo::AzEl a) {
@@ -2454,7 +2461,7 @@ inline void draw_list(double t) {
     fmt_pos(ui.iss_azel);
     snprintf(alt, sizeof(alt), "%.0f %s", dist(live.iss.alt_km), dist_unit());
     if (ui.stations_on)  // UI-52b
-      add(RK_ISS, ICON_ISS, "ISS", "ISS", "LEO", dir, el, alt);
+      add(RK_ISS, ICON_ISS, "ISS", "ISS", "LEO", dir, el, alt, ui.iss.up ? K_ISS : -1, ui.iss.id);  // (below the horizon it has no card)
   } else {
     if (ui.stations_on)  // UI-52b
       add(RK_ISS, ICON_ISS, "ISS", "", "", "no data", "", "");
@@ -2464,15 +2471,15 @@ inline void draw_list(double t) {
     fmt_pos(a);
     snprintf(alt, sizeof(alt), "%.0f %s", dist(ui.css.rec.alt_km), dist_unit());
     if (ui.stations_on)  // UI-52b
-      add(RK_CSS, ICON_ISS, "Tiangong", "CN", "LEO", dir, el, alt);
+      add(RK_CSS, ICON_ISS, "Tiangong", "CN", "LEO", dir, el, alt, K_CSS, ui.css.id);
   }
   fmt_pos(ui.sm.sun);
   snprintf(alt, sizeof(alt), "%.2f AU", planets::sun_dist_au(astro::jd(t)));  // UI-36b
-  add(RK_SUN, ICON_SUN, "Sun", "", "STR", dir, el, alt);  // UI-40b: star
+  add(RK_SUN, ICON_SUN, "Sun", "", "STR", dir, el, alt, K_SUN, 0);  // UI-40b: star
   fmt_pos(ui.sm.moon);
   char lit[16];
   snprintf(lit, sizeof(lit), "%.0f%% lit", ui.sm.moon_illum * 100.0f);
-  add(RK_MOON, ICON_MOON, "Moon", "", "LUN", dir, el, lit);  // lunar
+  add(RK_MOON, ICON_MOON, "Moon", "", "LUN", dir, el, lit, K_MOON, 0);  // lunar
   // UI-40b: planets above the horizon, highest first, distance in the last column
   if (ui.planets_on) {
     int order[planets::N_PLANETS], n = 0;
@@ -2489,7 +2496,7 @@ inline void draw_list(double t) {
       (void) c;
       fmt_pos(ui.planet_azel[p]);
       snprintf(alt, sizeof(alt), "%.2f AU", ps.dist_au);
-      add((uint8_t) ((int) RK_PLANET + p), "\xF3\xB0\x80\x98", planets::name(p), "", "PL", dir, el, alt);  // mdi:orbit
+      add((uint8_t) ((int) RK_PLANET + p), "\xF3\xB0\x80\x98", planets::name(p), "", "PL", dir, el, alt, K_PLANET, p);  // mdi:orbit
     }
   }
   // UI-63: comets on the map (brightest first)
@@ -2498,13 +2505,14 @@ inline void draw_list(double t) {
       continue;
     fmt_pos(ui.comet_azel[k]);
     snprintf(alt, sizeof(alt), "mag %.1f", ui.comet_mag[k]);
-    add(RK_COMET, ICON_COMET, live.comet_list[ui.comet_idx[k]].tag, "", "CM", dir, el, alt);
+    add(RK_COMET, ICON_COMET, live.comet_list[ui.comet_idx[k]].tag, "", "CM", dir, el, alt, K_COMET, ui.comet_idx[k]);
   }
 
   // UI-54: the next two launches in the next two days: rocket, direction of the site, countdown
   {
     int n = 0;
-    for (const auto &l : live.launches) {
+    for (int li = 0; li < (int) live.launches.size(); li++) {
+      const auto &l = live.launches[li];
       if (n >= 2 || !launch_pending(l) || l.net < t - 900 || l.net - t > 2 * 86400.0)
         continue;
       float brg = 0;
@@ -2517,7 +2525,7 @@ inline void draw_list(double t) {
         snprintf(d, sizeof(d), "%s %.0f\xC2\xB0", compass(brg), brg);
       else
         d[0] = 0;
-      add(RK_LAUNCH, "\xF3\xB1\x93\x9E", nm, "", "RKT", d, "", alt);
+      add(RK_LAUNCH, "\xF3\xB1\x93\x9E", nm, "", "RKT", d, "", alt, K_INFO, li);
       n++;
     }
   }
@@ -2543,7 +2551,7 @@ inline void draw_list(double t) {
     fmt_pos({sat_rows[i].az, sat_rows[i].el});
     snprintf(alt, sizeof(alt), "%.0f %s", dist(r.alt_km), dist_unit());
     snprintf(name, sizeof(name), "%.15s", r.name);
-    add(RK_SAT, card_icon_for(K_SAT, r), name, r.cc, orbit_class(r.cls), dir, el, alt);
+    add(RK_SAT, card_icon_for(K_SAT, r), name, r.cc, orbit_class(r.cls), dir, el, alt, K_SAT, r.id);
   }
   if (sat_shown < sat_n) {
     snprintf(more, sizeof(more), "+ %d more", sat_n - sat_shown);
@@ -2554,7 +2562,7 @@ inline void draw_list(double t) {
     fmt_pos({geo_rows[i].az, geo_rows[i].el});
     snprintf(alt, sizeof(alt), "%.0f %s", dist(r.alt_km), dist_unit());
     snprintf(name, sizeof(name), "%.15s", r.name);
-    add(RK_SAT, card_icon_for(K_GEO, r), name, r.cc, "GEO", dir, el, alt);
+    add(RK_SAT, card_icon_for(K_GEO, r), name, r.cc, "GEO", dir, el, alt, K_GEO, r.id);
   }
   if (geo_shown < geo_n) {
     snprintf(more, sizeof(more), "+ %d GEO", geo_n - geo_shown);
@@ -2565,7 +2573,7 @@ inline void draw_list(double t) {
     fmt_pos({sl_rows[i].az, sl_rows[i].el});
     snprintf(alt, sizeof(alt), "%.0f %s", dist(r.alt_km), dist_unit());
     snprintf(name, sizeof(name), "%.15s", r.name);
-    add(RK_STARLINK, card_icon_for(K_STARLINK, r), name, r.cc, "LEO", dir, el, alt);
+    add(RK_STARLINK, card_icon_for(K_STARLINK, r), name, r.cc, "LEO", dir, el, alt, K_STARLINK, r.id);
   }
   if (sl_shown < sl_n) {
     snprintf(more, sizeof(more), "+ %d Starlink", sl_n - sl_shown);
@@ -2578,6 +2586,8 @@ inline void draw_list(double t) {
       if (cur == nullptr || strcmp(cur, rows[r].c[c]) != 0)
         lv_table_set_cell_value(tb, r, c, rows[r].c[c]);
     }
+  ui.row_sel_kind = std::move(sel_kind);
+  ui.row_sel_id = std::move(sel_id);
   if (kinds != ui.row_kind) {
     ui.row_kind = kinds;
     lv_obj_invalidate(tb);
@@ -3037,7 +3047,23 @@ inline Marker *find_marker(int kind, int32_t id) {
   auto &slots = kind == K_SAT ? ui.sat_slot : ui.starlink_slot;
   auto &pool = kind == K_SAT ? ui.sats : ui.starlink;
   auto it = slots.find(id);
-  return it == slots.end() ? nullptr : &pool[it->second];
+  if (it != slots.end())
+    return &pool[it->second];
+  // UI-10: a row of the list that the map has no marker for (the pools are limited): a scratch marker
+  const auto &src = kind == K_SAT ? live.sats : live.starlink;
+  for (const auto &r : src)
+    if (r.id == id) {
+      const geo::AzEl a = geo::azel(ui.obs, geo::sat_ecef(r, clock_now()));
+      float x, y;
+      project(a, x, y);
+      ui.list_sel.rec = r;
+      ui.list_sel.id = id;
+      ui.list_sel.dx = (int) lroundf(x);
+      ui.list_sel.dy = (int) lroundf(y);
+      ui.list_sel.up = a.el >= 0;
+      return &ui.list_sel;
+    }
+  return nullptr;
 }
 
 // ================================================================== UI-36 Sun / Moon
@@ -6532,6 +6558,65 @@ inline void sky_click_cb(lv_event_t *e) {
 }
 
 inline void card_click_cb(lv_event_t *) { deselect(); }
+
+// UI-10: a tap on a list row opens that object's details card on the map. list_pick (the row under y)
+// notes the choice and says whether the row opens anything; list_open, called once the map page is
+// showing, opens it. A tap on the header or a "+ N more" line is not a pick: the page flips as before.
+inline int list_pick_kind = -1;
+inline int32_t list_pick_id = 0;
+inline bool list_pick(int y) {
+  lv_obj_t *tb = ui.w.list;
+  const int n = (int) ui.row_sel_kind.size();
+  list_pick_kind = -1;
+  if (tb == nullptr || n < 2)
+    return false;
+  lv_area_t a;
+  lv_obj_get_coords(tb, &a);
+  const int total = a.y2 - a.y1 + 1;
+  if (total <= 0 || y < a.y1 || y > a.y2)
+    return false;
+  const int row = (int) ((int64_t) (y - a.y1) * n / total);
+  if (row < 0 || row >= n || ui.row_sel_kind[row] < 0)
+    return false;
+  list_pick_kind = ui.row_sel_kind[row];
+  list_pick_id = ui.row_sel_id[row];
+  return true;
+}
+inline bool list_tap() {
+  lv_indev_t *in = lv_indev_active();
+  if (in == nullptr)
+    return false;
+  lv_point_t p;
+  lv_indev_get_point(in, &p);
+  return list_pick(p.y);
+}
+inline void list_open() {
+  if (list_pick_kind < 0)
+    return;
+  const int kind = list_pick_kind;
+  const int32_t id = list_pick_id;
+  list_pick_kind = -1;
+  if (ui.scrub_on)
+    scrub_close();
+  if (kind == K_INFO) {  // a launch: its details card, as from the alert
+    if (id < 0 || id >= (int) live.launches.size())
+      return;
+    const auto &l = live.launches[id];
+    Alert a;
+    memset(&a, 0, sizeof(a));
+    snprintf(a.text, sizeof(a.text), "%s", l.rocket[0] ? l.rocket : l.name);
+    a.col = C_LAUNCH;
+    a.glyph = "\xF3\xB1\x93\x9E";
+    a.kind = -1;
+    a.info = AI_LAUNCH;
+    a.idx = (int16_t) id;
+    a.flag = l.cc[0] ? card_flag_for(l.cc) : nullptr;
+    info_alert = a;
+    select_object(K_INFO, 0);
+    return;
+  }
+  select_object(kind, id);
+}
 
 inline void card_build() {
   lv_obj_t *sky = ui.w.sky;

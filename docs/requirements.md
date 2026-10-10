@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.36 (unreleased): a tap on a row of the list opens that object's details card on the map (UI-10); built with ESPHome 2026.9.1.
 - 4.6.35 (queued): all firmware installs (GitHub, web upload, microSD) share one card with a progress bar and no percentage (UI-12). An install page at akcoder.github.io/sky-tracker, flashing over USB from the browser.
 - 4.6.34 (installed): the microSD card update looks for sky-tracker-esp32s3.ota.bin, the release's own file name, instead of sky_tracker_firmware_<version>.bin; the version shown is read from the image's app descriptor, where the build now stores fw_version (older images: from the project text inside) (UI-66). The list page scrolls instead of stopping at 18 rows with "+ N more" (UI-10).
 - 4.6.33 (queued): a re-entry plays as a random fireball across the sky view when its estimated time comes (UI-79). The countdown's "WEBCAST LIVE" shows a QR code to the webcast (UI-80). The web UI's logo links to the GitHub page (NET-1). HA: the satellite counts show as whole numbers, not "18.0", and Data Status no longer changes every minute. The Firmware entity has an icon. Re-entry cards say "+/-" (was a box), and cards with no button no longer leave space for one.
@@ -381,7 +382,11 @@ UI-9   Footer: the ISS direction, height and sunlit state, then the next pass wi
 UI-10  The list page MUST show a row for every object, in this order: header, ISS,
        Tiangong, Sun, Moon, planets, comets, the next launches; then satellites
        sorted by elevation, GEO, and the Starlink in the cone. The page scrolls
-       vertically (drag; a tap still flips the page, and it opens at the top). Only
+       vertically (drag, and it opens at the top). A tap on a row shows the page of the map
+       with that object's details card open (ISS and Tiangong while above the horizon, Sun, Moon,
+       planet, comet, satellite, Starlink, GEO, launch); a satellite the map has no marker for
+       gets its card from its record. A tap on the header, a "+ N more" line or empty space
+       flips the page as before. Only
        a sanity limit of 400 rows ends the list, with a "+ N more" line. The list
        sorts a copy.
 UI-11  Palette (4.3.2): pages are black (#000000, PAGE_BG); the sky disc is a deep,

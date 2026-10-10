@@ -496,6 +496,63 @@ int main() {
   lv_screen_load(page2);
   lv_refr_now(disp);
   save_ppm(OUT_DIR "/renders/r4_list.ppm");
+  {  // UI-10: a tap on a list row opens that object's card; the header and "+ N more" do not
+    lv_area_t la;
+    lv_obj_get_coords(sat::ui.w.list, &la);
+    const int n = (int) sat::ui.row_sel_kind.size(), total = la.y2 - la.y1 + 1;
+    auto row_y = [&](int r) { return la.y1 + (int) ((r + 0.5) * total / n); };
+    CHECK(n > 5 && n == (int) sat::ui.row_kind.size(), "list row map (%d rows)", n);
+    CHECK(!sat::list_pick(row_y(0)), "header row opens nothing");
+    int tested = 0, scratch = 0;
+    for (int r = 1; r < n; r++) {
+      const int k = sat::ui.row_sel_kind[r];
+      if (k < 0 || k == sat::K_INFO)
+        continue;
+      const bool in_pool = (k == sat::K_SAT && sat::ui.sat_slot.count(sat::ui.row_sel_id[r])) ||
+                           (k == sat::K_STARLINK && sat::ui.starlink_slot.count(sat::ui.row_sel_id[r]));
+      const bool pooled_kind = k == sat::K_SAT || k == sat::K_STARLINK;
+      if (pooled_kind && in_pool && tested > 12)
+        continue;
+      CHECK(sat::list_pick(row_y(r)), "row %d is a pick", r);
+      sat::list_open();
+      CHECK(sat::card_open() && sat::ui.sel_kind == k && sat::ui.sel_id == sat::ui.row_sel_id[r],
+            "row %d (kind %d) opens its card (sel %d)", r, k, sat::ui.sel_kind);
+      if (pooled_kind && !in_pool)
+        scratch++;
+      sat::deselect();
+      tested++;
+      if (tested > 40)
+        break;
+    }
+    printf("list rows opened: %d (%d satellites without a map marker)\n", tested, scratch);
+    for (int r = 1; r < n && scratch == 0; r++) {  // a satellite the map has no marker for: the card comes from its record
+      if (sat::ui.row_sel_kind[r] != sat::K_SAT)
+        continue;
+      const int32_t id = sat::ui.row_sel_id[r];
+      auto it = sat::ui.sat_slot.find(id);
+      if (it == sat::ui.sat_slot.end())
+        continue;
+      const auto saved = *it;
+      sat::ui.sat_slot.erase(it);
+      CHECK(sat::list_pick(row_y(r)), "unmarked row is a pick");
+      sat::list_open();
+      CHECK(sat::card_open() && sat::ui.sel_kind == sat::K_SAT && sat::ui.sel_id == id, "satellite without a marker opens its card");
+      sat::deselect();
+      sat::ui.sat_slot.insert(saved);
+      scratch++;
+      printf("unmarked satellite %d opened its card\n", id);
+    }
+    for (int r = 1; r < n; r++)  // a launch row opens the launch's details card
+      if (sat::ui.row_sel_kind[r] == sat::K_INFO) {
+        CHECK(sat::list_pick(row_y(r)), "launch row is a pick");
+        sat::list_open();
+        CHECK(sat::card_open() && sat::ui.sel_kind == sat::K_INFO && sat::info_alert.info == sat::AI_LAUNCH, "launch row opens its card");
+        sat::deselect();
+        printf("launch row opened\n");
+        break;
+      }
+    CHECK(tested > 5, "list rows tested (%d)", tested);
+  }
   lv_screen_load(page1);
 
   // error: CelesTrak refuses; the old data stays and the status says so
