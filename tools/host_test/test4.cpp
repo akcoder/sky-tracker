@@ -1911,19 +1911,19 @@ int main() {
         const std::string jpg = slurp(kind == 0 ? HOST_DIR "/fixtures/moon_test.jpg" : HOST_DIR "/fixtures/earth_test.jpg");
         static uint16_t acc[N * N * 3];
         // reference: decoded at the end, then the round edge on the whole picture
-        const char *e1 = kind == 0 ? skyjpg::decode_half((const uint8_t *) jpg.data(), jpg.size(), a, N, N)
-                                   : skyjpg::decode_fit((const uint8_t *) jpg.data(), jpg.size(), a, N, N, acc);
+        const char *e1 = kind == 0 ? tracker::jpg::decode_half((const uint8_t *) jpg.data(), jpg.size(), a, N, N)
+                                   : tracker::jpg::decode_fit((const uint8_t *) jpg.data(), jpg.size(), a, N, N, acc);
         net::round_mask(a, N, kind == 0 ? 166 : 176, 180);
         // streamed: the row callback masks and records
         rec = Rec{b, 0, true, 0, kind == 0 ? "moon" : "earth"};
         static Both both;
         both = Both{&rec, masked_rows, on_rows};
-        skyjpg::Stream st;
+        tracker::jpg::Progress st;
         st.rows = [](int upto, void *ctx) { Both *x = (Both *) ctx; x->a(upto, x->r); x->b(upto, x->r); };
         st.ctx = &both;
         for (int i = 0; i < N * N; i++) b[i] = 0x0863;
-        const char *e2 = kind == 0 ? skyjpg::decode_half((const uint8_t *) jpg.data(), jpg.size(), b, N, N, nullptr, nullptr, &st)
-                                   : skyjpg::decode_fit((const uint8_t *) jpg.data(), jpg.size(), b, N, N, acc, nullptr, nullptr, 1.0f, 0, false, &st);
+        const char *e2 = kind == 0 ? tracker::jpg::decode_half((const uint8_t *) jpg.data(), jpg.size(), b, N, N, &st)
+                                   : tracker::jpg::decode_fit((const uint8_t *) jpg.data(), jpg.size(), b, N, N, acc, &st);
         CHECK(!e1 && !e2 && rec.order && rec.last == N, "%s streams top down to the last row (%d)", rec.tag, rec.last);
         CHECK(!memcmp(a, b, sizeof(a)), "%s: streamed picture = decoded at the end", rec.tag);
         CHECK(!memcmp(snap, b, sizeof(a)), "%s: each row final when reported", rec.tag);

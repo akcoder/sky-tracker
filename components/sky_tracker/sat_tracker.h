@@ -6124,8 +6124,9 @@ inline bool planet_photo_ready(int p) {
     planet_src[k] = bg;
   const int ox = (net::IMG_PX - ph.w) / 2, oy = p == planets::JUPITER ? 6 : (net::IMG_PX - ph.h) / 2;
   const int64_t t0 = ui_us();
-  if (const char *e = skyjpg::decode_copy(ph.data, ph.len, planet_src + (size_t) oy * net::IMG_PX + ox, net::IMG_PX,
-                                          ph.w, ph.h)) {
+  static uint8_t pool[tracker::jpg::POOL_SIZE] __attribute__((aligned(4)));  // the UI's own (not the net task's)
+  if (const char *e = tracker::jpg::decode_copy(ph.data, ph.len, planet_src + (size_t) oy * net::IMG_PX + ox,
+                                                net::IMG_PX, ph.w, ph.h, nullptr, pool)) {
     ESP_LOGW(UI_TAG, "planet %d photo: %s", p, e);
     planet_src_of = -1;
     return false;

@@ -12,6 +12,11 @@ mkdir -p "$DEPS" out/renders build/lvgl
 [ -f fixtures/saturn_test.jpg ] || python3 gen_fixtures.py  # synthetic picture fixtures (needs Pillow)
 [ -d "$DEPS/lvgl" ] || git clone -q --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl "$DEPS/lvgl"
 [ -d "$DEPS/ArduinoJson" ] || git clone -q --depth 1 -b v7.4.3 https://github.com/bblanchon/ArduinoJson "$DEPS/ArduinoJson"
+# tracker-common (shared with f1-tracker, tag v0.2.1 in the YAML): the sibling checkout, or TRACKER_COMMON=<dir>
+TC=${TRACKER_COMMON:-$(cd ../../.. && pwd)/tracker-common}
+[ -d "$TC/components/tracker_common" ] || { echo "tracker-common not found at $TC (set TRACKER_COMMON)"; exit 1; }
+mkdir -p "$DEPS/tc_inc/esphome/components"
+ln -sfn "$TC/components/tracker_common" "$DEPS/tc_inc/esphome/components/tracker_common"
 CC=${CC:-cc}
 CXX=${CXX:-c++}
 JOBS=${JOBS:-8}
@@ -29,7 +34,7 @@ for f in mdi14 mdi20 mdi40 roboto34 mono16 mono18 mono24 tjpg/tjpgd; do
   [ -f "$o" ] && [ "$o" -nt $f.c ] || $CC $CFLAGS -c $f.c -o "$o"
 done
 echo "building t4..."
-$CXX -std=gnu++20 $CFLAGS -Istubs -Itjpg -I$DEPS/ArduinoJson/src -I../../components/sky_tracker test4.cpp \
+$CXX -std=gnu++20 $CFLAGS -Istubs -I$DEPS/tc_inc -DTRACKER_HOST_TEST -Itjpg -I$DEPS/ArduinoJson/src -I../../components/sky_tracker test4.cpp \
   build/mdi14.o build/mdi20.o build/mdi40.o build/roboto34.o build/mono16.o build/mono18.o build/mono24.o build/tjpgd.o \
   build/liblvgl.a -lm -lpthread -lz -o t4
 if [ "${1:-}" = run ]; then ./t4; fi

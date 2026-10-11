@@ -224,7 +224,14 @@ external_components:
       url: https://github.com/akcoder/sky-tracker
       ref: main
     components: [sky_tracker]
+  - source:                    # the pieces shared with f1-tracker; a tag, so a change there cannot break this build
+      type: git
+      url: https://github.com/akcoder/tracker-common
+      ref: v0.2.1
+    components: [tracker_common]
+    refresh: 1d
 sky_tracker:
+tracker_common:
 
 psram:
   mode: octal

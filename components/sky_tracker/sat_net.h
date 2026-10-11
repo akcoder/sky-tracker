@@ -47,7 +47,7 @@
 
 #include "sky_math.h"
 #include "sky_png.h"
-#include "sky_jpg.h"
+#include "esphome/components/tracker_common/tracker_jpg.h"  // shared with f1-tracker
 #include "sgp4.h"
 #include "sky_comets.h"
 #include "sky_photos.h"
@@ -2706,6 +2706,10 @@ inline void img_prog_fill(uint16_t *work, int kind) {
 // "jpgdec" task reads the buffer as it fills (waiting at its end), and each finished row gets
 // its round edge at once, so the rows shown are the final picture. The host tests decode once
 // the download is in (start() is not called there), through the same row code.
+// TJpgDec's work area: one 4 KB buffer for the net task's decodes (the "jpgdec" task, or the net task
+// itself, never both at once), where the stack of that 6 KB task could not hold it. The UI's decode
+// (a planet photo, sat_tracker.h) has its own. 8 KB of internal RAM held, from 12 KB before.
+inline uint8_t jpg_pool[tracker::jpg::POOL_SIZE] __attribute__((aligned(4)));
 struct JpgStream {
   const uint8_t *jpg = nullptr;
   uint16_t *work = nullptr, *acc = nullptr;
@@ -2731,7 +2735,7 @@ struct JpgStream {
 #endif
   }
   void run(size_t len, bool streaming) {
-    skyjpg::Stream st;
+    tracker::jpg::Progress st;
     if (streaming) {
       st.have = &have;
       st.eof = &eof;
@@ -2739,8 +2743,8 @@ struct JpgStream {
     st.rows = rows_cb;
     st.ctx = this;
     masked = 0;
-    err = half ? skyjpg::decode_half(jpg, len, work, IMG_PX, IMG_PX, &w, &h, &st)
-               : skyjpg::decode_fit(jpg, len, work, IMG_PX, IMG_PX, acc, &w, &h, keep, 0, false, &st);
+    err = half ? tracker::jpg::decode_half(jpg, len, work, IMG_PX, IMG_PX, &st, &w, &h, jpg_pool)
+               : tracker::jpg::decode_fit(jpg, len, work, IMG_PX, IMG_PX, acc, &st, &w, &h, keep, 0, false, jpg_pool);
     done = true;
   }
 #ifndef SAT_HOST_TEST
@@ -3124,7 +3128,8 @@ inline const char *planet_image(ImageInfo &info, uint16_t *work, char *e, size_t
   const int ox = (IMG_PX - tw) / 2, oy = p == 3 ? 6 : (IMG_PX - th) / 2;
   int w = 0, h = 0;  // decoded straight into its place in the square
   if (const char *de =
-          skyjpg::decode_fit(jp.data, jp.len, work + (size_t) oy * IMG_PX + ox, tw, th, acc, &w, &h, 1.0f, IMG_PX))
+          tracker::jpg::decode_fit(jp.data, jp.len, work + (size_t) oy * IMG_PX + ox, tw, th, acc, nullptr, &w, &h, 1.0f,
+                                   IMG_PX, false, jpg_pool))
     return de;
   ESP_LOGI(TAG, "planet %d photo (built in, %u bytes, %dx%d)", p, (unsigned) jp.len, w, h);
   img_have[IMG_PLANET] = p;
