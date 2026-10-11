@@ -2301,7 +2301,7 @@ lvgl:
         - button:
             id: btn_settings_cancel   # UI-72: pressed after a minute untouched
             x: 240
-            y: 6
+            y: 10
             width: 110
             height: 38
             bg_color: 0x1A2547
@@ -2320,7 +2320,7 @@ lvgl:
               - lvgl.page.show: sky_page
         - button:
             x: 360
-            y: 6
+            y: 10
             width: 110
             height: 38
             bg_color: 0x2D5BD0
