@@ -525,14 +525,23 @@ inline void frame_launch() {
   uint32_t t_b = now_us();
   pf.t_img += t_b - t_a;
   // smoke: a new puff at the tail every DUR/PUFFS while climbing
-  if (u <= 1.0f && (st.last_emit < 0 || ts - st.last_emit >= DUR_S / PUFFS)) {
-    st.last_emit = ts;
-    const float r = (float) (deg * M_PI / 180.0);
-    const int i = st.puff_next++ % PUFFS;
-    st.puff_x[i] = x - std::sin(r) * 1.1f * S;  // behind the nozzle
-    st.puff_y[i] = y + std::cos(r) * 1.1f * S;
-    st.puff_t[i] = ts;
-    st.puff_step[i] = -1;
+  // (one per time slot, at the position the rocket had then: a frame that took long, such as the one that draws the
+  // map when the Wi-Fi page hands over to it, used to leave a gap in the trail where the rocket was crossing)
+  {
+    const float iv = DUR_S / PUFFS;
+    if (st.last_emit < 0)
+      st.last_emit = -iv;  // the first puff is at the pad
+    for (float te = st.last_emit + iv; te <= ts && te <= DUR_S; te += iv) {
+      st.last_emit = te;
+      float xe, ye, de;
+      path(te / DUR_S, xe, ye, de);
+      const float r = (float) (de * M_PI / 180.0);
+      const int i = st.puff_next++ % PUFFS;
+      st.puff_x[i] = xe - std::sin(r) * 1.1f * S;  // behind the nozzle
+      st.puff_y[i] = ye + std::cos(r) * 1.1f * S;
+      st.puff_t[i] = te;
+      st.puff_step[i] = -1;
+    }
   }
   // A puff grows and fades in steps of AGE_STEP rather than every frame: each changed object
   // makes LVGL redraw the sky under it, and past 32 dirty areas a frame redraws the whole

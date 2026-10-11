@@ -2722,8 +2722,11 @@ int main() {
       system("rm -rf " OUT_DIR "/bgif && mkdir -p " OUT_DIR "/bgif");
       rk::play_boot();
       CHECK(rk::playing() && rk::st.banner == nullptr, "boot launch: plays, no banner");
+      const int switch_at = getenv("BOOT_SWITCH") ? atoi(getenv("BOOT_SWITCH")) : -1;  // the map takes over mid-flight, as when Wi-Fi connects
       for (int f = 0; rk::playing(); f++) {
         sat_host_now += 0.033;
+        if (f == switch_at)
+          lv_screen_load(page1);
         lv_refr_now(disp);
         if (!rk::playing())
           break;
@@ -2733,6 +2736,21 @@ int main() {
       }
       lv_screen_load(old);
       lv_obj_delete(scr);
+    }
+    {  // a frame that takes long does not leave a gap in the smoke trail (the map's first draw once took ~1 s)
+      rk::play("Falcon 9 | Gap test");
+      for (int f = 0; f < 20 && rk::playing(); f++) {
+        sat_host_now += 0.033;
+        lv_refr_now(disp);
+      }
+      const int before = rk::st.puff_next;
+      sat_host_now += 1.2;
+      lv_refr_now(disp);
+      CHECK(rk::playing() && rk::st.puff_next - before >= 7, "smoke: a 1.2 s frame still leaves its puffs (%d new)", rk::st.puff_next - before);
+      while (rk::playing()) {
+        sat_host_now += 0.2;
+        lv_refr_now(disp);
+      }
     }
     {  // the banner keeps a long name on one line inside its border
       rk::play("Falcon 9 Block 5 | SDA Tranche 1 Transport Layer A");

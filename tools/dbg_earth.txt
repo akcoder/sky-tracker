@@ -1,0 +1,19 @@
+# the Earth on the Planets tab: the Blue Marble first, then the GOES picture
+reset
+open earth
+wait 2
+state
+wait 3
+perf
+wait 25
+perf
+open planet 3
+wait 6
+perf
+open region
+wait 25
+perf
+open planet 8
+wait 6
+perf
+close
