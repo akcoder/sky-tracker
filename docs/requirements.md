@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.39 (unreleased): the constellation figures and the highlight are drawn above the rings and cross lines (UI-46d).
 - 4.6.38 (queued): touching a constellation's figure on the map shows its details (UI-46c).
 - 4.6.37 (installed): the object a star, deep-sky, radiant or constellation card is for is lit on the map: a ring, or the constellation's whole figure in gold (UI-50b, UI-46b). the list has a Close button and scrolls in a box under the title row, never under Close (UI-10c); the row lines no longer go missing in patches as cells change (UI-10d). the list shows the named stars and the major constellations above the horizon, and a tap opens their cards (UI-10b). the firmware check no longer fails with "sock < 0" or "esp-aes: Failed to allocate memory" when the data task is on the network: it drops its kept connection and waits while the check runs (NET-14). A new Moon is drawn under the Sun's halo instead of in front of it (UI-6a).
 - 4.6.36 (queued): a tap on a row of the list opens that object's details card on the map (UI-10); built with ESPHome 2026.9.1. The launch, undocking and splashdown animations draw over a snapshot of the screen: 21 / 31 / 27 fps on the unit (were 15 / 28 / 18) (UI-69o). Splashdown chutes flutter and are let go, deflate and settle on the sea (UI-69m). Last Animation FPS sensor (PERF-17). The launch animation runs until its smoke has cleared (UI-69). Fixes a crash (abort) when the list was built: its rows now live in persistent PSRAM buffers (FAIL-13).
@@ -1245,6 +1246,10 @@ UI-46b While a constellation's card is open its figure is drawn again over the o
        3 px, in 0xFFC857 (its polylines are the run of sky::FIG starting after those of the names
        before it; each name's polyline count is the first byte of its CFIG record). It goes back when the
        card closes. The card sits on the half of the disc with less of the figure.
+UI-46d The figures, the lit constellation, the stars and the pass arc and trails are drawn by their own
+       object, above the rings and the cross lines (the sky disc's own drawing comes before all its
+       children: the rings and lines were drawn over the figures and the highlight), and below the name
+       tags, the Sun, Moon, planets and markers.
 UI-46c A touch on a constellation's figure (within 9 px of one of its lines) opens its card, as its name tag
        does, when nothing nearer was hit (a satellite, planet, star, name tag win). Only while the map shows
        stars. A touch that finds no figure flips the page as before.

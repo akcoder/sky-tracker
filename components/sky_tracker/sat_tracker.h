@@ -667,6 +667,7 @@ inline lv_obj_t *tag(lv_obj_t *parent, const char *s) {
 // star image: a PSRAM canvas meant every redraw of a moving marker read the image
 // back from PSRAM, and that extra PSRAM traffic starved the RGB panel (garbage lines).
 inline void star_draw_cb(lv_event_t *e);
+inline void fig_draw_cb(lv_event_t *e);  // UI-46d
 inline void star_layer_build(lv_obj_t *sky) {
   if (!ui.star_cb) {
     lv_obj_add_event_cb(sky, star_draw_cb, LV_EVENT_DRAW_MAIN, nullptr);
@@ -801,6 +802,15 @@ inline void ui_build() {
   ring(sky, ui.cx, ui.cy, ui.radius, C_RING);                // horizon
   bar(sky, ui.cx, ui.cy - ui.radius, 1, 2 * ui.radius);
   bar(sky, ui.cx - ui.radius, ui.cy, 2 * ui.radius, 1);
+  {  // UI-46d: the figures, the lit constellation and the stars are drawn by this object, above the rings and
+     // bars (the sky disc's own drawing, star_draw_cb, comes before all its children: the rings and the cross
+     // were drawn over the figures and the highlight)
+    lv_obj_t *fl = plain(sky);
+    lv_obj_set_size(fl, ui.size, ui.size);
+    lv_obj_set_pos(fl, 0, 0);
+    lv_obj_add_event_cb(fl, fig_draw_cb, LV_EVENT_DRAW_MAIN, nullptr);
+    ui.n_deco++;
+  }
   name_tags_build(sky);
   static const char *const NESW[4] = {"N", "E", "S", "W"};
   for (int i = 0; i < 4; i++)
@@ -1815,6 +1825,14 @@ inline void star_draw_cb(lv_event_t *e) {
       }
     }
   }
+}
+// UI-46d: the rest of the star layer, on its own object above the rings and the cross
+inline void fig_draw_cb(lv_event_t *e) {
+  lv_layer_t *layer = lv_event_get_layer(e);
+  lv_area_t box;
+  lv_obj_get_coords(ui.w.sky, &box);
+  const lv_area_t &clip = layer->_clip_area;
+  const int ox = box.x1, oy = box.y1;
   if (!ui.stars_shown) {
     draw_overlays(layer, clip, ox, oy);  // UI-24 arc, UI-26 trails
     return;
