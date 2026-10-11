@@ -1560,7 +1560,7 @@ button:
     web_server:
       sorting_group_id: grp_animations
       sorting_weight: 10
-    icon: mdi:dinosaur
+    icon: mdi:dinosaur-pixel
     on_press:
       - lambda: sat::dino::walk(esphome::millis() * 2654435761u + 12345u);
   - platform: template           # UI-68b: the Settings Upgrade Check, from the web UI and HA
