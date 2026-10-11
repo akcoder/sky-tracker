@@ -2242,6 +2242,35 @@ int main() {
       save_ppm(fnp);
       sat::img_view_close();
     }
+    {  // UI-84: touch the planet: its fact card (each one fits the card); the card goes when touched
+      static const int KINDS[9] = {sat::VIEW_PLANET + sat::planets::MERCURY, sat::VIEW_PLANET + sat::planets::VENUS, sat::net::IMG_EARTH,
+                                   sat::VIEW_PLANET + sat::planets::MARS, sat::VIEW_PLANET + sat::planets::JUPITER,
+                                   sat::VIEW_PLANET + sat::planets::SATURN, sat::VIEW_PLANET + (int) sat::planets::N_PLANETS,
+                                   sat::VIEW_PLANET + (int) sat::planets::N_PLANETS + 1, sat::VIEW_PLANET + (int) sat::planets::N_PLANETS + 2};
+      for (int i = 0; i < 9; i++) {
+        sat::img_view_open_now(KINDS[i]);
+        sat::sv.drawn_at = 0;
+        sat::img_view_update(sat_host_now);
+        CHECK(sat::facts_index(KINDS[i]) == i && sat::sv.facts == nullptr, "fact card %d: none until touched", i);
+        lv_obj_send_event(sat::sv.img, LV_EVENT_CLICKED, nullptr);
+        lv_obj_update_layout(sat::sv.facts);
+        lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
+        const int over = lv_obj_get_scroll_bottom(sat::sv.facts);
+        const char *nm = lv_label_get_text(lv_obj_get_child(sat::sv.facts, 0));
+        printf("fact card %d %s: %d px of text past the card's end\n", i, nm, over);
+        CHECK(sat::sv.facts && !lv_obj_has_flag(sat::sv.facts, LV_OBJ_FLAG_HIDDEN) && !strcmp(nm, sat::facts::get(i).name) && over <= 0,
+              "fact card %s shown, its text fits (%d px over)", nm, over);
+        char fnp[96], lname[24];
+        snprintf(lname, sizeof(lname), "%s", nm);
+        for (char *c = lname; *c; c++)
+          *c = (char) tolower((unsigned char) *c);
+        snprintf(fnp, sizeof(fnp), OUT_DIR "/renders/r26_facts_%d_%s.ppm", i, lname);
+        save_ppm(fnp);
+        lv_obj_send_event(sat::sv.facts, LV_EVENT_CLICKED, nullptr);
+        CHECK(lv_obj_has_flag(sat::sv.facts, LV_OBJ_FLAG_HIDDEN), "fact card %s put away by a touch", nm);
+        sat::img_view_close();
+      }
+    }
     {  // UI-61d: the photos are built in: Venus again with no network body at all
       host_http_bodies.erase("Venus-real_color.jpg");
       host_last_url.clear();

@@ -25,6 +25,8 @@
 #include "sky_planets.h"
 #include "sky_pview.h"
 #include "sky_photos_outer.h"  // Uranus, Neptune, Pluto: pictures only
+#include "sky_photos_icons.h"  // the strip's 40 px pictures of Mercury .. Saturn
+#include "sky_facts.h"  // UI-84
 #include "sky_picons.h"
 #include "sky_lore.h"
 #include "sky_cfig.h"
@@ -6020,7 +6022,8 @@ constexpr int VIEW_PLANET = 10;  // sv.kind: 0..2 photos (net::ImgKind), VIEW_PL
 struct ImgView {
   lv_obj_t *root = nullptr, *img = nullptr, *msg = nullptr, *bar = nullptr, *cap1 = nullptr, *cap2 = nullptr;
   lv_obj_t *tab[4] = {}, *mlab[4] = {}, *east = nullptr, *west = nullptr;
-  lv_obj_t *seg[2] = {};  // UI-62a: Globe / region, under the Earth picture
+  lv_obj_t *seg[2] = {};  // (unused: the Globe | region buttons are gone)
+  lv_obj_t *facts = nullptr;  // UI-84: the fact card over the picture (touch the planet)
   lv_obj_t *credit = nullptr;  // UI-61b: the planet photo's credit, top left of the picture
   lv_obj_t *phase_mark = nullptr;  // UI-61g: the "Tonight's phase" switch
   int kind = net::IMG_SUN;
@@ -6096,6 +6099,7 @@ inline void img_view_close(bool reopening = false) {
   lv_obj_t *const none[4] = {};
   sv.root = sv.img = sv.msg = sv.bar = sv.cap1 = sv.cap2 = sv.east = sv.west = nullptr;
   sv.seg[0] = sv.seg[1] = nullptr;
+  sv.facts = nullptr;
   sv.phase_mark = nullptr;
   memcpy(sv.tab, none, sizeof(none));
   memcpy(sv.mlab, none, sizeof(none));
@@ -6538,6 +6542,66 @@ inline void img_phase_cb(lv_event_t *e) {  // UI-61g: "Tonight's phase" on / off
   sv.drawn_at = 0;  // redraw the photo now
   img_view_update(clock_now());
 }
+// UI-84: touching the planet's picture shows its fact card (touch the card to put it away)
+inline int facts_index(int kind) {
+  if (kind == net::IMG_EARTH)
+    return 2;
+  if (kind < VIEW_PLANET)
+    return -1;
+  const int p = kind - VIEW_PLANET;
+  if (p >= (int) planets::N_PLANETS)
+    return 6 + (p - (int) planets::N_PLANETS);
+  return p == planets::MERCURY ? 0 : p == planets::VENUS ? 1 : p == planets::MARS ? 3 : p == planets::JUPITER ? 4 : 5;
+}
+inline void facts_hide_cb(lv_event_t *) {
+  if (sv.facts)
+    lv_obj_add_flag(sv.facts, LV_OBJ_FLAG_HIDDEN);
+}
+inline void facts_open_cb(lv_event_t *) {
+  const int fi = facts_index(sv.kind);
+  if (fi < 0 || sv.root == nullptr)
+    return;
+  const facts::Body &b = facts::get(fi);
+  const auto &w = ui.w;
+  if (sv.facts == nullptr) {
+    sv.facts = lv_obj_create(sv.root);
+    lv_obj_remove_style_all(sv.facts);
+    lv_obj_set_size(sv.facts, 440, 352);
+    lv_obj_set_pos(sv.facts, 20, 52);  // over the picture and its captions; the tabs and the strip stay
+    lv_obj_set_style_bg_color(sv.facts, lv_color_hex(0x0E1530), 0);
+    lv_obj_set_style_bg_opa(sv.facts, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(sv.facts, lv_color_hex(0x24356A), 0);
+    lv_obj_set_style_border_width(sv.facts, 2, 0);
+    lv_obj_set_style_radius(sv.facts, 12, 0);
+    lv_obj_set_style_pad_all(sv.facts, 12, 0);
+    lv_obj_set_style_pad_row(sv.facts, 4, 0);
+    lv_obj_set_flex_flow(sv.facts, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_flag(sv.facts, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(sv.facts, facts_hide_cb, LV_EVENT_CLICKED, nullptr);
+  } else {
+    lv_obj_clean(sv.facts);
+  }
+  const lv_font_t *body = w.card_font ? w.card_font : w.label_font;
+  auto add = [&](const lv_font_t *f, uint32_t col, const char *text, int gap_above) {
+    lv_obj_t *l = lv_label_create(sv.facts);
+    if (f)
+      lv_obj_set_style_text_font(l, f, 0);
+    lv_obj_set_style_text_color(l, lv_color_hex(col), 0);
+    lv_obj_set_style_pad_top(l, gap_above, 0);
+    lv_obj_set_width(l, lv_pct(100));
+    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(l, text);
+  };
+  add(w.title_font, 0xFF8A1F, b.name, 0);
+  add(w.label_font, 0x7E8BB3, "Discovered", 6);
+  add(body, 0xC9D3F2, b.found, 0);
+  add(w.label_font, 0x7E8BB3, "Named for", 6);
+  add(body, 0xC9D3F2, b.named, 0);
+  add(w.label_font, 0x7E8BB3, "Facts", 6);
+  add(body, 0xC9D3F2, b.facts, 0);
+  lv_obj_remove_flag(sv.facts, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_move_foreground(sv.facts);
+}
 inline void img_tab_cb(lv_event_t *e) {
   const int kind = (int) (intptr_t) lv_event_get_user_data(e);
   if (kind != sv.kind)
@@ -6616,6 +6680,10 @@ inline void img_view_open_now(int kind, int planet) {
   lv_obj_set_size(sv.img, pf ? PV_PX : net::IMG_PX, pf ? PV_PX : net::IMG_PX);
   lv_obj_set_pos(sv.img, pf ? PV_X0 : (480 - net::IMG_PX) / 2, pf ? PV_Y0 : 48);
   lv_obj_add_flag(sv.img, LV_OBJ_FLAG_HIDDEN);
+  if (pf && !alaska) {  // UI-84: touch the planet for its facts
+    lv_obj_add_flag(sv.img, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(sv.img, facts_open_cb, LV_EVENT_CLICKED, nullptr);
+  }
   sv.msg = finder_label(root, w.card_font ? w.card_font : w.label_font, 0xC9D3F2, pf ? 150 + (PV_CY - 196) : 150);
   sv.bar = lv_bar_create(root);  // download progress, below the message
   lv_obj_set_size(sv.bar, 300, 10);
@@ -6651,7 +6719,8 @@ inline void img_view_open_now(int kind, int planet) {
   if (pl && kind - VIEW_PLANET <= planets::MARS) {  // UI-61g: "Tonight's phase" switch, lower right
     lv_obj_t *sw = lv_switch_create(root);  // as the settings switches (theme look)
     lv_obj_set_size(sw, 46, 24);
-    lv_obj_set_pos(sw, 414, PV_STRIP_Y - 28);  // lower right, a little above the strip
+    lv_obj_set_pos(sw, 414, PV_STRIP_Y - 34);  // lower right, above the strip
+    lv_obj_set_ext_click_area(sw, 22);  // a big target: the thumb missed the 46 x 24 switch
     if (planet_phase)
       lv_obj_add_state(sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw, img_phase_cb, LV_EVENT_VALUE_CHANGED, nullptr);
@@ -6662,6 +6731,16 @@ inline void img_view_open_now(int kind, int planet) {
     lv_obj_set_style_text_color(l, lv_color_hex(0xC9D3F2), 0);
     lv_label_set_text(l, "Tonight's phase");
     lv_obj_align_to(l, sw, LV_ALIGN_OUT_LEFT_MID, -10, 0);
+    lv_obj_add_flag(l, LV_OBJ_FLAG_CLICKABLE);  // the label is a target too
+    lv_obj_set_ext_click_area(l, 14);
+    lv_obj_add_event_cb(l, [](lv_event_t *e) {
+      lv_obj_t *sw2 = (lv_obj_t *) lv_event_get_user_data(e);
+      if (lv_obj_has_state(sw2, LV_STATE_CHECKED))
+        lv_obj_remove_state(sw2, LV_STATE_CHECKED);
+      else
+        lv_obj_add_state(sw2, LV_STATE_CHECKED);
+      lv_obj_send_event(sw2, LV_EVENT_VALUE_CHANGED, nullptr);
+    }, LV_EVENT_CLICKED, sw);
   }
   if (pf && !alaska) {  // the planets, Earth among them: tap one to see it
     struct C {
@@ -6696,9 +6775,11 @@ inline void img_view_open_now(int kind, int planet) {
         outer_dsc[o] = make_dsc(photos::outer(o).icon, 40, 40);
         im = lv_image_create(c);
         lv_image_set_src(im, &outer_dsc[o]);
-      } else if (chips[i].p >= 0) {
+      } else if (chips[i].p >= 0) {  // Mercury .. Saturn: their photos, as the others
+        static lv_image_dsc_t inner_dsc[5];
+        inner_dsc[chips[i].p] = make_dsc(photos::icon(chips[i].p), 40, 40);
         im = lv_image_create(c);
-        lv_image_set_src(im, planet_card_dsc(chips[i].p));
+        lv_image_set_src(im, &inner_dsc[chips[i].p]);
       } else {  // Earth: the Blue Marble's 40 px picture
         static lv_image_dsc_t earth_dsc;
         earth_dsc = make_dsc(photos::blue_marble().icon, 40, 40);
@@ -6730,11 +6811,14 @@ inline void img_view_open_now(int kind, int planet) {
       snprintf(chips[1].name, sizeof(chips[1].name), "NOAA %.15s", my_region()->name);
       n = 2;
     }
+    // a gap between the chips (16 px), shrinking as chips are added so that the row always fits the screen
+    const int cw = 130, gap = n > 1 ? std::min(16, (480 - 8 - n * cw) / (n - 1)) : 0;
+    const int x0 = (480 - (n * cw + (n - 1) * gap)) / 2;
     for (int i = 0; i < n; i++) {
       const bool on = kind == chips[i].kind;
       lv_obj_t *c = lv_button_create(root);
-      lv_obj_set_size(c, 130, 62);
-      lv_obj_set_pos(c, (480 - (n * 130 + (n - 1))) / 2 + i * 131, PV_STRIP_Y);  // the chips centred
+      lv_obj_set_size(c, cw, 62);
+      lv_obj_set_pos(c, x0 + i * (cw + gap), PV_STRIP_Y);  // centred
       lv_obj_set_style_bg_color(c, lv_color_hex(on ? 0x24356A : 0x121A36), 0);
       lv_obj_set_style_shadow_width(c, 0, 0);
       lv_obj_set_style_pad_all(c, 0, 0);
