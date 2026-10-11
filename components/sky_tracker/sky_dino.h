@@ -44,7 +44,7 @@ inline const lv_font_t *bubble_font = nullptr;
 struct St {
   bool running = false, done = false;
   Walk w;
-  uint32_t t0 = 0, last_frame = 0;
+  uint32_t t0 = 0, start = 0, last_frame = 0;
   lv_draw_buf_t *snap = nullptr;
   lv_obj_t *root = nullptr, *img = nullptr, *bubble = nullptr, *label = nullptr, *tail = nullptr;
   lv_timer_t *timer = nullptr;
@@ -86,6 +86,7 @@ inline void describe(lv_image_dsc_t &d, const uint8_t *data, int w, int h) {
   d.data = data;
 }
 
+inline constexpr uint32_t ENTRY_SKIP_MS = 1300;
 inline void end_walk();
 
 // Move everything for this refresh, from the clock at this moment.
@@ -93,6 +94,7 @@ inline void frame() {
   if (!st.running || st.done) return;
   const uint32_t now = lv_tick_get();
   const uint32_t t = now - st.t0;
+  const uint32_t since = now - st.start;     // real time since the tap (t starts ahead: see begin_walk)
   if (st.last_frame) {
     const uint32_t gap = now - st.last_frame;
     if (gap > st.max_gap) st.max_gap = gap;
@@ -100,7 +102,7 @@ inline void frame() {
   st.last_frame = now;
   st.frames++;
   // a touch since the start ends the walk; so does the page changing under it
-  if (lv_display_get_inactive_time(nullptr) + 100 < t || lv_obj_get_parent(st.root) != lv_screen_active() ||
+  if ((since > 2500 && lv_display_get_inactive_time(nullptr) + 100 < since) || lv_obj_get_parent(st.root) != lv_screen_active() ||
       finished(st.w, t)) {
     st.done = true;                        // torn down by the timer, outside the refresh
     return;
@@ -143,7 +145,7 @@ inline void end_walk() {
   if (lv_display_t *d = lv_display_get_default()) lv_display_remove_event_cb_with_user_data(d, on_refr, nullptr);
   if (st.timer) lv_timer_delete(st.timer);
   st.timer = nullptr;
-  const uint32_t ms = lv_tick_get() - st.t0;
+  const uint32_t ms = lv_tick_get() - st.start;
   if (st.root) lv_obj_delete(st.root);                         // and its children
   st.root = st.img = st.bubble = st.label = st.tail = nullptr;
   if (st.snap) lv_draw_buf_destroy(st.snap);
@@ -187,6 +189,8 @@ inline bool begin_walk(uint32_t seed) {
 
   st.root = lv_image_create(scr);
   lv_image_set_src(st.root, st.snap);
+  lv_obj_set_size(st.root, SCREEN_W, SCREEN_H);   // fixed: an image sizes itself to its content, and a sprite past the
+                                                   // right edge made it wider and shifted the picture right
   lv_obj_set_pos(st.root, 0, 0);
   lv_obj_remove_flag(st.root, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_remove_flag(st.root, LV_OBJ_FLAG_SCROLLABLE);
@@ -225,7 +229,8 @@ inline bool begin_walk(uint32_t seed) {
   st.frames = st.max_gap = st.last_frame = 0;
   st.done = false;
   st.running = true;
-  st.t0 = lv_tick_get();
+  st.start = lv_tick_get();
+  st.t0 = st.start - ENTRY_SKIP_MS;          // already walking in when it is first drawn, not 1.8 s off screen
   if (lv_display_t *d = lv_display_get_default()) lv_display_add_event_cb(d, on_refr, LV_EVENT_REFR_START, nullptr);
   st.timer = lv_timer_create(
       [](lv_timer_t *) {

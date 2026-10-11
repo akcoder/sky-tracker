@@ -23,7 +23,7 @@ async def main(a):
 
     def on_log(msg):
         t = re.sub(r"\x1b\[[0-9;]*m", "", msg.message.decode("utf-8", "replace"))
-        if "perf" in t or "dbg" in t or "took a long time" in t:
+        if "perf" in t or "dbg" in t or "took a long time" in t or "dino" in t or "mage" in t:
             print(f"  {time.time() - t0:7.1f}s  {t[:230]}", flush=True)
 
     cli.subscribe_logs(on_log, log_level=LogLevel.LOG_LEVEL_DEBUG)

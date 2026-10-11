@@ -7544,6 +7544,9 @@ inline void perf_report(const char *why) {
 // PERF-20: a command line, to open things without a finger while measuring (tools/dbg.py calls the API action
 // debug_cmd): "open earth", "open planet 3", "close", "page settings" (handled in the YAML, which knows the pages),
 // "perf". The answers are log lines (the API's log stream and the web page's log).
+namespace dino {
+bool walk(uint32_t seed);  // sky_dino.h (sky_extra.cpp)
+}
 namespace dbg {
 inline void run(const char *cmd) {
   char what[24] = "";
@@ -7557,6 +7560,8 @@ inline void run(const char *cmd) {
              (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 #endif
+  } else if (!strcmp(cmd, "dino")) {
+    ESP_LOGI(UI_TAG, "dbg: dino walk %s", dino::walk(lv_tick_get() * 2654435761u + 1) ? "started" : "NOT started");
   } else if (!strcmp(cmd, "state")) {
     lv_obj_t *scr = lv_screen_active();
     ESP_LOGI(UI_TAG, "dbg: active screen %p has %u children; the sky disc %p is %s, its parent %p; viewer open %d, %d objects hidden under it; "
