@@ -566,7 +566,7 @@ inline HttpResult http_stream(const char *url, const char *what, const std::func
   const int64_t t0 = net_us();
   int64_t sink_us = 0, t_hdr = 0;
   bool reused = false;
-  ESP_LOGD(TAG, "%s: GET %s", what, url);  // NET-13: every request's URL, at DEBUG
+  ESP_LOGI(TAG, "%s: GET %s", what, url);  // NET-13: every request's URL, at INFO
   for (int attempt = 0; attempt < 3; attempt++) {
     reused = kept.h != nullptr && strcmp(kept.host, host) == 0;
     if (kept.h && !reused)

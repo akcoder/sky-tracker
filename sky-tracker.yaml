@@ -258,6 +258,10 @@ time:
 # 230400: twice the default, and a rate the USB-serial chip and macOS agree on (921600 and 1 Mbaud came out as garbage).
 logger:
   baud_rate: 230400
+  # PERF-23: INFO, not DEBUG. At boot DEBUG printed ~600 lines (the display's init commands, ESPHome's configuration dump):
+  # each is a blocking write to the serial port, ~1.5 s in which the main loop could not draw the loading screen.
+  # (A tag cannot be more verbose than the global level, so the debug lines of ours that matter are INFO lines.)
+  level: INFO
 
 # BUILD-7: the C++ (headers, sky_extra.cpp, build flags) is the sky_tracker external component
 external_components:
