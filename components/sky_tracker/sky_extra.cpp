@@ -11,4 +11,5 @@
 #include "sky_update.h"
 #include "sky_rocket.h"
 #include "sky_tz.h"
+#include "sky_dino.h"
 #include "sky_history.h"

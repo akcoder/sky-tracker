@@ -149,6 +149,7 @@ esphome:
             sat::hw::gps_diag.pin = ${gps_rx_pin};  // HW-8a: shown in GPS Diagnostic
             sat::logo_show(id(about_logo), 112);  // UI-67
             sat::logo_meteor(id(about_logo));     // UI-67a
+            sat::dino::set_font(id(mono16)->get_lv_font());  // UI-83: the logo's egg
             {
               char d[24], b[64];
               tracker::about::tidy_date(__DATE__, d, sizeof(d));
@@ -2150,6 +2151,8 @@ lvgl:
             border_width: 0
             pad_all: 0
             scrollable: false
+            on_click:                  # UI-83: a dinosaur walks across the page
+              - lambda: sat::dino::walk(esphome::millis() * 2654435761u + 12345u);
         - label:
             x: 138
             y: 56
