@@ -6546,6 +6546,10 @@ inline void img_phase_cb(lv_event_t *e) {  // UI-61g: "Tonight's phase" on / off
 inline int facts_index(int kind) {
   if (kind == net::IMG_EARTH)
     return 2;
+  if (kind == net::IMG_SUN)
+    return 9;
+  if (kind == net::IMG_MOON)
+    return 10;
   if (kind < VIEW_PLANET)
     return -1;
   const int p = kind - VIEW_PLANET;
@@ -6687,7 +6691,7 @@ inline void img_view_open_now(int kind, int planet) {
   lv_obj_set_size(sv.img, pf ? PV_PX : net::IMG_PX, pf ? PV_PX : net::IMG_PX);
   lv_obj_set_pos(sv.img, pf ? PV_X0 : (480 - net::IMG_PX) / 2, pf ? PV_Y0 : 48);
   lv_obj_add_flag(sv.img, LV_OBJ_FLAG_HIDDEN);
-  if (pf && !alaska) {  // UI-84: touch the planet for its facts
+  if ((pf && !alaska) || kind == net::IMG_SUN || kind == net::IMG_MOON) {  // UI-84: touch the picture for its facts
     lv_obj_add_flag(sv.img, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(sv.img, facts_open_cb, LV_EVENT_CLICKED, nullptr);
   }

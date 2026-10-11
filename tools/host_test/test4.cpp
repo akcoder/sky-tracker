@@ -2243,11 +2243,12 @@ int main() {
       sat::img_view_close();
     }
     {  // UI-84: touch the planet: its fact card (each one fits the card); the card goes when touched
-      static const int KINDS[9] = {sat::VIEW_PLANET + sat::planets::MERCURY, sat::VIEW_PLANET + sat::planets::VENUS, sat::net::IMG_EARTH,
+      static const int KINDS[11] = {sat::VIEW_PLANET + sat::planets::MERCURY, sat::VIEW_PLANET + sat::planets::VENUS, sat::net::IMG_EARTH,
                                    sat::VIEW_PLANET + sat::planets::MARS, sat::VIEW_PLANET + sat::planets::JUPITER,
                                    sat::VIEW_PLANET + sat::planets::SATURN, sat::VIEW_PLANET + (int) sat::planets::N_PLANETS,
-                                   sat::VIEW_PLANET + (int) sat::planets::N_PLANETS + 1, sat::VIEW_PLANET + (int) sat::planets::N_PLANETS + 2};
-      for (int i = 0; i < 9; i++) {
+                                   sat::VIEW_PLANET + (int) sat::planets::N_PLANETS + 1, sat::VIEW_PLANET + (int) sat::planets::N_PLANETS + 2,
+                                    sat::net::IMG_SUN, sat::net::IMG_MOON};
+      for (int i = 0; i < 11; i++) {
         sat::img_view_open_now(KINDS[i]);
         sat::sv.drawn_at = 0;
         sat::img_view_update(sat_host_now);

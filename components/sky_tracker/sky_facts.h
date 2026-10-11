@@ -1,7 +1,8 @@
 #pragma once
 // UI-84: the fact cards of the Planets tab (touch the picture): when each planet was found and by whom, what it is named
 // for, and a few facts. Written for the 432 x 346 px card: about 14 lines of 48 characters, so they stay short.
-// Order: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto (the strip's order).
+// Order: Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto (the strip's order), then the Sun and the Moon
+// (the picture viewer's Sun and Moon tabs).
 namespace sat {
 namespace facts {
 struct Body {
@@ -10,7 +11,7 @@ struct Body {
   const char *named;  // the name, the legend
   const char *facts;
 };
-constexpr int N = 9;
+constexpr int N = 11;
 inline const Body &get(int i) {
   static const Body B[N] = {
       {"Mercury",
@@ -72,6 +73,20 @@ inline const Body &get(int i) {
        "letters are Percival Lowell's initials.",
        "Year 248 years, -230 C. Its orbit crosses Neptune's but they never meet. Five moons. New Horizons flew by on "
        "14 July 2015 and found a heart-shaped plain. (The IAU called it a dwarf planet in 2006.)"},
+      {"Sun",
+       "Always known. Galileo drew its spots in 1610 (Fabricius and Scheiner saw them too). Helium was found in its light in "
+       "1868, 27 years before it was found on Earth.",
+       "Old English sunne. The Romans' Sol, the Greeks' Helios, Egypt's Ra: the god who crossed the sky each day in a "
+       "chariot or a boat.",
+       "A star 1.39 million km across, 99.86% of all the mass in the solar system. Light takes 8 min 20 s to reach us. "
+       "5500 C at the surface, 15 million C at the core. This picture is NOAA's SUVI, in ultraviolet."},
+      {"Moon",
+       "Always known. Galileo's telescope showed its mountains and craters in 1609. Luna 3 photographed the far side in "
+       "1959; Armstrong and Aldrin landed on 20 July 1969.",
+       "Old English mona. The Roman goddess Luna, the Greek Selene: she drove the Moon's chariot across the night sky. "
+       "Monday is Moon day.",
+       "384,400 km away, a quarter of Earth's width. Phases repeat every 29.5 days. The same face always points at us. "
+       "It drifts away 3.8 cm a year. The picture is NASA's Dial-A-Moon, from LRO."},
   };
   return B[i < 0 ? 0 : i >= N ? N - 1 : i];
 }
