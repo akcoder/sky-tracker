@@ -4991,6 +4991,9 @@ inline void info_card_update(double t) {
         k += snprintf(body + k, sizeof(body) - k, "%s%s (%s): %s%s, +/-%.0fh", k ? "\n" : "", d.name,
                       d.rb ? "rocket stage" : d.deb ? "debris" : "satellite", d.est > t ? "in ~" : "", in,
                       std::max(1.0f, d.unc_h));
+        int ly = 0;  // the launch year, from the international designator (the feed has no exact date)
+        if (sscanf(d.intl, "%d-", &ly) == 1 && ly >= 1957 && k < (int) sizeof(body))
+          k += snprintf(body + k, sizeof(body) - k, "\n  launched %d", ly);
         if (d.over_el >= 10 && d.over_t > t && k < (int) sizeof(body)) {
           local_hm((int64_t) d.over_t, h0, sizeof(h0));
           k += snprintf(body + k, sizeof(body) - k, "\n  over you %s, %.0f\xC2\xB0 up in the %s", h0, d.over_el, d.over_dir);

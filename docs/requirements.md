@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.40 (unreleased): the update prompt's release notes use the 16 px font (they were blurry at 12 px).
+- 4.6.40 (unreleased): each re-entry on its card shows the launch year (UI-74); the update prompt's release notes use the 16 px font (they were blurry at 12 px).
 - 4.6.39 (released): the constellation figures and the highlight are drawn above the rings and cross lines (UI-46d).
 - 4.6.38 (released): touching a constellation's figure on the map shows its details (UI-46c).
 - 4.6.37 (installed): the object a star, deep-sky, radiant or constellation card is for is lit on the map: a ring, or the constellation's whole figure in gold (UI-50b, UI-46b). the list has a Close button and scrolls in a box under the title row, never under Close (UI-10c); the row lines no longer go missing in patches as cells change (UI-10d). the list shows the named stars and the major constellations above the horizon, and a tap opens their cards (UI-10b). the firmware check no longer fails with "sock < 0" or "esp-aes: Failed to allocate memory" when the data task is on the network: it drops its kept connection and waits while the check runs (NET-14). A new Moon is drawn under the Sun's halo instead of in front of it (UI-6a).
@@ -723,7 +723,8 @@ UI-74  Re-entries (CelesTrak SPECIAL=DECAYING CSV, ~17 KB, every 6 h, after the 
        comes down (SGP4, 60 s steps). The status line shows a rocket stage or satellite (not
        debris) due within 24 h, one passing 10 deg or more over the observer first, mdi:fire-alert
        in 0xFF8A65: "FLOCK 4Q-31 re-enters in ~5h 19m - over you 23:48, 12 deg W". Its card lists
-       up to five (debris too) and says how rough the estimates are. Switch Re-entry Alerts (on).
+       up to five (debris too), each with its launch year (from the international designator), and
+       says how rough the estimates are. Switch Re-entry Alerts (on).
        (The Aerospace Corporation refuses automated requests; ESA's predictions need an account.)
 UI-75  All-sky camera: the University of Alaska Fairbanks Geophysical Institute's Poker Flat camera
        (allsky.gi.alaska.edu): its live feed (src/checkLive.php?cam=poker-flat, an event stream: the
