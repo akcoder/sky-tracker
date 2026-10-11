@@ -7380,7 +7380,7 @@ inline lv_obj_t *settings_title = nullptr;  // the settings header (YAML setting
 inline void settings_tab(int which, lv_obj_t *p0, lv_obj_t *p1, lv_obj_t *p2, lv_obj_t *p3, lv_obj_t *p4, lv_obj_t *t0,
                          lv_obj_t *t1, lv_obj_t *t2, lv_obj_t *t3, lv_obj_t *t4) {
   lv_obj_t *const P[5] = {p0, p1, p2, p3, p4}, *const T[5] = {t0, t1, t2, t3, t4};
-  static const char *const NAME[5] = {"DISPLAY", "LOCATION", "CELESTIAL", "SATELLITES", "ALERTS"};
+  static const char *const NAME[5] = {"Display", "Location", "Celestial", "Satellites", "Alerts"};
   if (settings_title && which >= 0 && which < 5)
     lv_label_set_text(settings_title, NAME[which]);  // the header names the open tab
   for (int k = 0; k < 5; k++) {

@@ -94,7 +94,7 @@ int main(int argc, char **argv) {
   image(pnl_alerts, &align, 130, 62);
   lv_obj_t *const P[5] = {pnl_display, pnl_location, pnl_celestial, pnl_satellites, pnl_alerts};
   lv_obj_t *const T[5] = {tab_display, tab_location, tab_celestial, tab_satellites, tab_alerts};
-  static const char *const NAME[5] = {"DISPLAY", "LOCATION", "CELESTIAL", "SATELLITES", "ALERTS"};
+  static const char *const NAME[5] = {"Display", "Location", "Celestial", "Satellites", "Alerts"};
   static const char *const FILE_[5] = {"display", "location", "celestial", "satellites", "alerts"};
   for (int k = 0; k < 5; k++) {  // sat::settings_tab
     for (int j = 0; j < 5; j++) {

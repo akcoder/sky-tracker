@@ -186,7 +186,7 @@ int main() {
     lv_obj_remove_flag(p, LV_OBJ_FLAG_SCROLLABLE);
   }
   const lv_font_t *f12 = &lv_font_montserrat_12, *f16 = &lv_font_montserrat_16;
-  label(page1, 10, 4, "SKY TRACKER", f16, 0xFF8A1F);
+  label(page1, 10, 4, "Sky Tracker", f16, 0xFF8A1F);
   sat::Widgets w;
   w.status = label(page1, 10, 27, "", f12, 0x7E8BB3);
   w.counts = label(page1, 0, 0, "", f12, 0x7E8BB3);
@@ -203,7 +203,7 @@ int main() {
   w.foot_iss = label(page1, 10, 432, "", f16, 0xC9D3F2);
   w.foot_pass = label(page1, 10, 454, "", f16, 0xFFD54A);
   // the list page as sky-tracker.yaml builds it (UI-10c): a title row with Close, and the list in a scrolling box under it
-  label(page2, 8, 12, "LIST", f16, 0xFF8A1F);
+  label(page2, 8, 12, "List", f16, 0xFF8A1F);
   {
     lv_obj_t *cb = lv_button_create(page2);
     lv_obj_set_pos(cb, 376, 4);

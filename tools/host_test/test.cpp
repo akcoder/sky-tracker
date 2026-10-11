@@ -246,7 +246,7 @@ int main() {
     lv_obj_remove_flag(p, LV_OBJ_FLAG_SCROLLABLE);
   }
   const lv_font_t *f12 = &lv_font_montserrat_12, *f16 = &lv_font_montserrat_16;
-  label(page1, 10, 4, "SKY TRACKER", f16, 0xFF8A1F);
+  label(page1, 10, 4, "Sky Tracker", f16, 0xFF8A1F);
   sat::Widgets w;
   w.countdown = label(page1, 10, 24, "", f12, 0x7E8BB3);
   w.counts = label(page1, 380, 34, "", f12, 0x7E8BB3);

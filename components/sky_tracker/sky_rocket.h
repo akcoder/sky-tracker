@@ -1266,7 +1266,7 @@ inline void cd_open(const net::LaunchRec &l) {
     mission++;
   char sub[96];
   snprintf(sub, sizeof(sub), "%s%s%s", l.rocket, l.rocket[0] && l.where[0] ? " - " : "", short_site(l.where));
-  cd_label(r, cd.body, 0xFF8A1F, 26, "LAUNCH COUNTDOWN");
+  cd_label(r, cd.body, 0xFF8A1F, 26, "Launch countdown");
   cd.mission = cd_label(r, cd.title, 0xFFFFFF, 64, mission);
   cd.sub = cd_label(r, cd.body, 0x9AA6C8, 124, sub);
   cd.clock = cd_label(r, cd.digits ? cd.digits : cd.title, 0xFFC46B, 168, "T-10:00");

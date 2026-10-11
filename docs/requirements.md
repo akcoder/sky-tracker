@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.40 (unreleased): re-entry uncertainty is written with the plus-minus sign instead of "+/-" (UI-74); the update card is tracker-common's (v0.3.0), shared with f1-tracker; the web page patch (tab icon, header badge, logo link) is tracker-common's and runs when the page is served, not at build time; the panel soft reset (HW-7) and the Wi-Fi status page logic (NET-2b; also fixes the offline timer for even clock ticks) are tracker-common's; the Sun maths and the About text are tracker-common's too; the JPEG and PNG decoders are tracker-common's (shared with f1-tracker), with one shared work buffer (8 KB less internal RAM); the picture viewer's All-sky tab is named UAF; each re-entry on its card shows the launch year (UI-74); the update prompt's release notes use the 16 px font (they were blurry at 12 px).
+- 4.6.40 (unreleased): page and section titles are in sentence case ("About", "This device", "Display", "List", "Sky Tracker", "Launch countdown"), not all capitals; re-entry uncertainty is written with the plus-minus sign instead of "+/-" (UI-74); the update card is tracker-common's (v0.3.0), shared with f1-tracker; the web page patch (tab icon, header badge, logo link) is tracker-common's and runs when the page is served, not at build time; the panel soft reset (HW-7) and the Wi-Fi status page logic (NET-2b; also fixes the offline timer for even clock ticks) are tracker-common's; the Sun maths and the About text are tracker-common's too; the JPEG and PNG decoders are tracker-common's (shared with f1-tracker), with one shared work buffer (8 KB less internal RAM); the picture viewer's All-sky tab is named UAF; each re-entry on its card shows the launch year (UI-74); the update prompt's release notes use the 16 px font (they were blurry at 12 px).
 - 4.6.39 (released): the constellation figures and the highlight are drawn above the rings and cross lines (UI-46d).
 - 4.6.38 (released): touching a constellation's figure on the map shows its details (UI-46c).
 - 4.6.37 (installed): the object a star, deep-sky, radiant or constellation card is for is lit on the map: a ring, or the constellation's whole figure in gold (UI-50b, UI-46b). the list has a Close button and scrolls in a box under the title row, never under Close (UI-10c); the row lines no longer go missing in patches as cells change (UI-10d). the list shows the named stars and the major constellations above the horizon, and a tap opens their cards (UI-10b). the firmware check no longer fails with "sock < 0" or "esp-aes: Failed to allocate memory" when the data task is on the network: it drops its kept connection and waits while the check runs (NET-14). A new Moon is drawn under the Sun's halo instead of in front of it (UI-6a).
@@ -397,7 +397,7 @@ UI-10  The list page MUST show a row for every object, in this order: header, IS
        flips the page as before. Only
        a sanity limit of 400 rows ends the list, with a "+ N more" line. The list
        sorts a copy.
-UI-10c The list page has a title row like the other pages: "LIST" in orange at the left and a Close
+UI-10c The list page has a title row like the other pages: "List" in orange at the left and a Close
        button (96x36 at 376,4, back to the map). The list scrolls in its own box (0,44, 480x436) under
        it, so scrolled rows are clipped at the box and never run under Close or the title. A tap in the box
        still flips the page (the box bubbles its clicks), a tap on Close goes to the map.
@@ -526,10 +526,10 @@ UI-22  HA switches "Show LEO" and "Show Starlink" (default on), "Show MEO" and "
        and hides again on OK. Switch changes apply on Save, like the other fields.
 
 UI-23  Header alignment: the clock (mono24) is at y 1 so its digit tops (8 px into
-       the line) sit level with the tops of the "SKY TRACKER" capitals (mono16 at
+       the line) sit level with the tops of the "Sky Tracker" capitals (mono16 at
        y 4, 5 px into the line); the counts below it moved up to y 31.
        The observer's position is shown top centre (mono16, dim, TOP_MID y 4),
-       between "SKY TRACKER" and the clock: "61.5814°N  149.4394°W", or
+       between "Sky Tracker" and the clock: "61.5814°N  149.4394°W", or
        "61°34'53\"N  149°26'21\"W" when the settings page is in DMS mode. It updates
        when the observer or the format changes.
 
@@ -735,7 +735,7 @@ UI-75  All-sky camera: the University of Alaska Fairbanks Geophysical Institute'
        weather cards; refreshed every 2 min while open. Caption "UAF Poker Flat all-sky camera,
        Alaska"; by day "Off until dark".
 UI-76  Launch countdown (sky_rocket.h): from T-10 min to liftoff a full-screen card on the top
-       layer: "LAUNCH COUNTDOWN", the mission (mono18), rocket and pad (mono16), T-MM:SS in mono72
+       layer: "Launch countdown", the mission (mono18), rocket and pad (mono16), T-MM:SS in mono72
        (0xFFC46B), Launch Library's status (GO for launch / HOLD / Time to be confirmed), the local
        liftoff time and a red "WEBCAST LIVE" pill (LL2 webcast_live). Updated 5 times a second;
        closes at T-0 (the launch animation, UI-69, then plays), on a slip past the window or a

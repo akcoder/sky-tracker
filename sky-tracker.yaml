@@ -1869,7 +1869,7 @@ lvgl:
         - label:
             x: 10
             y: 4
-            text: "SKY TRACKER"
+            text: "Sky Tracker"
             text_font: mono16
             text_color: 0xFF8A1F
         - label:                 # UI-23: observer position, between the title and the clock
@@ -2017,7 +2017,7 @@ lvgl:
         - label:
             x: 8
             y: 12                  # UI-27: the same size as the SKY TRACKER title
-            text: "DEBUG  1 of 2: System"
+            text: "Debug  1 of 2: System"
             text_font: mono16
             text_color: 0xFF8A1F
         - label:
@@ -2071,7 +2071,7 @@ lvgl:
         - label:
             x: 8
             y: 12                  # UI-27: the same size as the SKY TRACKER title
-            text: "DEBUG  2 of 2: GPS & compass"
+            text: "Debug  2 of 2: GPS & compass"
             text_font: mono16
             text_color: 0xFF8A1F
         - label:
@@ -2155,7 +2155,7 @@ lvgl:
         - label:                 # UI-10c: the title row, as the other pages (Close top right)
             x: 8
             y: 12
-            text: "LIST"
+            text: "List"
             text_font: mono16
             text_color: 0xFF8A1F
         - button:
@@ -2215,7 +2215,7 @@ lvgl:
         - label:
             x: 8
             y: 12
-            text: "ABOUT"
+            text: "About"
             text_font: mono16
             text_color: 0xFF8A1F
         - button:
@@ -2271,7 +2271,7 @@ lvgl:
         - label:
             x: 8
             y: 178
-            text: "THIS DEVICE"
+            text: "This device"
             text_font: mono12
             text_color: 0xFF8A1F
         - label:
@@ -2286,7 +2286,7 @@ lvgl:
         - label:
             x: 8
             y: 288
-            text: "DATA FROM"
+            text: "Data from"
             text_font: mono12
             text_color: 0xFF8A1F
         - label:
@@ -2373,7 +2373,7 @@ lvgl:
             id: settings_title
             x: 16
             y: 16
-            text: "DISPLAY"
+            text: "Display"
             text_font: mono16
             text_color: 0xFF8A1F
         - button:
