@@ -1,7 +1,7 @@
-# the map alone: what draws, and for how long
-wait 5
+# the map alone: which drawing callbacks cost what
+wait 3
 reset
-wait 45
+wait 30
 perf
-wait 45
+wait 30
 perf

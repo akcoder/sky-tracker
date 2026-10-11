@@ -1788,18 +1788,75 @@ inline void draw_starmap(double t) {
 // Draw what draw_starmap() computed, culled to the area being redrawn: a moving
 // marker redraws a few pixels, so only the lines and stars touching them are drawn.
 inline void draw_overlays(lv_layer_t *layer, const lv_area_t &clip, int ox, int oy);
-inline void star_draw_cb(lv_event_t *e) {
-  PerfCb pcb(0);
-  lv_layer_t *layer = lv_event_get_layer(e);
-  lv_area_t box;
-  lv_obj_get_coords(ui.w.sky, &box);
-  const lv_area_t &clip = layer->_clip_area;
-  const int ox = box.x1, oy = box.y1;
-  if (ui.stars_shown && ui.mw_on) {  // UI-64: the bottom-most thing on the disc
-    PerfCb pmw(2);
-    draw_milky_way(layer, clip, ox, oy);
+// UI-38: the glow. Drawn as a stack of ~250 translucent arcs it cost ~350 ms per strip (a full redraw of the disc
+// ~1 s, every time the satellite markers moved: the screen froze and touches were lost). The same glow is now a
+// picture, worked out once per likelihood (and radius) at half size with the same bands and steps, and drawn
+// rotated to the map's heading and doubled: a few milliseconds. The arcs stay as the fallback.
+constexpr int GLOW_W = 184, GLOW_H = 72;  // half-size pixels: 368 x 144 around the top of the disc, north up
+inline void aurora_params(int &bands, int &steps, float &reach, int &max_opa) {
+  bands = 18, steps = 7, reach = aur.likely ? 48.0f : 32.0f, max_opa = aur.likely ? 64 : 48;
+}
+inline bool aurora_draw_cached(lv_layer_t *layer, int cx, int cy) {
+  static uint32_t *px = nullptr;
+  static lv_image_dsc_t dsc;
+  static int key = -1;
+  if (px == nullptr) {
+    px = (uint32_t *) heap_caps_malloc(GLOW_W * GLOW_H * 4, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (px == nullptr)
+      return false;
   }
-  if (aur.show && aur.dark_now && ui.aurora_alerts) {  // UI-38: faint glow hugging the northern horizon (UI-41a switch)
+  const int R = ui.radius;
+  const int want = (aur.likely ? 1 : 0) | (R << 1);
+  if (key != want) {
+    key = want;
+    int bands, steps, max_opa;
+    float reach;
+    aurora_params(bands, steps, reach, max_opa);
+    const float step = reach / bands;
+    for (int gy = 0; gy < GLOW_H; gy++)
+      for (int gx = 0; gx < GLOW_W; gx++) {
+        // the pixel's place relative to the disc's centre, north up, in full-size pixels
+        const float x = -R + (gx + 0.5f) * 2.0f, y = -R + (gy + 0.5f) * 2.0f;
+        const float r = sqrtf(x * x + y * y), depth = (R - r) / step;
+        uint32_t v = 0;
+        if (depth >= 0 && depth < bands) {
+          const int i = (int) depth;
+          const float f = 1.0f - (float) i / bands;
+          const float half = 75.0f * (1.0f - 0.5f * (1.0f - f));  // shorter towards the centre
+          const float ang = fabsf(atan2f(x, -y)) * 57.29578f;      // degrees from north
+          if (ang < half) {
+            const int k = (int) (ang / half * steps);
+            const float fk = 1.0f - (float) k / steps;
+            const int opa = (int) (max_opa * powf(f, 1.6f) * fk * fk);
+            if (opa >= 2)
+              v = ((uint32_t) opa << 24) | 0x50DC96;
+          }
+        }
+        px[gy * GLOW_W + gx] = v;
+      }
+    memset(&dsc, 0, sizeof(dsc));
+    dsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    dsc.header.cf = LV_COLOR_FORMAT_ARGB8888;
+    dsc.header.w = GLOW_W;
+    dsc.header.h = GLOW_H;
+    dsc.header.stride = GLOW_W * 4;
+    dsc.data_size = GLOW_W * GLOW_H * 4;
+    dsc.data = (const uint8_t *) px;
+    lv_image_cache_drop(&dsc);
+  }
+  lv_draw_image_dsc_t im;
+  lv_draw_image_dsc_init(&im);
+  im.src = &dsc;
+  im.scale_x = im.scale_y = 512;  // half size -> full
+  int rot = (int) lroundf(-ui.heading * 10.0f) % 3600;
+  im.rotation = rot < 0 ? rot + 3600 : rot;
+  im.pivot.x = GLOW_W / 2;  // the disc's centre: R / 2 across, R / 2 down
+  im.pivot.y = R / 2;
+  const lv_area_t a = {cx - GLOW_W / 2, cy - R / 2, cx - GLOW_W / 2 + GLOW_W - 1, cy - R / 2 + GLOW_H - 1};
+  lv_draw_image(layer, &im, &a);
+  return true;
+}
+inline void aurora_draw_arcs(lv_layer_t *layer, int ox, int oy) {
     const int bands = 18, reach = aur.likely ? 48 : 32, max_opa = aur.likely ? 64 : 48;
     const float step = (float) reach / bands;
     const float north = -ui.heading - 90.0f;  // LVGL angle of true north on screen
@@ -1830,6 +1887,22 @@ inline void star_draw_cb(lv_event_t *e) {
         }
       }
     }
+}
+inline void star_draw_cb(lv_event_t *e) {
+  PerfCb pcb(0);
+  lv_layer_t *layer = lv_event_get_layer(e);
+  lv_area_t box;
+  lv_obj_get_coords(ui.w.sky, &box);
+  const lv_area_t &clip = layer->_clip_area;
+  const int ox = box.x1, oy = box.y1;
+  if (ui.stars_shown && ui.mw_on) {  // UI-64: the bottom-most thing on the disc
+    PerfCb pmw(2);
+    draw_milky_way(layer, clip, ox, oy);
+  }
+  if (aur.show && aur.dark_now && ui.aurora_alerts) {  // UI-38: faint glow hugging the northern horizon (UI-41a switch)
+    PerfCb pa(3);
+    if (!aurora_draw_cached(layer, ox + ui.cx, oy + ui.cy))
+      aurora_draw_arcs(layer, ox, oy);  // (no memory for the picture)
   }
 }
 // UI-46d: the rest of the star layer, on its own object above the rings and the cross
