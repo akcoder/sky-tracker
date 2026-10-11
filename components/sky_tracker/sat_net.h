@@ -138,7 +138,7 @@ template<class T, class A> inline bool room_for(std::vector<T, A> &v, size_t n, 
 
 enum Layer : uint8_t { L_SAT = 1, L_STARLINK = 2, L_ISS = 4, L_PASS = 8, L_STATUS = 16, L_GEO = 32, L_KP = 64, L_EXTRA = 128 };  // L_EXTRA: solar wind, launches
 enum Job : uint8_t { JOB_ABOVE = 0, JOB_STARLINK = 1, JOB_ISS = 2, JOB_PASS = 3, JOB_ELEMENTS = 4, JOB_SUNIMG = 5, JOB_MOONIMG = 6, JOB_EARTHIMG = 7, JOB_REGIONIMG = 8, JOB_PLANETIMG = 9, JOB_ALLSKYIMG = 10,
-                     JOB_SD = 11, JOB_SDFLASH = 12 };  // UI-66 (sky_sdfw.h, through extra_job)
+                     JOB_SD = 11, JOB_SDFLASH = 12, JOB_DROP = 13 };  // UI-66 (sky_sdfw.h, through extra_job)
 inline void (*extra_job)(uint8_t job) = nullptr;  // UI-66: jobs served by headers included later
 enum Kind : uint8_t { K_SAT = 0, K_STARLINK = 1, K_ISS = 2, K_GEO = 3 };
 // UI-52: China's space station (Tianhe core; the docked modules share its orbit)
@@ -241,6 +241,13 @@ inline Config jc;   // task-only snapshot of cfg, taken under `mutex` at the sta
 inline QueueHandle_t queue = nullptr;
 inline SemaphoreHandle_t mutex = nullptr;
 inline volatile bool paused = false;   // BUILD-6
+// NET-14: the firmware check (and install) opens a TLS connection of its own, which the ~20 kB of internal RAM
+// left cannot hold beside the data task's kept connection and a request in flight ("sock < 0", "esp-aes: Failed
+// to allocate memory"). It asks the data task to drop the kept connection and stay off the network for a while.
+inline volatile uint32_t hold_until_ms = 0;
+inline volatile bool job_busy = false;
+inline uint32_t net_ms() { return (uint32_t) (net_us() / 1000); }
+inline bool hold_active() { return (int32_t) (hold_until_ms - net_ms()) > 0; }
 inline volatile bool link_up = false;  // NET-8: written by the loop each tick; no downloads while false
 
 // ---- pending slot: written by the task, drained by the loop, guarded by `mutex`
@@ -3891,6 +3898,8 @@ inline void run_job(uint8_t job) {
                  : job == JOB_ALLSKYIMG ? IMG_ALLSKY
                                         : IMG_PLANET);
       break;
+    case JOB_DROP:  // NET-14: only wakes the task so it drops its kept connection (task_main)
+      break;
     default:
       if (extra_job)
         extra_job(job);
@@ -3918,8 +3927,16 @@ inline void task_main(void *) {
     if (xQueueReceive(queue, &job, portMAX_DELAY) != pdTRUE)
       continue;
     queued.fetch_and(~(1u << job));  // a request arriving from now on queues a new run
-    if (!paused)  // BUILD-6: drop work during an upload
+    if (hold_active()) {  // NET-14: the firmware check is using the network: close the kept connection, wait
+      kept_drop();
+      while (hold_active())
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+    if (!paused) {  // BUILD-6: drop work during an upload
+      job_busy = true;
       run_job(job);
+      job_busy = false;
+    }
   }
 }
 
@@ -3948,6 +3965,15 @@ inline bool net_init(const Config &c) {
   ESP_LOGI(net::TAG, "data task started (group %s, starlink r=%d)", c.sat_group.c_str(), c.starlink_radius);
   return true;
 }
+
+// NET-14: keep the data task off the network for `ms` (a request in flight finishes first); it drops its kept
+// connection as it wakes. net_quiet(): it is idle and holds no connection. Never blocks.
+inline bool enqueue(Job j);
+inline void net_hold(uint32_t ms) {
+  net::hold_until_ms = net::net_ms() + ms;
+  enqueue(JOB_DROP);
+}
+inline bool net_quiet() { return !net::job_busy && net::kept.h == nullptr; }
 
 // ARCH-4: never blocks. False when the queue is full (the caller retries next tick).
 inline bool enqueue(Job j) {

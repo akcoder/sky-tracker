@@ -321,6 +321,7 @@ struct Ui {
   Marker iss;
   lv_obj_t *sun = nullptr, *moon = nullptr;
   float map_moon_k = -1, map_moon_ang = 0;  // UI-6 phase picture last drawn
+  bool sun_over = false;  // UI-6a: the Sun's halo is drawn over the Moon (their icons overlap)
   int sun_x = INT_MIN, sun_y = INT_MIN, moon_x = INT_MIN, moon_y = INT_MIN, shadow_x = INT_MIN, shadow_y = INT_MIN;
   bool sun_shown = false, moon_shown = false;
   astro::SunMoon sm{};
@@ -946,9 +947,14 @@ inline void pools_timer_cb(lv_timer_t *tm) {
     lv_timer_delete(tm);
 }
 
+// UI-6a: the Moon is drawn over the Sun unless their icons overlap: a new Moon is about 4-6 degrees from
+// the Sun (a few pixels), never in front of it outside an eclipse, so then the Sun's halo covers it
+inline void order_sun_moon() {
+  lv_obj_move_to_index(ui.moon, ui.n_deco + (ui.sun_over ? 0 : 1));
+  lv_obj_move_to_index(ui.sun, ui.n_deco + (ui.sun_over ? 1 : 0));
+}
 inline void reassert_order() {  // UI-6
-  lv_obj_move_to_index(ui.sun, ui.n_deco);
-  lv_obj_move_to_index(ui.moon, ui.n_deco + 1);
+  order_sun_moon();
   if (ui.css.dot)
     lv_obj_move_to_index(ui.css.dot, -1);  // UI-52
   lv_obj_move_to_index(ui.iss.dot, -1);
@@ -1479,6 +1485,13 @@ inline void draw_sun_moon(double t, double tv) {
   }
 
   set_shown(ui.moon, ui.moon_shown, v.moon.el >= 0);
+  {  // UI-6a
+    const bool over = ui.sun_shown && ui.moon_shown && hypotf(sx - mx, sy - my) < (SUN_HALO_PX + MOON_PX) / 2.0f;
+    if (over != ui.sun_over) {
+      ui.sun_over = over;
+      order_sun_moon();
+    }
+  }
   if (!ui.moon_shown)
     return;
   const int mpx = (int) lroundf(mx) - MOON_PX / 2, mpy = (int) lroundf(my) - MOON_PX / 2;

@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.37 (unreleased): the firmware check no longer fails with "sock < 0" or "esp-aes: Failed to allocate memory" when the data task is on the network: it drops its kept connection and waits while the check runs (NET-14). A new Moon is drawn under the Sun's halo instead of in front of it (UI-6a).
 - 4.6.36 (queued): a tap on a row of the list opens that object's details card on the map (UI-10); built with ESPHome 2026.9.1. The launch, undocking and splashdown animations draw over a snapshot of the screen: 21 / 31 / 27 fps on the unit (were 15 / 28 / 18) (UI-69o). Splashdown chutes flutter and are let go, deflate and settle on the sea (UI-69m). Last Animation FPS sensor (PERF-17). The launch animation runs until its smoke has cleared (UI-69). Fixes a crash (abort) when the list was built: its rows now live in persistent PSRAM buffers (FAIL-13).
 - 4.6.35 (queued): all firmware installs (GitHub, web upload, microSD) share one card with a progress bar and no percentage (UI-12). An install page at akcoder.github.io/sky-tracker, flashing over USB from the browser.
 - 4.6.34 (installed): the microSD card update looks for sky-tracker-esp32s3.ota.bin, the release's own file name, instead of sky_tracker_firmware_<version>.bin; the version shown is read from the image's app descriptor, where the build now stores fw_version (older images: from the project text inside) (UI-66). The list page scrolls instead of stopping at 18 rows with "+ N more" (UI-10).
@@ -373,6 +374,10 @@ UI-6   The Sun (20 px, with an opaque 30 px halo) and Moon (20 px phase picture,
        projected position; redrawn when the lit fraction moves 0.4% or that
        direction turns 3°.
        This stacking order MUST be reasserted on each refresh, not left to creation order.
+UI-6a  The Moon is drawn over the Sun, except while their icons overlap (centres closer than
+       (30 + 20) / 2 px): then the Sun's halo is drawn over the Moon. A new Moon is 4-6 degrees from
+       the Sun, a few pixels on the map at about 2 px a degree, and passes in front of it only in an
+       eclipse; drawn on top, its dark disc looked like a transit (Oct 10 2026, 4 degrees south).
 UI-7   Anything below the horizon MUST be hidden, not clamped to the rim.
 UI-8   Header: title, satellite counts, clock. Under the title sits a two-line
        countdown, "Satellites {n}s" / "Starlink {n}s" ("Starlink off" when
@@ -1474,6 +1479,13 @@ NET-2c The Wi-Fi status page's second line is the SSID being tried (the station 
 NET-13 Each request's URL goes to the log at DEBUG when it starts ("<what>: GET <url>"), and the
        failure lines (client init, connect failed, HTTP <code>, read failed) end with the URL,
        so any download can be tried by hand from a browser.
+NET-14 The firmware check's and install's TLS connection MUST NOT start while the data task holds a
+       connection or has a request in flight: about 20 kB of internal RAM is free, too little for two
+       TLS sessions (the check failed with "sock < 0" or "esp-aes: Failed to allocate memory", seen
+       in the web log, 4.6.36). sat::upd asks the data task to stay off the network (net_hold: 25 s
+       for a check, 40 s for an install); the task drops its kept connection as it wakes (a JOB_DROP
+       wakes an idle one), and the request starts once net_quiet() (no job running, no kept
+       connection) or after 6 s.
 NET-13a Firmware update checks go through sat::upd (boot +3 min, hourly interval, Settings, the
        Upgrade Check button; the entity's own polling is off) and log "firmware: GET <manifest>"
        at DEBUG; each new answer logs "firmware: manifest has X, installed Y (newer, offered |

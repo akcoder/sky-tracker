@@ -554,6 +554,22 @@ int main() {
     CHECK(tested > 5, "list rows tested (%d)", tested);
   }
   lv_screen_load(page1);
+  {  // UI-6a: a new Moon (Oct 10 2026, 4 degrees from the Sun) is drawn under the Sun's halo, a far one over it
+    const double keep = sat_host_now;
+    lv_screen_load(page1);
+    sat_host_now = 1791655200.0;  // 2026-10-10 18:00 UTC: 10:00 in Wasilla, Sun up, the Moon beside it
+    sat::draw_sun_moon(sat_host_now, sat_host_now);
+    printf("new moon: sun shown %d moon shown %d over %d, sun el %.1f moon el %.1f\n", sat::ui.sun_shown, sat::ui.moon_shown,
+           sat::ui.sun_over, sat::ui.sm.sun.el, sat::ui.sm.moon.el);
+    CHECK(sat::ui.sun_shown && sat::ui.moon_shown && sat::ui.sun_over &&
+              lv_obj_get_index(sat::ui.sun) > lv_obj_get_index(sat::ui.moon),
+          "the Sun is drawn over a new Moon");
+    sat_host_now = 1792000800.0;  // four days on: far from the Sun
+    sat::draw_sun_moon(sat_host_now, sat_host_now);
+    CHECK(!sat::ui.sun_over && lv_obj_get_index(sat::ui.sun) < lv_obj_get_index(sat::ui.moon), "the Moon is over the Sun again once apart");
+    sat_host_now = keep;
+    sat::draw_sun_moon(sat_host_now, sat_host_now);
+  }
 
   // error: CelesTrak refuses; the old data stays and the status says so
   {

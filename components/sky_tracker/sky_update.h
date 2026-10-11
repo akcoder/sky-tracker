@@ -75,14 +75,35 @@ inline std::string current() { return ent ? ent->update_info.current_version : s
 inline std::string summary() { return ent ? ent->update_info.summary : std::string(); }  // UI-68c: the release notes
 inline bool has_prog() { return ent && ent->update_info.has_progress; }
 inline float prog() { return ent ? ent->update_info.progress : 0.0f; }
+// NET-14: the check's and the install's TLS connection needs the memory the data task's kept connection and
+// request hold: it is asked to drop them and stay off the network, and the request starts once it has (or
+// after 6 s)
+struct Deferred {
+  void (*fn)();
+  uint32_t t0;
+};
+inline void when_quiet(void (*fn)(), uint32_t hold_ms) {
+  net_hold(hold_ms);
+  auto *d = new Deferred{fn, esphome::millis()};
+  lv_timer_create(
+      [](lv_timer_t *t) {
+        auto *d = (Deferred *) lv_timer_get_user_data(t);
+        if (net_quiet() || esphome::millis() - d->t0 > 6000) {
+          d->fn();
+          delete d;
+          lv_timer_delete(t);
+        }
+      },
+      250, d);
+}
 inline void do_check() {
   ESP_LOGD("upd", "firmware: GET %s", source);  // NET-13a: the update check's request
   if (ent)
-    ent->check();
+    when_quiet([]() { ent->check(); }, 25000);
 }
 inline void do_perform() {
   if (ent)
-    ent->perform();
+    when_quiet([]() { ent->perform(); }, 40000);
 }
 inline uint32_t now_ms() { return esphome::millis(); }
 #endif
