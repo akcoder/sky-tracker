@@ -1,0 +1,61 @@
+# every screen once: how long does opening it take, and what does it cost while it sits there?
+# (the board has just booted: let it connect and download first)
+wait 20
+reset
+perf
+# the map, idle
+wait 10
+perf
+page settings
+wait 4
+perf
+page about
+wait 4
+perf
+page list
+wait 4
+perf
+page debug
+wait 4
+perf
+page sky
+wait 4
+perf
+# the picture viewer: each tab, with its download
+reset
+open sun
+wait 25
+perf
+close
+wait 3
+perf
+open moon
+wait 20
+perf
+close
+wait 3
+perf
+open earth
+wait 25
+perf
+close
+wait 3
+perf
+open uaf
+wait 15
+perf
+close
+wait 3
+perf
+open planet 3
+wait 8
+perf
+open planet 4
+wait 8
+perf
+open planet 5
+wait 8
+perf
+close
+wait 3
+perf

@@ -487,6 +487,25 @@ interval:
           call.set_brightness(want);
           call.set_transition_length(3000);
           call.perform();
+  - interval: 250ms             # PERF-20: serial commands (tools/dbg.py): open a picture, a page, print the perf numbers
+    then:
+      - lambda: |-
+          char l[96];
+          while (sat::dbg::poll(l, sizeof(l))) {
+            ESP_LOGI("dbg", "command: %s", l);
+            if (!strncmp(l, "page ", 5)) {
+              const char *p = l + 5;
+              auto go = [&](int idx) { id(lvgl_comp)->show_page(idx, LV_SCREEN_LOAD_ANIM_NONE, 0); };
+              if (!strcmp(p, "sky")) go(id(sky_page)->index);
+              else if (!strcmp(p, "list")) go(id(list_page)->index);
+              else if (!strcmp(p, "settings")) go(id(settings_page)->index);
+              else if (!strcmp(p, "about")) go(id(about_page)->index);
+              else if (!strcmp(p, "debug")) go(id(debug_page)->index);
+              else ESP_LOGW("dbg", "page what? (sky list settings about debug)");
+            } else {
+              sat::dbg::run(l);
+            }
+          }
   - interval: 1s                 # UI-27: debug pages, only while one is showing
     id: interval_4
     then:

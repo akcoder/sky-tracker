@@ -19,6 +19,9 @@
 
 #include "esphome/components/tracker_common/tracker_about.h"  // shared with f1-tracker
 #include "sat_net.h"
+#ifndef SAT_HOST_TEST
+#include "driver/uart.h"
+#endif
 #include "sky_stars.h"
 #include "sky_flags.h"
 #include "sky_wmm.h"
@@ -7125,6 +7128,7 @@ inline void schedule(double t) {
 // ================================================================== entry points
 // HW-7 (the ST7701 soft reset before the SPI bus is set up) is tracker-common's: tracker::panel_soft_reset.
 
+inline void perf_hook();  // PERF-19, below
 inline void setup(const Config &cfg, const Widgets &w) {
   // UI-22: the layer switches were restored (set_layers) before setup; net_init copies
   // the whole Config, so carry them over or a hidden layer is downloaded at boot anyway.
@@ -7153,6 +7157,9 @@ inline void setup(const Config &cfg, const Widgets &w) {
     lv_label_set_long_mode(ui.w.status, LV_LABEL_LONG_WRAP);
   }
   ui.ready = true;
+#ifndef SAT_HOST_TEST
+  perf_hook();  // PERF-19
+#endif
 #ifdef SAT_HOST_TEST
   pools_work(INT64_MAX);
 #else
@@ -7336,22 +7343,152 @@ namespace rocket {
 bool active();  // sky_rocket.h (UI-69): the launch animation is on screen
 }
 
-// PERF-19: how long each LVGL refresh takes (from REFR_START to REFR_READY): the count, the sum and the longest in the
-// last minute (logged with the draw buffer's place), and any over 150 ms as it happens
-inline int64_t perf_refr_t0 = 0, perf_refr_max = 0, perf_refr_sum = 0;
-inline uint32_t perf_refr_n = 0;
-inline void perf_refr_start_cb(lv_event_t *) { perf_refr_t0 = ui_us(); }
-inline void perf_refr_ready_cb(lv_event_t *) {
-  if (perf_refr_t0 == 0)
-    return;
-  const int64_t d = ui_us() - perf_refr_t0;
-  perf_refr_t0 = 0;
-  perf_refr_n++;
-  perf_refr_sum += d;
-  perf_refr_max = std::max(perf_refr_max, d);
-  if (d > 150000)
-    ESP_LOGW(UI_TAG, "perf: a screen refresh took %lld ms", (long long) (d / 1000));
+// PERF-19: where the time of each LVGL refresh goes. A refresh is REFR_START .. REFR_READY; inside it the page is rendered
+// in strips (RENDER_START .. RENDER_READY: LVGL drawing into its 56 KB buffer) and each strip is flushed (FLUSH_START ..
+// FLUSH_FINISH: the copy to the panel's framebuffer). Totals since the last "perf" line (every minute, or on the serial
+// command "perf"), and any refresh over 150 ms as it happens, with its split.
+struct Perf {
+  int64_t t_refr = 0, t_render = 0, t_flush = 0;           // starts of the one in progress
+  int64_t refr_sum = 0, refr_max = 0, render_sum = 0, flush_sum = 0, px_sum = 0;
+  int64_t cur_render = 0, cur_flush = 0, cur_px = 0;     // this refresh
+  int cur_strips = 0;
+  uint32_t n = 0, strips = 0, slow = 0;
+};
+inline Perf perf;
+inline void perf_cb(lv_event_t *e) {
+  const lv_event_code_t c = lv_event_get_code(e);
+  const int64_t now = ui_us();
+  switch (c) {
+    case LV_EVENT_REFR_START:
+      perf.t_refr = now, perf.cur_render = perf.cur_flush = perf.cur_px = 0, perf.cur_strips = 0;
+      break;
+    case LV_EVENT_RENDER_START:
+      perf.t_render = now;
+      break;
+    case LV_EVENT_RENDER_READY:
+      perf.cur_render += now - perf.t_render;
+      perf.cur_strips++;
+      break;
+    case LV_EVENT_FLUSH_START: {
+      perf.t_flush = now;
+      const lv_area_t *a = (const lv_area_t *) lv_event_get_param(e);
+      if (a)
+        perf.cur_px += (int64_t) (a->x2 - a->x1 + 1) * (a->y2 - a->y1 + 1);
+      break;
+    }
+    case LV_EVENT_FLUSH_FINISH:
+      perf.cur_flush += now - perf.t_flush;
+      break;
+    case LV_EVENT_REFR_READY: {
+      if (perf.t_refr == 0)
+        break;
+      const int64_t d = now - perf.t_refr;
+      perf.t_refr = 0;
+      perf.n++;
+      perf.refr_sum += d, perf.refr_max = std::max(perf.refr_max, d);
+      perf.render_sum += perf.cur_render, perf.flush_sum += perf.cur_flush, perf.px_sum += perf.cur_px;
+      perf.strips += (uint32_t) perf.cur_strips;
+      if (d > 150000) {
+        perf.slow++;
+        ESP_LOGW(UI_TAG, "perf: a refresh took %lld ms: %d strips, %lld ms drawing, %lld ms flushing, %lld Kpx", (long long) (d / 1000),
+                 perf.cur_strips, (long long) (perf.cur_render / 1000), (long long) (perf.cur_flush / 1000), (long long) (perf.cur_px / 1000));
+      }
+      break;
+    }
+    default:
+      break;
+  }
 }
+inline void perf_hook() {
+  static bool hooked = false;
+  lv_display_t *d = lv_display_get_default();
+  if (hooked || d == nullptr)
+    return;
+  hooked = true;
+  for (lv_event_code_t c : {LV_EVENT_REFR_START, LV_EVENT_REFR_READY, LV_EVENT_RENDER_START, LV_EVENT_RENDER_READY, LV_EVENT_FLUSH_START,
+                            LV_EVENT_FLUSH_FINISH})
+    lv_display_add_event_cb(d, perf_cb, c, nullptr);
+}
+inline void perf_report(const char *why) {
+  const double n = perf.n ? (double) perf.n : 1.0;
+  ESP_LOGI(UI_TAG, "perf[%s]: %u refreshes (%u slow), mean %.0f ms, longest %.0f ms; per refresh: %.1f strips, %.0f ms drawing, %.0f ms flushing, %.0f Kpx",
+           why, (unsigned) perf.n, (unsigned) perf.slow, perf.refr_sum / n / 1000.0, perf.refr_max / 1000.0, perf.strips / n,
+           perf.render_sum / n / 1000.0, perf.flush_sum / n / 1000.0, perf.px_sum / n / 1000.0);
+  perf.n = perf.strips = perf.slow = 0, perf.refr_sum = perf.refr_max = perf.render_sum = perf.flush_sum = perf.px_sum = 0;
+}
+// PERF-20: a serial command line, to open things without a finger while measuring (tools/dbg.py): one command per
+// line on UART0's receive pin, e.g. "open earth", "open planet 3", "close", "page settings" (handled in the YAML,
+// which knows the pages), "perf". The answers are log lines, which the web page's log shows too.
+namespace dbg {
+inline bool poll(char *out, size_t n) {
+#ifndef SAT_HOST_TEST
+  static char buf[96];
+  static size_t len = 0;
+  if (!uart_is_driver_installed(UART_NUM_0))
+    uart_driver_install(UART_NUM_0, 256, 0, 0, nullptr, 0);
+  uint8_t c;
+  while (uart_read_bytes(UART_NUM_0, &c, 1, 0) == 1) {
+    if (c == '\n' || c == '\r') {
+      if (len > 0) {
+        buf[len] = 0;
+        len = 0;
+        snprintf(out, n, "%s", buf);
+        return true;
+      }
+    } else if (len < sizeof(buf) - 1) {
+      buf[len++] = (char) c;
+    }
+  }
+#else
+  (void) out, (void) n;
+#endif
+  return false;
+}
+inline void run(const char *cmd) {
+  char what[24] = "";
+  int n = -1;
+  sscanf(cmd, "%23s %d", what, &n);
+  if (!strcmp(cmd, "perf")) {
+    perf_report("cmd");
+#ifndef SAT_HOST_TEST
+    ESP_LOGI(UI_TAG, "dbg: internal RAM free %u KB, largest block %u KB, PSRAM free %u KB",
+             (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+             (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+             (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+#endif
+  } else if (!strcmp(cmd, "reset")) {
+    perf = Perf();
+  } else if (!strcmp(cmd, "close")) {
+    img_view_close();
+    finder_close();
+    deselect();
+  } else if (!strncmp(cmd, "open ", 5)) {
+    const char *w = cmd + 5;
+    if (!strncmp(w, "sun", 3))
+      img_view_open_now(net::IMG_SUN);
+    else if (!strncmp(w, "moon", 4))
+      img_view_open_now(net::IMG_MOON);
+    else if (!strncmp(w, "earth", 5))
+      img_view_open_now(net::IMG_EARTH);
+    else if (!strncmp(w, "region", 6))
+      img_view_open_now(net::IMG_REGION);
+    else if (!strncmp(w, "uaf", 3))
+      img_view_open_now(net::IMG_ALLSKY);
+    else if (!strncmp(w, "planet ", 7) && n < 0) {
+      int p = -1;
+      sscanf(w + 7, "%d", &p);
+      if (p >= 0 && p < (int) planets::N_PLANETS + photos::N_OUTER)
+        img_view_open_now(VIEW_PLANET + p);
+    } else {
+      ESP_LOGW(UI_TAG, "dbg: open what? (sun moon earth region uaf planet N)");
+      return;
+    }
+    ESP_LOGI(UI_TAG, "dbg: opened %s", w);
+  } else {
+    ESP_LOGW(UI_TAG, "dbg: unknown command '%s' (perf reset close open <sun|moon|earth|region|uaf|planet N> page <name>)", cmd);
+  }
+}
+}  // namespace dbg
 inline void tick() {
   if (!ui.ready || ui.ota)
     return;  // BUILD-6
@@ -7369,16 +7506,8 @@ inline void tick() {
       last_perf = us;
       lv_display_t *d = lv_display_get_default();
       lv_draw_buf_t *db = d ? lv_display_get_buf_active(d) : nullptr;
-      static bool hooked = false;
-      if (!hooked && d) {
-        hooked = true;
-        lv_display_add_event_cb(d, perf_refr_start_cb, LV_EVENT_REFR_START, nullptr);
-        lv_display_add_event_cb(d, perf_refr_ready_cb, LV_EVENT_REFR_READY, nullptr);
-      }
-      ESP_LOGI(UI_TAG, "perf: %u refreshes in the last minute, mean %lld ms, longest %lld ms",
-               (unsigned) perf_refr_n, perf_refr_n ? (long long) (perf_refr_sum / perf_refr_n / 1000) : 0LL,
-               (long long) (perf_refr_max / 1000));
-      perf_refr_n = 0, perf_refr_sum = perf_refr_max = 0;
+      perf_hook();
+      perf_report("minute");
       ESP_LOGI(UI_TAG, "perf: LVGL draw buffer in %s (%u KB); internal RAM free %u KB, largest block %u KB",
                db && db->data ? (esp_ptr_internal(db->data) ? "internal RAM" : "PSRAM") : "?",
                db ? (unsigned) (db->data_size / 1024) : 0u, (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
