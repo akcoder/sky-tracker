@@ -24,6 +24,7 @@ void set_enabled(bool on);
 void play_now();  // the button: the next launch's name (or a generic one)
 void play_undock_now();  // UI-69f button: the next ISS undocking's name (or a generic one)
 bool active();    // playing now (sat::tick pauses, UI-69b)
+void set_last_fps(float fps);  // the dinosaur's walk (sky_dino.h) reports its rate here too
 float last_fps();  // PERF-17: the frame rate of the last animation played (NaN before the first)
 void play_boot();  // UI-69k on the boot screen: no banner, smoke over black
 void play_splash_now();  // UI-69m button: the next splashdown's name (or a generic one)
@@ -485,6 +486,7 @@ inline void stop() {
 inline bool playing() { return st.anim != nullptr; }
 bool active() { return playing(); }
 float last_fps() { return st.last_fps; }
+void set_last_fps(float fps) { st.last_fps = fps; }
 
 inline void frame_undock();
 inline void frame_launch() {

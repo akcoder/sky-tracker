@@ -32,6 +32,12 @@ bool walk(uint32_t seed);
 #include <cstdlib>
 #include <cstring>
 
+namespace sat {
+namespace rocket {
+void set_last_fps(float fps);  // sky_rocket.h
+}
+}  // namespace sat
+
 #include "sky_dinologic.h"
 #include "sky_dino_data.h"
 #include "esp_heap_caps.h"
@@ -153,6 +159,7 @@ inline void end_walk() {
   big_free(st.mirror);
   big_free(st.tail_mirror);
   st.mirror = st.tail_mirror = nullptr;
+  if (ms) rocket::set_last_fps(st.frames * 1000.0f / ms);   // the Last Animation FPS entity
   ESP_LOGI("dino", "walk: %u frames in %u ms (%.1f fps), longest gap %u ms", (unsigned) st.frames, (unsigned) ms,
            ms ? st.frames * 1000.0f / ms : 0.0f, (unsigned) st.max_gap);
   st.running = false;
