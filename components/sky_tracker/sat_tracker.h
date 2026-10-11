@@ -6221,7 +6221,7 @@ inline void planet_view_update(double t) {
   char c1[112];
   const char *nm = view_name(p);
   if (outer)
-    snprintf(c1, sizeof(c1), "%s: a picture only, its position is not tracked", nm);
+    snprintf(c1, sizeof(c1), "%s", nm);
   else if (p == planets::SATURN)
     snprintf(c1, sizeof(c1), "%s: rings tilted %.1f\xC2\xB0 (%s face), %.1f\" across", nm, fabsf(v.earth_lat),
              v.earth_lat >= 0 ? "north" : "south", v.diam);
@@ -7321,6 +7321,22 @@ inline void tick() {
   // (positions are computed for the current time, so nothing is lost but up to 2 s).
   if (rocket::active())
     return;
+#ifndef SAT_HOST_TEST
+  {  // PERF-19: where LVGL's draw buffer is (internal RAM is fast, PSRAM is slow and shared with the panel) and how
+    // much internal RAM is left, once a minute: a draw buffer that fell back to PSRAM makes every redraw chunky
+    static int64_t last_perf = 0;
+    const int64_t us = ui_us();
+    if (us - last_perf > 60000000) {
+      last_perf = us;
+      lv_display_t *d = lv_display_get_default();
+      lv_draw_buf_t *db = d ? lv_display_get_buf_active(d) : nullptr;
+      ESP_LOGI(UI_TAG, "perf: LVGL draw buffer in %s (%u KB); internal RAM free %u KB, largest block %u KB",
+               db && db->data ? (esp_ptr_internal(db->data) ? "internal RAM" : "PSRAM") : "?",
+               db ? (unsigned) (db->data_size / 1024) : 0u, (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+               (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
+    }
+  }
+#endif
   const double t = clock_now();
   if (clock_valid())
     schedule(t);

@@ -954,7 +954,7 @@ UI-59b Picture tabs: Sun (72), Moon (72), Planets (104) and UAF (72, the all-sky
        orange rim. Tap one to see it. Uranus, Neptune and Pluto are pictures only
        (sky_photos_outer.h, made by tools/gen_outer_photos.py from public-domain NASA pictures
        on Wikimedia Commons: Voyager 2, Voyager 2, New Horizons; 320 px JPEGs, 52 KB): no orbit
-       data, so no map marker, no phase and no position; the caption says so. The scaling to
+       data, so no map marker, no phase and no position; the caption is just the name. The scaling to
        300 px takes only as long as the picture changes (it once ran on every update and
        stalled the screen for 1.7 s).
 UI-59c (removed in 4.6.31: the picture before and the < > buttons, with UI-59d's fetching of
