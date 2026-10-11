@@ -291,6 +291,8 @@ api:
       then:
         - lambda: |-
             ESP_LOGI("dbg", "command: %s", cmd.c_str());
+            if (strcmp(cmd.c_str(), "perf") && strcmp(cmd.c_str(), "state") && strcmp(cmd.c_str(), "reset"))
+              lv_display_trigger_activity(nullptr);  // (a command counts as a touch: the one-minute idle close would shut what it opened)
             if (!strncmp(cmd.c_str(), "page ", 5)) {
               const char *p = cmd.c_str() + 5;
               auto go = [&](int idx) { id(lvgl_comp)->show_page(idx, LV_SCREEN_LOAD_ANIM_NONE, 0); };
