@@ -47,7 +47,7 @@ esphome:
       then:
         - lambda: |-
             sat::sdfw::boot_probe();             // UI-66: the only look at the card (shares 47/48)
-            sat::panel_soft_reset(39, 48, 47);   // CS, SCK, MOSI of GUITION-4848S040
+            tracker::panel_soft_reset(39, 48, 47);   // CS, SCK, MOSI of GUITION-4848S040
             // NET-2: fallback AP named "Sky Tracker - XXXX" (last 4 hex digits of the MAC).
             // Set before Wi-Fi starts (setup priority 250); ESPHome's ssid: must be a literal.
             uint8_t mac[6];
@@ -751,47 +751,32 @@ interval:
           // NET-2b: Wi-Fi status page (layout modelled on espcontrol's boot screen).
           // The map is not shown until Wi-Fi connects; after that, 10 s without Wi-Fi
           // brings the status page back (never over the settings page).
-          static uint32_t lost_since = 0;
-          static int state = -1;  // 0 connected, 1 connecting, 2 fallback AP up
-          const uint32_t now = esphome::millis();
-          int st;
-          if (id(wifi_comp).is_connected()) {
-            st = 0;
-            lost_since = 0;
-          } else {
-            if (lost_since == 0)
-              lost_since = now | 1;
-            st = id(wifi_comp).is_ap_active() ? 2 : 1;
-          }
+          // The decision (tracker-common's tracker::boot, shared with f1-tracker): the link, when the
+          // status page comes back, the title and body text.
+          static tracker::boot::Tracker bt;
+          const auto link = tracker::boot::classify(id(wifi_comp).is_connected(), id(wifi_comp).is_ap_active());
           const bool on_status = id(wifi_page)->is_showing();
-          if (st == 0) {
-            if (on_status)
-              id(lvgl_comp)->show_page(id(sky_page)->index, LV_SCREEN_LOAD_ANIM_FADE_IN, 300);
-          } else {
-            if (st == 1) {  // NET-2c: the network it is trying (saved in flash or built in)
+          const auto st = tracker::boot::step(bt, link, esphome::millis(), on_status, id(settings_page)->is_showing(), true);
+          if (st.page == tracker::boot::TO_RACE)
+            id(lvgl_comp)->show_page(id(sky_page)->index, LV_SCREEN_LOAD_ANIM_FADE_IN, 300);
+          else if (st.page == tracker::boot::TO_STATUS)
+            id(lvgl_comp)->show_page(id(wifi_page)->index, LV_SCREEN_LOAD_ANIM_FADE_IN, 300);
+          if (link != tracker::boot::CONNECTED) {
+            char b[128];
+            if (link == tracker::boot::CONNECTING) {  // NET-2c: the network it is trying (saved in flash or built in)
               const auto ssid = id(wifi_comp).get_sta().get_ssid();
-              char b[40];
-              snprintf(b, sizeof(b), "%.*s", (int) ssid.size(), ssid.c_str());
-              if (!b[0])
-                snprintf(b, sizeof(b), "%s", "${wifi_name}");
-              if (st != state)
-                lv_label_set_text(id(wifi_title), "Connecting to Wi-Fi");
-              if (strcmp(lv_label_get_text(id(wifi_body)), b) != 0)
-                lv_label_set_text(id(wifi_body), b);
+              char sta[40];
+              snprintf(sta, sizeof(sta), "%.*s", (int) ssid.size(), ssid.c_str());
+              tracker::boot::body_for(link, sta[0] ? sta : "${wifi_name}", "", b, sizeof(b));
+            } else {
+              const auto ap = id(wifi_comp).get_ap().get_ssid();
+              tracker::boot::body_for(link, "", ap.c_str(), b, sizeof(b));
             }
-            if (st != state) {
-              if (st == 2) {
-                auto ap = id(wifi_comp).get_ap();
-                char b[128];
-                snprintf(b, sizeof(b), "Join '%.*s'\nfrom your phone", (int) ap.get_ssid().size(), ap.get_ssid().c_str());
-                lv_label_set_text(id(wifi_title), "Set up Wi-Fi");
-                lv_label_set_text(id(wifi_body), b);
-              }
-            }
-            if (!on_status && now - lost_since > 10000 && !id(settings_page)->is_showing())
-              id(lvgl_comp)->show_page(id(wifi_page)->index, LV_SCREEN_LOAD_ANIM_FADE_IN, 300);
+            if (st.link_changed)
+              lv_label_set_text(id(wifi_title), tracker::boot::title_for(link));
+            if (strcmp(lv_label_get_text(id(wifi_body)), b) != 0)
+              lv_label_set_text(id(wifi_body), b);
           }
-          state = st;
 
 # ------------------------------------------------------------------ Home Assistant (ARCH-9)
 sensor:

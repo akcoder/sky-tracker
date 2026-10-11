@@ -6974,37 +6974,7 @@ inline void schedule(double t) {
 }
 
 // ================================================================== entry points
-// HW-7: software-reset the ST7701 before ESPHome initialises it. The board has no
-// panel reset pin and ESPHome's init sequence has no SWRESET, so after a warm reboot
-// (every OTA install) the panel sometimes ignored the init and stayed black until a
-// power cycle. Bit-bangs one 9-bit 3-wire SPI command (D/C=0, 0x01, MSB first,
-// sampled on the rising edge) and waits the datasheet's 120 ms. Must run before the
-// SPI bus is set up (on_boot priority above BUS).
-inline void panel_soft_reset(int cs, int sck, int mosi) {
-#ifndef SAT_HOST_TEST
-  const gpio_num_t pins[3] = {(gpio_num_t) cs, (gpio_num_t) sck, (gpio_num_t) mosi};
-  for (gpio_num_t p : pins) {
-    gpio_reset_pin(p);
-    gpio_set_direction(p, GPIO_MODE_OUTPUT);
-  }
-  gpio_set_level(pins[0], 1);
-  gpio_set_level(pins[1], 0);
-  esp_rom_delay_us(10);
-  gpio_set_level(pins[0], 0);
-  const uint16_t word = 0x001;  // 9 bits: D/C = 0 (command), then SWRESET 0x01
-  for (int bit = 8; bit >= 0; bit--) {
-    gpio_set_level(pins[2], (word >> bit) & 1);
-    esp_rom_delay_us(2);
-    gpio_set_level(pins[1], 1);
-    esp_rom_delay_us(2);
-    gpio_set_level(pins[1], 0);
-  }
-  esp_rom_delay_us(2);
-  gpio_set_level(pins[0], 1);
-  esp_rom_delay_us(120000);
-  ESP_LOGI(UI_TAG, "panel software reset sent");
-#endif
-}
+// HW-7 (the ST7701 soft reset before the SPI bus is set up) is tracker-common's: tracker::panel_soft_reset.
 
 inline void setup(const Config &cfg, const Widgets &w) {
   // UI-22: the layer switches were restored (set_layers) before setup; net_init copies
