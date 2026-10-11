@@ -226,6 +226,7 @@ constexpr uint32_t C_MOON_EDGE = mix(C_DIM, SKY_BG, 128);
 constexpr uint32_t PAGE_BG = SAT_PAGE_BG;          // page background around the disc
 constexpr uint32_t C_STAR = 0xEEF1FA;
 constexpr uint32_t C_FIG = mix(0x7F93D0, SKY_BG, 64);    // constellation figures: faint
+constexpr uint32_t C_FIG_SEL = 0xFFC857;  // UI-46b the figure of the constellation whose card is open
 constexpr uint32_t C_FIG_MAJOR = mix(0x9FB2EA, SKY_BG, 150);  // sky::FIG_MAJOR figures: brighter, 2 px
 constexpr uint32_t C_CNAME = mix(0x8E9BC6, SKY_BG, 150);  // constellation names
 constexpr float STAR_MAG_DOT = 3.5f;       // brighter: sized dot; fainter figure stars: 1 px
@@ -348,6 +349,7 @@ struct Ui {
   struct Seg {
     int16_t x0, y0, x1, y1;
     bool major;                   // part of a sky::FIG_MAJOR figure
+    uint8_t poly;                 // which sky::FIG polyline (UI-46b: a selected constellation's lines)
   };
   std::vector<StarPt> star_pts;   // disc coordinates, recomputed every STAR_PERIOD
   struct DsoPt {
@@ -1693,8 +1695,8 @@ inline void draw_starmap(double t) {
       float x0, y0, x1, y1;
       enu_xy(a, x0, y0);
       enu_xy(b, x1, y1);
-      ui.star_segs.push_back(
-          {(int16_t) lroundf(x0), (int16_t) lroundf(y0), (int16_t) lroundf(x1), (int16_t) lroundf(y1), major});
+      ui.star_segs.push_back({(int16_t) lroundf(x0), (int16_t) lroundf(y0), (int16_t) lroundf(x1), (int16_t) lroundf(y1),
+                              major, (uint8_t) poly});
     }
     k += cnt;
   }
@@ -1830,6 +1832,30 @@ inline void star_draw_cb(lv_event_t *e) {
       const int x0 = ox + std::min(g.x0, g.x1) - 2, x1 = ox + std::max(g.x0, g.x1) + 2;
       const int y0 = oy + std::min(g.y0, g.y1) - 2, y1 = oy + std::max(g.y0, g.y1) + 2;
       if (x1 < clip.x1 || x0 > clip.x2 || y1 < clip.y1 || y0 > clip.y2)
+        continue;
+      d.p1.x = (lv_value_precise_t) (ox + g.x0);
+      d.p1.y = (lv_value_precise_t) (oy + g.y0);
+      d.p2.x = (lv_value_precise_t) (ox + g.x1);
+      d.p2.y = (lv_value_precise_t) (oy + g.y1);
+      lv_draw_line(layer, &d);
+    }
+  }
+  if (ui.sel_kind == K_CONST && ui.sel_id >= 0 && ui.sel_id < sky::N_NAMES) {
+    // UI-46b: the constellation whose card is open: its figure again, bright, thick, over the others. Its lines
+    // are sky::FIG polylines first_poly(i) .. first_poly(i) + n (the generator writes each name's polyline
+    // count first in its CFIG record, in the order of the polylines)
+    int lo = 0;
+    for (int j = 0; j < ui.sel_id; j++)
+      lo += sky::CFIG[sky::CFIG_OFF[j]];
+    const int hi = lo + sky::CFIG[sky::CFIG_OFF[ui.sel_id]];
+    lv_draw_line_dsc_t d;
+    lv_draw_line_dsc_init(&d);
+    d.color = lv_color_hex(C_FIG_SEL);
+    d.width = 3;
+    d.round_start = d.round_end = 1;
+    d.opa = LV_OPA_COVER;
+    for (const auto &g : ui.star_segs) {
+      if (g.poly < lo || g.poly >= hi)
         continue;
       d.p1.x = (lv_value_precise_t) (ox + g.x0);
       d.p1.y = (lv_value_precise_t) (oy + g.y0);
@@ -4716,7 +4742,10 @@ inline void arc_update(double t) {
 }
 
 inline void deselect() {
+  const bool was_const = ui.sel_kind == K_CONST;
   ui.sel_kind = -1;
+  if (was_const && ui.w.sky)
+    lv_obj_invalidate(ui.w.sky);  // UI-46b: its figure goes back to the others
   if (ui.card)
     lv_obj_add_flag(ui.card, LV_OBJ_FLAG_HIDDEN);
   if (ui.sel_ring)
@@ -5547,7 +5576,22 @@ inline void const_card_update(double t) {
   if (ui.card_flag)
     lv_obj_add_flag(ui.card_flag, LV_OBJ_FLAG_HIDDEN);
   lv_obj_add_flag(ui.sel_ring, LV_OBJ_FLAG_HIDDEN);
-  int ty = ui.cy;  // keep the card clear of the name tag
+  float px, py;
+  project({az, el}, px, py);
+  int ty = el >= 0 ? (int) lroundf(py) : ui.cy;  // keep the card clear of the figure (UI-46b) and the name tag
+  {  // the card goes to the half of the disc with less of the lit figure: the mean height of its lines
+    int lo = 0;
+    for (int j = 0; j < i; j++)
+      lo += sky::CFIG[sky::CFIG_OFF[j]];
+    const int hi = lo + sky::CFIG[sky::CFIG_OFF[i]];
+    long sum = 0;
+    int cnt = 0;
+    for (const auto &g : ui.star_segs)
+      if (g.poly >= lo && g.poly < hi)
+        sum += g.y0 + g.y1, cnt += 2;
+    if (cnt > 0)
+      ty = (int) (sum / cnt);
+  }
   for (const auto &nt : ui.names)
     if (nt.idx == i)
       ty = nt.y + nt.h / 2;
@@ -5621,9 +5665,17 @@ inline void sky_point_card_update(double t) {
     lv_obj_remove_flag(ui.card_icon, LV_OBJ_FLAG_HIDDEN);
     card_align_icon();
   }
-  lv_obj_add_flag(ui.sel_ring, LV_OBJ_FLAG_HIDDEN);
   float x, y;
   project({az, el}, x, y);
+  if (el >= 0) {  // UI-50b: a ring round the object the card is for (as for a satellite)
+    const int ring = star ? 26 : dso ? 24 : 32;
+    lv_obj_set_size(ui.sel_ring, ring, ring);
+    lv_obj_set_pos(ui.sel_ring, (int) lroundf(x) - ring / 2, (int) lroundf(y) - ring / 2);
+    lv_obj_remove_flag(ui.sel_ring, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_to_index(ui.sel_ring, -1);
+  } else {
+    lv_obj_add_flag(ui.sel_ring, LV_OBJ_FLAG_HIDDEN);
+  }
   lv_area_t box;
   lv_obj_get_coords(ui.w.sky, &box);
   lv_obj_update_layout(ui.card);
@@ -6417,8 +6469,11 @@ inline void card_img_cb(lv_event_t *e) {
 inline void moon_icon_click_cb(lv_event_t *e);
 
 inline void select_object(int kind, int32_t id) {
+  const bool was_const = ui.sel_kind == K_CONST;
   ui.sel_kind = kind;
   ui.sel_id = id;
+  if ((was_const || kind == K_CONST) && ui.w.sky)
+    lv_obj_invalidate(ui.w.sky);  // UI-46b: its figure is lit while its card is open
   ui.sel_since = clock_now();
   static const uint32_t COL[13] = {C_LEO, 0x8FA8F0, C_ISS, C_GEO, C_SUN, C_MOON, 0, 0, 0xFFF1B8, C_METEOR, C_CSS, C_DSO, C_COMET};
   const uint32_t col = kind == K_PLANET ? C_PLANET[id] : kind == K_CONST ? C_CONST_TITLE : kind == K_INFO ? info_alert.col : COL[kind];

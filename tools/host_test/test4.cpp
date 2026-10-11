@@ -633,6 +633,53 @@ int main() {
               k == sat::K_STAR ? "star" : "constellation");
         sat::deselect();
       }
+      {  // UI-46b / UI-50b: the object a card is for is lit on the map: a constellation's figure, a ring round a star
+        lv_screen_load(page1);
+        auto lit = [&]() {  // pixels of the figure's highlight colour (0xFFC857) or the ring's white, on the sky disc
+          lv_obj_invalidate(lv_screen_active());
+          lv_refr_now(disp);
+          int fig = 0;
+          for (int y = 62; y < 430; y++)
+            for (int x = 56; x < 424; x++) {
+              const uint16_t c = (uint16_t) ((fb[y * 480 + x] >> 8) | (fb[y * 480 + x] << 8));
+              const int r = (c >> 11) << 3, g = ((c >> 5) & 63) << 2, b = (c & 31) << 3;
+              if (std::abs(r - 0xFF) < 12 && std::abs(g - 0xC8) < 14 && std::abs(b - 0x57) < 20)
+                fig++;
+            }
+          return fig;
+        };
+        int ci = -1, si = -1;
+        for (int r = 1; r < n; r++) {
+          if (ci < 0 && sat::ui.row_sel_kind[r] == sat::K_CONST && sat::ui.row_sel_id[r] == 1 + 0) ci = sat::ui.row_sel_id[r];
+          if (si < 0 && sat::ui.row_sel_kind[r] == sat::K_STAR) si = sat::ui.row_sel_id[r];
+        }
+        for (int r = 1; r < n && ci < 0; r++)  // any constellation with a figure
+          if (sat::ui.row_sel_kind[r] == sat::K_CONST) ci = sat::ui.row_sel_id[r];
+        const int base = lit();
+        sat::select_object(sat::K_CONST, ci);
+        const int with = lit();
+        printf("constellation %d highlight: %d px lit (was %d)\n", ci, with, base);
+        {  // a render of a big figure (Cygnus, if it is up): the figure lit, its card open
+          int cyg = -1;
+          for (int q = 0; q < sat::sky::N_NAMES; q++)
+            if (!strcmp(sat::sky::NAMES[q].text, "Cygnus")) cyg = q;
+          if (cyg >= 0) {
+            sat::select_object(sat::K_CONST, cyg);
+            lit();
+            save_ppm(OUT_DIR "/renders/r25_const_lit.ppm");
+            sat::select_object(sat::K_CONST, ci);
+          }
+        }
+        CHECK(with > base + 40, "the selected constellation's figure is lit (%d px, was %d)", with, base);
+        sat::deselect();
+        CHECK(lit() <= base + 2, "and goes back when its card closes");
+        sat::select_object(sat::K_STAR, si);
+        CHECK(!lv_obj_has_flag(sat::ui.sel_ring, LV_OBJ_FLAG_HIDDEN), "a star's card rings the star");
+        lit();
+        save_ppm(OUT_DIR "/renders/r25_star_ring.ppm");
+        sat::deselect();
+        lv_screen_load(page2);
+      }
       printf("list: %d stars, %d constellations\n", stars, consts);
       CHECK(stars > 0 && consts > 0 && sat::ui.stars_shown, "stars and constellations are on the list (%d, %d)", stars, consts);
     }
