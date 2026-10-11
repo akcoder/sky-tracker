@@ -6512,6 +6512,33 @@ inline void moon_icon_click_cb(lv_event_t *e) {  // UI-36
   lv_event_stop_bubbling(e);
 }
 
+// UI-46c: touching a constellation's figure (a line of it, within 9 px) opens its card, as its name tag does.
+// x, y are disc coordinates; returns the name's index, or -1. The lines are sky::FIG polylines, each name
+// owning a run of them (its CFIG record starts with their count).
+inline int const_at(int x, int y) {
+  int best_poly = -1;
+  float best = 9.0f * 9.0f;
+  for (const auto &g : ui.star_segs) {
+    const float vx = g.x1 - g.x0, vy = g.y1 - g.y0, len2 = vx * vx + vy * vy;
+    float t = len2 > 0 ? ((x - g.x0) * vx + (y - g.y0) * vy) / len2 : 0;
+    t = std::max(0.0f, std::min(1.0f, t));
+    const float dx = g.x0 + t * vx - x, dy = g.y0 + t * vy - y, d2 = dx * dx + dy * dy;
+    if (d2 < best) {
+      best = d2;
+      best_poly = g.poly;
+    }
+  }
+  if (best_poly < 0)
+    return -1;
+  int hi = 0;
+  for (int i = 0; i < sky::N_NAMES; i++) {
+    hi += sky::CFIG[sky::CFIG_OFF[i]];
+    if (best_poly < hi)
+      return i;
+  }
+  return -1;
+}
+
 inline void sky_click_cb(lv_event_t *e) {
   if (scrub_swallow_click) {  // UI-53: the release of the long press that opened the slider
     scrub_swallow_click = false;
@@ -6663,6 +6690,13 @@ inline void sky_click_cb(lv_event_t *e) {
         break;
       }
     }
+  if (kind < 0 && ui.stars_shown) {  // UI-46c: nothing else here: a constellation's figure under the finger
+    const int fig = const_at(x, y);
+    if (fig >= 0) {
+      name_hit = fig;
+      kind = K_CONST;
+    }
+  }
   if (kind == K_CONST && name_hit >= 0) {
     select_object(K_CONST, name_hit);
     lv_event_stop_bubbling(e);

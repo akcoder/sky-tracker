@@ -673,6 +673,33 @@ int main() {
         CHECK(with > base + 40, "the selected constellation's figure is lit (%d px, was %d)", with, base);
         sat::deselect();
         CHECK(lit() <= base + 2, "and goes back when its card closes");
+        {  // UI-46c: a touch on a constellation's line finds its constellation; far from every line finds none
+          int found = 0, checked = 0, wrong = 0;
+          for (const auto &g : sat::ui.star_segs) {
+            const int mx = (g.x0 + g.x1) / 2, my = (g.y0 + g.y1) / 2;
+            const int who = sat::const_at(mx + 2, my + 2);
+            checked++;
+            if (who >= 0) found++;
+            if (who < 0) wrong++;
+          }
+          printf("figure touches: %d of %d lines found a constellation\n", found, checked);
+          CHECK(checked > 20 && wrong == 0, "every line of a figure answers a touch (%d of %d)", found, checked);
+          CHECK(sat::const_at(-100, -100) == -1, "a touch far from every figure finds none");
+          // the lines of Cygnus answer with Cygnus
+          int cy = -1;
+          for (int q = 0; q < sat::sky::N_NAMES; q++)
+            if (!strcmp(sat::sky::NAMES[q].text, "Cygnus")) cy = q;
+          int lo = 0;
+          for (int j = 0; j < cy; j++) lo += sat::sky::CFIG[sat::sky::CFIG_OFF[j]];
+          const int hi = lo + sat::sky::CFIG[sat::sky::CFIG_OFF[cy]];
+          int ok = 0, tot = 0;
+          for (const auto &g : sat::ui.star_segs)
+            if (g.poly >= lo && g.poly < hi) {
+              tot++;
+              ok += sat::const_at((g.x0 + g.x1) / 2, (g.y0 + g.y1) / 2) == cy;
+            }
+          CHECK(tot > 0 && ok == tot, "touching Cygnus's lines finds Cygnus (%d of %d)", ok, tot);
+        }
         sat::select_object(sat::K_STAR, si);
         CHECK(!lv_obj_has_flag(sat::ui.sel_ring, LV_OBJ_FLAG_HIDDEN), "a star's card rings the star");
         lit();
