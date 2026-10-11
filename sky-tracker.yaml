@@ -1941,7 +1941,7 @@ lvgl:
         - button:
             id: btn_dbg_close1
             x: 376
-            y: 4
+            y: 8
             width: 96
             height: 36
             bg_color: 0x1A2547
@@ -2029,7 +2029,7 @@ lvgl:
         - button:
             id: btn_dbg_close2
             x: 376
-            y: 4
+            y: 8
             width: 96
             height: 36
             bg_color: 0x1A2547
@@ -2069,7 +2069,7 @@ lvgl:
         - button:
             id: btn_list_close
             x: 376
-            y: 4
+            y: 8
             width: 96
             height: 36
             bg_color: 0x1A2547
@@ -2129,7 +2129,7 @@ lvgl:
         - button:
             id: btn_about_close
             x: 376
-            y: 4
+            y: 8
             width: 96
             height: 36
             bg_color: 0x1A2547

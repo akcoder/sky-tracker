@@ -5974,7 +5974,7 @@ inline void finder_open_for(int kind, int32_t id, const char *name) {
   lv_obj_set_pos(fnd.title, 12, 14);
   lv_obj_t *b = lv_button_create(root);  // Close: top right, as on every other screen
   lv_obj_set_size(b, 96, 36);
-  lv_obj_set_pos(b, 376, 4);
+  lv_obj_set_pos(b, 376, 8);
   lv_obj_set_style_bg_color(b, lv_color_hex(0x1A2547), 0);
   lv_obj_set_style_shadow_width(b, 0, 0);
   lv_obj_t *bl = lv_label_create(b);
