@@ -29,7 +29,7 @@ DEPENDENCIES = ["lvgl", "http_request", "tracker_common"]  # tracker_common: hea
 CONFIG_SCHEMA = cv.Schema({})
 
 HEADERS = [
-    "sky_math.h", "sky_png.h", "sgp4.h", "sat_net.h", "sky_stars.h",
+    "sky_math.h", "sgp4.h", "sat_net.h", "sky_stars.h",
     "sky_flags.h", "sky_wmm.h", "sat_tracker.h", "sky_sensors.h", "sky_web.h",
     "sky_planets.h", "sky_pview.h", "sky_picons.h", "sky_diag.h", "sky_lore.h",
     "sky_cfig.h", "sky_events.h", "sky_comets.h", "sky_mw.h", "sky_photos.h",

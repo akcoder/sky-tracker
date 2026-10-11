@@ -1933,13 +1933,13 @@ int main() {
       }
       {  // the Sun: the round edge row by row = on the whole picture
         const std::string png = slurp(HOST_DIR "/fixtures/suvi_good.png");
-        skypng::Decoder d;
-        d.begin(a, N, N, net::SUN_CROP);
+        tracker::png::Decoder d;
+        d.begin(a, N, N, 0x000000, net::SUN_CROP);
         for (size_t i = 0; i < png.size(); i += 4096) d.feed((const uint8_t *) png.data() + i, std::min<size_t>(4096, png.size() - i));
         d.release();
         net::round_mask(a, N, 158, 178);
-        skypng::Decoder d2;
-        d2.begin(b, N, N, net::SUN_CROP);
+        tracker::png::Decoder d2;
+        d2.begin(b, N, N, 0x000000, net::SUN_CROP);
         rec = Rec{b, 0, true, 0, "sun"};
         d2.on_row = [](uint16_t *row, int y, void *ctx) {
           net::round_mask_row(row, y, N, 158, 178);

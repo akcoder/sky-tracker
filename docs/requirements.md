@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.40 (unreleased): the JPEG decoder is tracker-common's (shared with f1-tracker), with one shared work buffer (8 KB less internal RAM); the picture viewer's All-sky tab is named UAF; each re-entry on its card shows the launch year (UI-74); the update prompt's release notes use the 16 px font (they were blurry at 12 px).
+- 4.6.40 (unreleased): the JPEG and PNG decoders are tracker-common's (shared with f1-tracker), with one shared work buffer (8 KB less internal RAM); the picture viewer's All-sky tab is named UAF; each re-entry on its card shows the launch year (UI-74); the update prompt's release notes use the 16 px font (they were blurry at 12 px).
 - 4.6.39 (released): the constellation figures and the highlight are drawn above the rings and cross lines (UI-46d).
 - 4.6.38 (released): touching a constellation's figure on the map shows its details (UI-46c).
 - 4.6.37 (installed): the object a star, deep-sky, radiant or constellation card is for is lit on the map: a ring, or the constellation's whole figure in gold (UI-50b, UI-46b). the list has a Close button and scrolls in a box under the title row, never under Close (UI-10c); the row lines no longer go missing in patches as cells change (UI-10d). the list shows the named stars and the major constellations above the horizon, and a tap opens their cards (UI-10b). the firmware check no longer fails with "sock < 0" or "esp-aes: Failed to allocate memory" when the data task is on the network: it drops its kept connection and waits while the check runs (NET-14). A new Moon is drawn under the Sun's halo instead of in front of it (UI-6a).
@@ -919,7 +919,7 @@ UI-59  The Sun now: "Sun image" (bottom left of the Sun card; Find stays bottom 
        ("GOES-19 SUVI, 30.4 nm ultraviolet" / "Taken 19:04, 12m ago"). Source: the last
        frame in products/animations/suvi-primary-304.json (its file name gives the time
        and satellite), else images/.../304/latest.png. The net task (JOB_SUNIMG) streams
-       the 1280 px RGBA PNG (~1.1 MB) through sky_png.h: ROM tinfl inflate, row filters,
+       the 1280 px RGBA PNG (~1.1 MB) through tracker-common tracker_png.h: ROM tinfl inflate, row filters,
        the middle 3/4 (the disc fills the view, the burnt-in label drops out) box-averaged
        into RGB565 in PSRAM; the loop copies it under the mutex. Requested when the Sun
        card opens and while the picture is open, at most every 10 min (90 s after a

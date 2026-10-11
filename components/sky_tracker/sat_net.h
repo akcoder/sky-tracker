@@ -46,7 +46,7 @@
 #include <ArduinoJson.h>
 
 #include "sky_math.h"
-#include "sky_png.h"
+#include "esphome/components/tracker_common/tracker_png.h"  // shared with f1-tracker
 #include "esphome/components/tracker_common/tracker_jpg.h"  // shared with f1-tracker
 #include "sgp4.h"
 #include "sky_comets.h"
@@ -2839,7 +2839,7 @@ inline const char *sun_image(ImageInfo &info, uint16_t *work, char *e, size_t en
   // out nearly black (~30 KB instead of ~1.1 MB). Those are skipped by their size (read
   // from the headers, before the body) and, if the size is not given, by their darkness.
   constexpr int32_t SUVI_MIN_BYTES = 150000;  // good ~1.1 MB, shadowed ~30 KB
-  static skypng::Decoder dec;
+  static tracker::png::Decoder dec;
   const int tries = np > 0 ? std::min(np, KEEP) : 1;
   bool dark_seen = false;
   for (int t = 0; t < tries; t++) {
@@ -2858,7 +2858,7 @@ inline const char *sun_image(ImageInfo &info, uint16_t *work, char *e, size_t en
     info.shadow = dark_seen;
     if (obs > 0 && obs == img_have[IMG_SUN])
       return nullptr;  // nothing newer (that shows the Sun) than what is showing
-    if (!dec.begin(work, IMG_PX, IMG_PX, SUN_CROP))
+    if (!dec.begin(work, IMG_PX, IMG_PX, 0x000000, SUN_CROP))
       return dec.error;
     // UI-59f: each row gets its round edge as it is finished, so what shows during the download
     // is the final picture; below the rows done, the one showing (or the page colour)
