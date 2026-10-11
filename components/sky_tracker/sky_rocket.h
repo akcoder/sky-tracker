@@ -175,6 +175,7 @@ struct St {
   // draw callback: an lv_image per canopy cost ~5 ms per property set on the unit (16 a frame)
   struct Can {
     float x = 0, y = 0, tilt = 0, sx = 256, sy = 256;
+    float d = 0;  // how far it has let go of its air: 0 full .. 1 a heap on the water
     bool on = false;
   } can[4];
   lv_obj_t *lines = nullptr;
@@ -749,6 +750,16 @@ inline void draw_lines(lv_event_t *e) {
     const int x = (int) std::lround(c.x - CAN_W / 2.0f), y = (int) std::lround(c.y - 10.0f);
     const lv_area_t a = {x, y, x + CAN_W - 1, y + CAN_H - 1};
     lv_draw_image(layer, &im, &a);
+    if (c.d > 0.5f) {  // slumped: a smaller lump humped up beside the main one, the other way up
+      const float k = std::min(1.0f, (c.d - 0.5f) * 2.0f);
+      const int side = (&c - st.can) & 1 ? 1 : -1;
+      im.rotation = (int32_t) std::lround(-c.tilt * 6.0f - side * 40.0f);
+      im.scale_x = (int32_t) std::lround(c.sx * (0.35f + 0.25f * k));
+      im.scale_y = (int32_t) std::lround(c.sy * (0.45f + 0.45f * k));
+      const int lx = x + (int) std::lround(side * 6.0f * k), ly = y - (int) std::lround(2.0f * k);
+      const lv_area_t b = {lx, ly, lx + CAN_W - 1, ly + CAN_H - 1};
+      lv_draw_image(layer, &im, &b);
+    }
   }
 }
 inline float smooth01(float x) {
@@ -803,7 +814,10 @@ inline void chutes_frame(float ts, float cx, float y, float rest) {
       c_y = rel_y + CAN_OY[i] + lift;
       const float flap = 16.0f * std::sin(tau * (7.0f + 1.5f * i) + fp) * (1 - d) + 24.0f * std::sin(tau * (4.0f + i) + fp) * d * std::exp(-tau * 0.8f);
       tilt = dir * 26.0f * d + flap * 0.7f + swing * std::exp(-tau * 3.0f);
-      sx = 256 * (1 + 0.30f * d), sy = 256 * (1 - 0.58f * d + 0.10f * d * std::sin(tau * (9.0f + i) + fp));  // a crumpled, shifting heap
+      // a slumped heap, not a flat sheet: it keeps a rounded top (and a second, smaller lump beside it, drawn in
+      // draw_lines) while it settles on the water
+      sx = 256 * (1 + 0.22f * d), sy = 256 * (1 - 0.36f * d + 0.08f * d * std::sin(tau * (9.0f + i) + fp));
+      st.can[i].d = d;
       if (c_y > SEA_Y - 3)  // on the water: it lies there
         c_y = SEA_Y - 3 - 1.5f * i * d;
       sag[i] = 9.0f * d;
