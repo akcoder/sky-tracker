@@ -2170,7 +2170,7 @@ int main() {
       printf("PVIEW %d phase %.2f lit %.4f limb %.2f blat %.2f diam %.2f\n", p, v.phase_deg, v.lit, v.limb_pa, v.earth_lat, v.diam);
     }
     sat::img_req[sat::net::IMG_PLANET] = {};  // (earlier card views asked before these existed and got 404s)
-    for (int p : {sat::planets::JUPITER, sat::planets::SATURN, sat::planets::VENUS, sat::planets::MERCURY}) {
+    for (int p : {sat::planets::JUPITER, sat::planets::SATURN, sat::planets::VENUS, sat::planets::MERCURY, sat::planets::MARS}) {
       sat::select_object(sat::K_PLANET, p);
       CHECK(!lv_obj_has_flag(sat::ui.card_img_btn, LV_OBJ_FLAG_HIDDEN), "planet card Image button");
       sat::deselect();
@@ -2193,8 +2193,11 @@ int main() {
         CHECK(sat::sv.tab[2] && !strcmp(lv_label_get_text(lv_obj_get_child(sat::sv.tab[2], 0)), "Planets") && sat::sv.pf &&
               lv_label_get_text(sat::sv.cap2)[0] && !lv_obj_has_flag(sat::sv.cap2, LV_OBJ_FLAG_HIDDEN) &&
               sat::planet_src_of == p, "planet photo view");
-      char fnp[64];
-      snprintf(fnp, sizeof(fnp), OUT_DIR "/renders/r10_planet%d.ppm", p);
+      char fnp[96], lname[24];  // r10_planet<index>_<name>
+      snprintf(lname, sizeof(lname), "%s", sat::view_name(p));
+      for (char *c = lname; *c; c++)
+        *c = (char) tolower((unsigned char) *c);
+      snprintf(fnp, sizeof(fnp), OUT_DIR "/renders/r10_planet%d_%s.ppm", p, lname);
       save_ppm(fnp);
       if (p <= sat::planets::MARS) {  // UI-61g: "Tonight's phase" off and on again
         CHECK(sat::sv.phase_mark && lv_obj_has_state(sat::sv.phase_mark, LV_STATE_CHECKED), "phase switch on");
@@ -2231,8 +2234,11 @@ int main() {
                 strstr(lv_label_get_text(sat::sv.cap1), sat::photos::outer(o).name) &&
                 lv_label_get_text(sat::sv.cap2)[0] && !sat::sv.phase_mark,
             "outer planet %s: its picture, a caption, a credit, no phase switch", sat::photos::outer(o).name);
-      char fnp[64];
-      snprintf(fnp, sizeof(fnp), OUT_DIR "/renders/r10_planet%d.ppm", p);
+      char fnp[96], lname[24];  // r10_planet<index>_<name>
+      snprintf(lname, sizeof(lname), "%s", sat::view_name(p));
+      for (char *c = lname; *c; c++)
+        *c = (char) tolower((unsigned char) *c);
+      snprintf(fnp, sizeof(fnp), OUT_DIR "/renders/r10_planet%d_%s.ppm", p, lname);
       save_ppm(fnp);
       sat::img_view_close();
     }

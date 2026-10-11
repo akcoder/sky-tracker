@@ -95,14 +95,14 @@ def planets():
         x += w + 6
     rbox(d, (x, 4, 472, 40), (26, 37, 71, 255), 10)
     text(d, ((x + 472) // 2, 22), "×", F(ROBO, 28), WHITE, "mm")
-    jup = img("r10_planet3").crop((60, 52, 420, 372))     # Jupiter and its moons
+    jup = img("r10_planet3_jupiter").crop((60, 52, 420, 372))     # Jupiter and its moons
     jup = jup.resize((int(360 * 0.86), int(320 * 0.86)), Image.LANCZOS)
     im.paste(jup, (240 - jup.width // 2, 46))
     text(d, (240, 336), "Jupiter: 32.9\" across  I Io  E Europa  G Ganymede  C Callisto", F(MONO, 12), (201, 211, 242), "mm")
     # the strip: the planets above the horizon now, as small discs with their phase
-    srcs = [("Mercury", img("r10_planet0"), (150, 60, 410, 390)), ("Venus", img("r10_planet1"), (170, 52, 372, 330)),
+    srcs = [("Mercury", img("r10_planet0_mercury"), (150, 60, 410, 390)), ("Venus", img("r10_planet1_venus"), (170, 52, 372, 330)),
             ("Earth", img("r10_earth"), (62, 52, 420, 408)), ("Mars", None, None),
-            ("Jupiter", img("r10_planet3"), (118, 62, 362, 302)), ("Saturn", img("r10_planet4"), (90, 168, 390, 292))]
+            ("Jupiter", img("r10_planet3_jupiter"), (118, 62, 362, 302)), ("Saturn", img("r10_planet4_saturn"), (90, 168, 390, 292))]
     w, gap = 72, 6
     x0 = 240 - (len(srcs) * w + (len(srcs) - 1) * gap) // 2
     for i, (n, s, box) in enumerate(srcs):
