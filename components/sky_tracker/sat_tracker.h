@@ -5931,10 +5931,44 @@ struct ImgView {
   lv_image_dsc_t dsc[2];  // alternated: a new source each update, so LVGL's image cache never shows old pixels
   int cur = 0;
   const void *dsc_px = nullptr;
+  bool pf = false;        // the planets tab (Earth, Mercury .. Saturn): the picture is scaled down to make room for the strip
   int32_t bar_val = -2;
   double drawn_at = 0;    // planet: last drawing (redrawn each minute: the moons move)
 };
 inline ImgView sv;
+// The planets tab: its picture is shown PV_PX px square (the 360 px one scaled down in software: LVGL's own scaling
+// of an RGB565 picture needs RGB565A8 drawing, which this build leaves out), centred at (240, PV_CY), with the
+// caption, the tab's own controls and a strip of the planets (Earth among them) under it. Other tabs: full size.
+constexpr int PV_PX = 300, PV_CY = 196, PV_CAP_Y = 352, PV_SUB_Y = 374, PV_STRIP_Y = 410;
+constexpr int PV_X0 = 240 - PV_PX / 2, PV_Y0 = PV_CY - PV_PX / 2;
+inline int pv_x(int x) { return sv.pf ? PV_X0 + x * PV_PX / net::IMG_PX : (480 - net::IMG_PX) / 2 + x; }
+inline int pv_y(int y) { return sv.pf ? PV_Y0 + y * PV_PX / net::IMG_PX : 48 + y; }
+// IMG_PX -> PV_PX, bilinear, from src into the start of dst (src == dst works: a destination pixel is never past
+// the source pixels it reads)
+inline void pv_scale(const uint16_t *src, uint16_t *dst) {
+  const int N = net::IMG_PX;
+  const float k = (float) N / PV_PX;
+  for (int y = 0; y < PV_PX; y++) {
+    const float fy = (y + 0.5f) * k - 0.5f;
+    const int y0 = std::max(0, (int) fy), y1 = std::min(N - 1, y0 + 1);
+    const int wy = (int) ((fy - y0) * 256.0f + 0.5f);
+    for (int x = 0; x < PV_PX; x++) {
+      const float fx = (x + 0.5f) * k - 0.5f;
+      const int x0 = std::max(0, (int) fx), x1 = std::min(N - 1, x0 + 1);
+      const int wx = (int) ((fx - x0) * 256.0f + 0.5f);
+      const uint16_t a = src[y0 * N + x0], b = src[y0 * N + x1], c = src[y1 * N + x0], d = src[y1 * N + x1];
+      int ch[3];
+      for (int i = 0; i < 3; i++) {
+        const int sh = i == 0 ? 11 : i == 1 ? 5 : 0, mk = i == 1 ? 63 : 31;
+        const int ta = (a >> sh) & mk, tb = (b >> sh) & mk, tc = (c >> sh) & mk, td = (d >> sh) & mk;
+        const int top = ta * (256 - wx) + tb * wx, bot = tc * (256 - wx) + td * wx;
+        ch[i] = (top * (256 - wy) + bot * wy + (1 << 15)) >> 16;
+      }
+      dst[y * PV_PX + x] = (uint16_t) (ch[0] << 11 | ch[1] << 5 | ch[2]);
+    }
+  }
+}
+inline int planets_last_kind = -1;  // what the Planets tab opens: the last planet (or Earth) looked at
 inline bool earth_regional = false;  // UI-62a: the Earth tab opens on the globe (4.5.31); the region is one tap away
 inline const net::Region *my_region() { return net::region_for(config().lat, config().lon); }
 inline int earth_kind() { return earth_regional && my_region() ? net::IMG_REGION : net::IMG_EARTH; }
@@ -6009,6 +6043,7 @@ inline int img_progress(int k, char *line, size_t n) {  // returns percent, or -
 }
 // show `px` (IMG_PX square RGB565) in the picture; `fresh`: new pixels in the same buffer
 inline void img_show(const uint16_t *px, bool fresh) {
+  const int dim = sv.pf ? PV_PX : net::IMG_PX;  // (the planets tab shows the scaled picture)
   if (px == nullptr) {
     lv_obj_add_flag(sv.img, LV_OBJ_FLAG_HIDDEN);
     return;
@@ -6018,10 +6053,10 @@ inline void img_show(const uint16_t *px, bool fresh) {
       memset(&d, 0, sizeof(d));
       d.header.magic = LV_IMAGE_HEADER_MAGIC;
       d.header.cf = LV_COLOR_FORMAT_RGB565;
-      d.header.w = net::IMG_PX;
-      d.header.h = net::IMG_PX;
-      d.header.stride = net::IMG_PX * 2;
-      d.data_size = net::IMG_PX * net::IMG_PX * 2;
+      d.header.w = dim;
+      d.header.h = dim;
+      d.header.stride = dim * 2;
+      d.data_size = dim * dim * 2;
       d.data = (const uint8_t *) px;
     }
     sv.dsc_px = px;
@@ -6063,7 +6098,6 @@ inline void planet_request(int p, double t) {
 // moon letters on the root over Jupiter's strip, and the strip's E / W
 inline void planet_marks(const pview::Marks &mk) {
   static const char *const L[4] = {"I", "E", "G", "C"};
-  const int ox = (480 - net::IMG_PX) / 2, oy = 48;
   for (int k = 0; k < 4; k++) {
     if (!sv.mlab[k])
       continue;
@@ -6075,7 +6109,7 @@ inline void planet_marks(const pview::Marks &mk) {
     for (int j = 0; j < k; j++)
       crowded |= mk.shown[j] && abs(mk.x[j] - mk.x[k]) < 14 && abs(mk.y[j] - mk.y[k]) < 20;
     lv_label_set_text(sv.mlab[k], L[k]);
-    lv_obj_set_pos(sv.mlab[k], ox + mk.x[k] - 5, oy + mk.y[k] + (crowded ? 6 : -24));
+    lv_obj_set_pos(sv.mlab[k], pv_x(mk.x[k]) - 5, pv_y(mk.y[k]) + (crowded ? 6 : -24));
     lv_obj_remove_flag(sv.mlab[k], LV_OBJ_FLAG_HIDDEN);
   }
   const bool strip = mk.strip_y >= 0;
@@ -6087,8 +6121,8 @@ inline void planet_marks(const pview::Marks &mk) {
         lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
     }
   if (strip) {
-    lv_obj_set_pos(sv.east, ox + mk.strip_x0, oy + mk.strip_y + 14);
-    lv_obj_set_pos(sv.west, ox + mk.strip_x1 - 14, oy + mk.strip_y + 14);
+    lv_obj_set_pos(sv.east, pv_x(mk.strip_x0), pv_y(mk.strip_y) + 14);
+    lv_obj_set_pos(sv.west, pv_x(mk.strip_x1) - 14, pv_y(mk.strip_y) + 14);
   }
 }
 // UI-61 / 61a: the planet: its NASA photo with tonight's phase (Mercury, Venus, Mars) or
@@ -6147,6 +6181,8 @@ inline void planet_view_update(double t) {
       pview::render(v, planet_px, net::IMG_PX, net::IMG_PX, mk);
     }
     sv.drawn_at = t;
+    pv_scale(planet_px, planet_px);
+    sv.dsc_px = nullptr;  // (the same buffer, now scaled: a fresh source)
     img_show(planet_px, true);
     planet_marks(mk);
   }
@@ -6207,10 +6243,17 @@ inline void img_view_update(double t) {
   const bool streaming = img_streaming(k);  // UI-59f: the picture as it arrives
   uint16_t *px = streaming ? net::img_work_buf : live.img_px[k];
   const bool have = px != nullptr;  // a picture has been decoded (it stays until a newer one)
+  if (sv.pf && px != nullptr) {  // the planets tab (Earth) shows a scaled copy, in the planet picture's buffer
+    if (planet_px == nullptr)
+      planet_px = (uint16_t *) heap_caps_malloc(net::IMG_PX * net::IMG_PX * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (planet_px != nullptr)
+      pv_scale(px, planet_px);
+    px = planet_px;
+  }
   // PERF-15a: while it streams in, only the band of rows new since the last redraw is redrawn
   static int prog_rows = -2;
   const int rows_now = streaming ? net::img_prog_rows : -2;
-  if (streaming && sv.dsc_px == px && prog_rows >= 0 && rows_now > prog_rows && sv.img) {
+  if (streaming && !sv.pf && sv.dsc_px == px && prog_rows >= 0 && rows_now > prog_rows && sv.img) {
     lv_image_cache_drop(&sv.dsc[sv.cur]);
     lv_area_t a;
     lv_obj_get_coords(sv.img, &a);
@@ -6221,7 +6264,7 @@ inline void img_view_update(double t) {
   } else {
     if (rows_now >= 0 || !streaming)
       prog_rows = rows_now;
-    img_show(px, live.img_new[k] || sv.dsc_px != px);
+    img_show(px, live.img_new[k] || streaming || sv.dsc_px != px);
   }
   live.img_new[k] = false;
   // message and bar (only until the first picture; later updates show in the caption)
@@ -6329,7 +6372,7 @@ inline void img_phase_cb(lv_event_t *e) {  // UI-61g: "Tonight's phase" on / off
 inline void img_tab_cb(lv_event_t *e) {
   const int kind = (int) (intptr_t) lv_event_get_user_data(e);
   if (kind != sv.kind)
-    img_view_open_now(kind, sv.planet);
+    img_view_open_now(kind);
 }
 inline void img_view_open_now(int kind, int planet) {
   if (planet == -2)
@@ -6339,6 +6382,10 @@ inline void img_view_open_now(int kind, int planet) {
   sv.kind = kind;
   sv.planet = planet;
   sv.drawn_at = 0;
+  sv.pf = kind >= VIEW_PLANET || kind == net::IMG_EARTH || kind == net::IMG_REGION;
+  if (sv.pf)
+    planets_last_kind = kind;
+  const bool pf = sv.pf;
   const auto &w = ui.w;
   lv_obj_t *root = lv_obj_create(lv_layer_top());
   sv.root = root;
@@ -6362,28 +6409,26 @@ inline void img_view_open_now(int kind, int planet) {
     lv_obj_center(l);
     return b;
   };
-  // tabs: Sun, Moon, Earth, then the planet or else the all-sky camera (UI-75); Close at the top right
+  // tabs: Sun, Moon, Planets (Earth, Mercury .. Saturn, with a strip of them under the picture), UAF (the all-sky
+  // camera, UI-75); Close at the top right
   struct T {
     int kind, x, w;
     const char *name;
   };
-  const T tabs[4] = {{net::IMG_SUN, 8, 80, "Sun"},
-                     {net::IMG_MOON, 92, 80, "Moon"},
-                     {kind == net::IMG_REGION || kind == net::IMG_EARTH ? kind : earth_kind(), 176, 84, "Earth"},
-                     {planet >= 0 ? VIEW_PLANET + planet : (int) net::IMG_ALLSKY, 264, 104,
-                      planet >= 0 ? planets::name(planet) : "UAF"}};
+  const T tabs[4] = {{net::IMG_SUN, 8, 72, "Sun"},
+                     {net::IMG_MOON, 84, 72, "Moon"},
+                     {pf ? kind : planets_last_kind >= 0 ? planets_last_kind : earth_kind(), 160, 104, "Planets"},
+                     {net::IMG_ALLSKY, 268, 72, "UAF"}};
   for (int i = 0; i < 4; i++) {
-    if (tabs[i].kind < 0)
-      continue;
-    sv.tab[i] = button(tabs[i].x, tabs[i].w, tabs[i].name, tabs[i].kind == kind);
+    sv.tab[i] = button(tabs[i].x, tabs[i].w, tabs[i].name, i == 2 ? pf : tabs[i].kind == kind);
     lv_obj_add_event_cb(sv.tab[i], img_tab_cb, LV_EVENT_CLICKED, (void *) (intptr_t) tabs[i].kind);
   }
   lv_obj_t *b = button(376, 96, "Close", false);
   lv_obj_set_style_bg_color(b, lv_color_hex(0x1A2547), 0);
   lv_obj_add_event_cb(b, img_view_close_cb, LV_EVENT_CLICKED, nullptr);
   sv.img = lv_image_create(root);
-  lv_obj_set_size(sv.img, net::IMG_PX, net::IMG_PX);
-  lv_obj_set_pos(sv.img, (480 - net::IMG_PX) / 2, 48);
+  lv_obj_set_size(sv.img, pf ? PV_PX : net::IMG_PX, pf ? PV_PX : net::IMG_PX);
+  lv_obj_set_pos(sv.img, pf ? PV_X0 : (480 - net::IMG_PX) / 2, pf ? PV_Y0 : 48);
   lv_obj_add_flag(sv.img, LV_OBJ_FLAG_HIDDEN);
   sv.msg = finder_label(root, w.card_font ? w.card_font : w.label_font, 0xC9D3F2, 150);
   sv.bar = lv_bar_create(root);  // download progress, below the message
@@ -6414,8 +6459,10 @@ inline void img_view_open_now(int kind, int planet) {
       lv_obj_add_flag(*o, LV_OBJ_FLAG_HIDDEN);
     }
   }
-  sv.cap1 = finder_label(root, w.label_font, 0xC9D3F2, 414);
+  sv.cap1 = finder_label(root, w.label_font, 0xC9D3F2, pf ? PV_CAP_Y : 414);
   sv.cap2 = finder_label(root, w.label_font, 0x7E8BB3, 442);
+  if (pf)
+    lv_obj_add_flag(sv.cap2, LV_OBJ_FLAG_HIDDEN);  // one caption line; the controls and the strip are below
   const bool pl = kind >= VIEW_PLANET;
   if (pl) {  // UI-61b: the photo's credit, top left of the picture
     sv.credit = lv_label_create(root);
@@ -6423,12 +6470,12 @@ inline void img_view_open_now(int kind, int planet) {
       lv_obj_set_style_text_font(sv.credit, w.label_font, 0);
     lv_obj_set_style_text_color(sv.credit, lv_color_hex(0x7E8BB3), 0);
     lv_label_set_text(sv.credit, "");
-    lv_obj_set_pos(sv.credit, 64, 52);
+    lv_obj_set_pos(sv.credit, pv_x(0) + 4, pv_y(0) + 4);
   }
   if (pl && kind - VIEW_PLANET <= planets::MARS) {  // UI-61g: "Tonight's phase" switch, lower right
     lv_obj_t *sw = lv_switch_create(root);  // as the settings switches (theme look)
     lv_obj_set_size(sw, 56, 28);
-    lv_obj_set_pos(sw, 408, 442);  // lower right
+    lv_obj_set_pos(sw, 408, PV_SUB_Y);  // right of the controls row
     if (planet_phase)
       lv_obj_add_state(sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw, img_phase_cb, LV_EVENT_VALUE_CHANGED, nullptr);
@@ -6449,7 +6496,7 @@ inline void img_view_open_now(int kind, int planet) {
       lv_obj_t *sb = lv_button_create(root);
       sv.seg[i] = sb;
       lv_obj_set_size(sb, 128, 32);
-      lv_obj_set_pos(sb, i == 0 ? 108 : 244, 442);
+      lv_obj_set_pos(sb, i == 0 ? 108 : 244, PV_SUB_Y);
       const bool on = kind == want;
       lv_obj_set_style_bg_color(sb, lv_color_hex(on ? 0x24356A : 0x121A36), 0);
       lv_obj_set_style_shadow_width(sb, 0, 0);
@@ -6463,6 +6510,48 @@ inline void img_view_open_now(int kind, int planet) {
       lv_obj_add_event_cb(sb, img_seg_cb, LV_EVENT_CLICKED, (void *) (intptr_t) want);
     }
     lv_obj_add_flag(sv.cap2, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (pf) {  // the planets, Earth among them: tap one to see it
+    struct C {
+      int kind, p;
+      const char *name;
+    };
+    const int ek = kind == net::IMG_EARTH || kind == net::IMG_REGION ? kind : earth_kind();
+    const C chips[6] = {{VIEW_PLANET + planets::MERCURY, planets::MERCURY, "Mercury"},
+                        {VIEW_PLANET + planets::VENUS, planets::VENUS, "Venus"},
+                        {ek, -1, "Earth"},
+                        {VIEW_PLANET + planets::MARS, planets::MARS, "Mars"},
+                        {VIEW_PLANET + planets::JUPITER, planets::JUPITER, "Jupiter"},
+                        {VIEW_PLANET + planets::SATURN, planets::SATURN, "Saturn"}};
+    for (int i = 0; i < 6; i++) {
+      const bool on = chips[i].p >= 0 ? kind == chips[i].kind : kind == net::IMG_EARTH || kind == net::IMG_REGION;
+      lv_obj_t *c = lv_button_create(root);
+      lv_obj_set_size(c, 72, 62);
+      lv_obj_set_pos(c, 9 + i * 78, PV_STRIP_Y);
+      lv_obj_set_style_bg_color(c, lv_color_hex(on ? 0x24356A : 0x121A36), 0);
+      lv_obj_set_style_shadow_width(c, 0, 0);
+      lv_obj_set_style_pad_all(c, 0, 0);
+      if (on)
+        lv_obj_set_style_border_color(c, lv_color_hex(0xFF8A1F), 0), lv_obj_set_style_border_width(c, 1, 0);
+      if (chips[i].p >= 0) {
+        lv_obj_t *im = lv_image_create(c);
+        lv_image_set_src(im, planet_card_dsc(chips[i].p));
+        lv_obj_align(im, LV_ALIGN_TOP_MID, 0, 3);
+      } else if (w.card_icon_big) {  // Earth has no picture of its own: the globe glyph
+        lv_obj_t *gl = lv_label_create(c);
+        lv_obj_set_style_text_font(gl, w.card_icon_big, 0);
+        lv_obj_set_style_text_color(gl, lv_color_hex(0x4A9BE6), 0);
+        lv_label_set_text(gl, "\xF3\xB0\x87\xA7");
+        lv_obj_align(gl, LV_ALIGN_TOP_MID, 0, 3);
+      }
+      lv_obj_t *nl = lv_label_create(c);
+      if (w.label_font)
+        lv_obj_set_style_text_font(nl, w.label_font, 0);
+      lv_obj_set_style_text_color(nl, lv_color_hex(on ? 0xFF8A1F : 0xC9D3F2), 0);
+      lv_label_set_text(nl, chips[i].name);
+      lv_obj_align(nl, LV_ALIGN_BOTTOM_MID, 0, -3);
+      lv_obj_add_event_cb(c, img_tab_cb, LV_EVENT_CLICKED, (void *) (intptr_t) chips[i].kind);
+    }
   }
   img_view_update(clock_now());
 }

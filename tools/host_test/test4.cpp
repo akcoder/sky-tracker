@@ -2159,7 +2159,7 @@ int main() {
       sat::deselect();
       sat::img_view_open_now(sat::VIEW_PLANET + p);
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-      printf("planet view %d: tab %s | \"%s\" / \"%s\"\n", p, sat::sv.tab[3] ? lv_label_get_text(lv_obj_get_child(sat::sv.tab[3], 0)) : "-",
+      printf("planet view %d: tab %s | \"%s\" / \"%s\"\n", p, sat::sv.tab[2] ? lv_label_get_text(lv_obj_get_child(sat::sv.tab[2], 0)) : "-",
              lv_label_get_text(sat::sv.cap1), lv_label_get_text(sat::sv.cap2));
       run_jobs();
       sat::tick();  // the photo reaches the loop
@@ -2172,7 +2172,7 @@ int main() {
       if (p == sat::planets::MERCURY && !sat::photos::get(p).data)  // no photo to be had: drawn instead
         CHECK(strstr(lv_label_get_text(sat::sv.credit), "Photo unavailable") && sat::planet_px, "planet drawn fallback");
       else
-        CHECK(sat::sv.tab[3] && !strcmp(lv_label_get_text(lv_obj_get_child(sat::sv.tab[3], 0)), sat::planets::name(p)) &&
+        CHECK(sat::sv.tab[2] && !strcmp(lv_label_get_text(lv_obj_get_child(sat::sv.tab[2], 0)), "Planets") && sat::sv.pf &&
               lv_label_get_text(sat::sv.credit)[0] && lv_obj_has_flag(sat::sv.cap2, LV_OBJ_FLAG_HIDDEN) &&
               sat::planet_src_of == p, "planet photo view");
       char fnp[64];
