@@ -17,7 +17,7 @@ substitutions:
   ap_name: Sky Tracker    # the open fallback AP (renamed with the MAC suffix at boot)
   timezone: UTC           # (the board package's default; removed again below so the picker (UI-70) decides)
   tracker_common_url: https://github.com/akcoder/tracker-common
-  tracker_common_ref: v0.4.3   # a tag, so a change in tracker-common cannot break this build
+  tracker_common_ref: v0.5.1   # a tag, so a change in tracker-common cannot break this build
   backlight_min: "0.10"   # HW-6: lowest PWM duty that is still visible; raise if the
                           # panel goes dark at the bottom of the brightness slider
   # HW-8/HW-9: optional GPS and compass (see the wiring diagram)
@@ -69,7 +69,7 @@ esphome:
       then:
         - lambda: |-
             tracker::web::install({skyweb::FAVICON_SVG, skyweb::HEADER_SVG, sizeof(skyweb::HEADER_SVG) - 1,
-                                   "https://github.com/akcoder/sky-tracker"});  // NET-10: tab icon, header badge, logo link
+                                   "https://github.com/akcoder/sky-tracker", "Sky Tracker ${fw_version}"});  // NET-10: tab icon, header badge, logo link
             skydiag::install("${fw_version}");  // FAIL-10: before the API takes the crash record
     - priority: -100
       then:
@@ -251,6 +251,12 @@ time:
     timezone: !remove
   - id: !extend ha_time
     timezone: !remove
+
+# PERF-18: the console is UART0 (the board package's). A log line is written to it with a blocking call through a
+# 512-byte buffer: at the default 115200 baud a 100-byte line holds the calling task for ~9 ms, so a burst of
+# logging when a screen opens stalls the screen. 921600 baud is 8x faster (the USB-serial chip handles 2 Mbaud).
+logger:
+  baud_rate: 921600
 
 # BUILD-7: the C++ (headers, sky_extra.cpp, build flags) is the sky_tracker external component
 external_components:
