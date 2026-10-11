@@ -2319,10 +2319,14 @@ struct Row {
   const SatRec *r;
 };
 
-inline void rows_for(const pvector<SatRec> &v, double t, std::vector<Row> &out, float min_el = -90.0f) {
+constexpr size_t ROWS_CAP = 800;  // FAIL-13: the most one layer's list rows hold (about 380 Starlink are up at 61.6 N)
+inline void rows_for(const pvector<SatRec> &v, double t, pvector<Row> &out, float min_el = -90.0f) {
   out.clear();
-  out.reserve(v.size());
+  if (out.capacity() < ROWS_CAP)
+    out.reserve(ROWS_CAP);  // once (the first call, while PSRAM is in one piece): never grown after
   for (const auto &r : v) {
+    if (out.size() >= ROWS_CAP)  // past it a row is dropped, never reallocated (FAIL-12)
+      break;
     const geo::AzEl a = geo::azel(ui.obs, geo::sat_ecef(r, t));
     if (a.el >= min_el)
       out.push_back({a.el, a.az, &r});
@@ -2434,10 +2438,21 @@ inline void draw_list(double t) {
   struct Cells {
     char c[7][24];
   };
-  std::vector<Cells> rows;
-  std::vector<uint8_t> kinds;
-  std::vector<int8_t> sel_kind;  // UI-10: what a tap on the row opens
-  std::vector<int32_t> sel_id;
+  // FAIL-13: the rows (168 bytes each, up to LIST_ROWS) live in PSRAM, in buffers made once and reused.
+  // Plain `new` reaches only internal RAM (~22 kB free: ESPHome's CONFIG_SPIRAM_USE_CAPS_ALLOC), so the
+  // vector's growth for 4.6.34's scrolling list (every object a row) threw bad_alloc and aborted
+  // (4.6.35, Oct 9 4:38: draw_list's push_back). Allocated on the first call, never grown (FAIL-12).
+  static pvector<Cells> rows;
+  static std::vector<uint8_t> kinds;
+  static std::vector<int8_t> sel_kind;  // UI-10: what a tap on the row opens
+  static std::vector<int32_t> sel_id;
+  rows.clear(), kinds.clear(), sel_kind.clear(), sel_id.clear();
+  if (rows.capacity() < LIST_ROWS + 8) {
+    rows.reserve(LIST_ROWS + 8);
+    kinds.reserve(LIST_ROWS + 8);
+    sel_kind.reserve(LIST_ROWS + 8);
+    sel_id.reserve(LIST_ROWS + 8);
+  }
   auto add = [&](uint8_t k, const char *ic, const char *a, const char *b, const char *cl, const char *c, const char *d,
                  const char *e, int sk = -1, int32_t sid = 0) {
     Cells x;
@@ -2529,7 +2544,7 @@ inline void draw_list(double t) {
       n++;
     }
   }
-  std::vector<Row> sl_rows, sat_rows, geo_rows;
+  static pvector<Row> sl_rows, sat_rows, geo_rows;  // (FAIL-13: kept, see rows_for)
   if (ui.starlink_on)
     rows_for(live.starlink, t, sl_rows, starlink_min_el());  // UI-4: the cone only
   if (ui.sats_on || ui.meo_on || ui.debris_on)  // UI-35: debris is its own layer
@@ -2586,8 +2601,8 @@ inline void draw_list(double t) {
       if (cur == nullptr || strcmp(cur, rows[r].c[c]) != 0)
         lv_table_set_cell_value(tb, r, c, rows[r].c[c]);
     }
-  ui.row_sel_kind = std::move(sel_kind);
-  ui.row_sel_id = std::move(sel_id);
+  ui.row_sel_kind = sel_kind;
+  ui.row_sel_id = sel_id;
   if (kinds != ui.row_kind) {
     ui.row_kind = kinds;
     lv_obj_invalidate(tb);

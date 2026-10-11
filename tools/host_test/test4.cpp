@@ -2383,7 +2383,11 @@ int main() {
       snprintf(fn, sizeof(fn), OUT_DIR "/renders/r14_rocket%d.ppm", f);
       save_ppm(fn);
     }
-    sat_host_now += rk::DUR_S;
+    sat_host_now += 0.7f * rk::DUR_S;  // the rocket is gone, the last puffs are still fading
+    rk::frame();
+    CHECK(rk::playing(), "plays on while the smoke is still on the display");
+    sat_host_now += 0.7f * rk::DUR_S;  // all of it faded: the next frame sees it clear and ends
+    rk::frame();
     rk::frame();
     CHECK(!rk::playing() && lv_obj_get_child_count(lv_layer_top()) == 0, "cleans up after itself");
     rk::check();
@@ -2442,7 +2446,7 @@ int main() {
       sat::alert_override = &sa;
       sat::draw_hud(sat_host_now);
       rk::play_splash_now();
-      CHECK(rk::playing() && rk::st.splash && rk::st.sea && rk::st.chutes, "splashdown plays");
+      CHECK(rk::playing() && rk::st.splash && rk::st.sea && rk::st.lines, "splashdown plays");
       int frames = 0;
       for (int f = 0; rk::playing() && f < 400; f++) {
         sat_host_now += 0.033;
@@ -2456,7 +2460,7 @@ int main() {
           save_ppm(fn);
         }
       }
-      CHECK(!rk::playing() && rk::st.sea == nullptr && rk::st.chutes == nullptr && frames > 150, "splashdown ends (%d frames)", frames);
+      CHECK(!rk::playing() && rk::st.sea == nullptr && rk::st.lines == nullptr && frames > 150, "splashdown ends (%d frames)", frames);
       sat::alert_override = nullptr;
     }
     if (getenv("ABOUT_GIF")) {  // UI-67a: the shooting star over the About page's logo

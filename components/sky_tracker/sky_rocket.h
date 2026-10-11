@@ -24,6 +24,7 @@ void set_enabled(bool on);
 void play_now();  // the button: the next launch's name (or a generic one)
 void play_undock_now();  // UI-69f button: the next ISS undocking's name (or a generic one)
 bool active();    // playing now (sat::tick pauses, UI-69b)
+float last_fps();  // PERF-17: the frame rate of the last animation played (NaN before the first)
 void play_boot();  // UI-69k on the boot screen: no banner, smoke over black
 void play_splash_now();  // UI-69m button: the next splashdown's name (or a generic one)
 // UI-76: the launch countdown, from T-10 min to liftoff
@@ -107,13 +108,17 @@ constexpr float UNDOCK_GO = 1.0f;           // docked until then, then the hooks
 // clipped to the sky disc), splashes, lets the chutes go and bobs
 constexpr float SPLASH_S = 7.0f, SPLASH_HIT = 4.2f;  // the scene's length; when it meets the water
 constexpr int SEA_Y = 360, SEA_X0 = 56, SEA_W = 368, SEA_H = 70;  // the ocean band (screen coordinates)
+constexpr float CHUTE_REL = SPLASH_HIT + 0.15f;  // the capsule lets the chutes go just after it lands
 constexpr int CAP2_W = 24, CAP2_H = 28;   // the returning capsule, nose up
-constexpr int CHUTE_W = 76, CHUTE_H = 58; // four mains and their lines, meeting at the capsule's nose
+constexpr int CAN_W = 22, CAN_H = 11;     // one canopy: a striped half-ellipse over its rim, whose middle is the pivot (11, 10)
+// where each canopy's rim middle hangs from the nose where the four sets of lines meet
+constexpr float CAN_OX[4] = {-27, -9, 9, 27}, CAN_OY[4] = {-40, -47, -47, -40}, CAN_HW = 10.0f;
 constexpr uint32_t C_SEA = 0x1C4E80, C_SEA_LIGHT = 0x3F7FB8;
 constexpr double LATE_S = 120;       // a launch is "now" for 2 min after T-0 (refresh lag)
 
 struct St {
   bool enabled = true;
+  float last_fps = NAN;  // PERF-17
   const lv_font_t *font = nullptr;
   lv_draw_buf_t *img_buf[FLAMES] = {};
   int flame_i = 0;
@@ -121,6 +126,10 @@ struct St {
   bool benched = false;
   uint32_t flame_at = 0;
   lv_obj_t *catcher = nullptr, *img = nullptr, *banner = nullptr, *label = nullptr;
+  // UI-69o: the screen as it was when the animation began, drawn as an opaque top child of the
+  // active screen, so LVGL stops at it instead of redrawing the map under every dirty area
+  lv_obj_t *back = nullptr;
+  lv_draw_buf_t *snap = nullptr;
   // UI-69i all the smoke is one full-screen object that draws its discs itself: moving ~40
   // objects a frame cost ~5 ms per lv_obj_set_size/set_pos (LVGL's per-object work, code run
   // from PSRAM). A changed disc now only invalidates its old and new areas.
@@ -160,8 +169,18 @@ struct St {
   // UI-69m
   bool splash = false;
   lv_draw_buf_t *sea_buf = nullptr, *cap2_buf = nullptr, *chute_buf = nullptr;
-  lv_obj_t *sea = nullptr, *chutes = nullptr, *sea_front = nullptr;  // sea_front: water over the floating capsule's base
+  lv_obj_t *sea = nullptr, *sea_front = nullptr;  // sea_front: water over the floating capsule's base
   lv_obj_t *sea_img = nullptr, *sea_line = nullptr;  // the ocean inside its rising clip; the surface line
+  // the four canopies (each its own tilt, scale and place) and their lines, drawn by ONE object in its
+  // draw callback: an lv_image per canopy cost ~5 ms per property set on the unit (16 a frame)
+  struct Can {
+    float x = 0, y = 0, tilt = 0, sx = 256, sy = 256;
+    bool on = false;
+  } can[4];
+  lv_obj_t *lines = nullptr;
+  int16_t seg[16][4] = {};  // the lines' segments this frame: x1, y1, x2, y2
+  int nseg = 0;
+  lv_area_t seg_area{0, 0, -1, -1};
   float sp_land = 0, sp_amp = 7, sp_freq = 1.4f, sp_phase = 0, sp_drift = 1;  // this splashdown's own path
   uint32_t splash_key = 0;  // the last splashdown shown
   bool splashed = false;
@@ -357,7 +376,42 @@ inline void bench(int k) {
 
 inline void on_refr(lv_event_t *);
 inline void on_prof(lv_event_t *);
+// UI-69o: a dirty area over the map costs LVGL the whole map under it again (the round disc, the
+// stars and Milky Way, the rings, a hundred markers): the launch ran at 15 fps with 66,000 px
+// redrawn a frame, 52 ms a refresh. The map is frozen while an animation plays (UI-69b), so a
+// snapshot of the screen taken as it starts is drawn as an opaque child of the active screen
+// (lv_refr_get_top_obj only culls on the screen, not the top layer): LVGL finds it covers the
+// dirty area and draws one image blit under the animation. (plane-tracker's plane_anim.h.) Not
+// on the boot screen (its logo and text show through the smoke), and not with no memory for it.
+inline void back_draw(lv_event_t *e) {
+  if (st.snap == nullptr)
+    return;
+  lv_draw_image_dsc_t im;
+  lv_draw_image_dsc_init(&im);
+  im.src = st.snap;
+  const lv_area_t full = {0, 0, 479, 479};
+  lv_draw_image(lv_event_get_layer(e), &im, &full);
+}
+inline void back_take() {
+  lv_obj_t *scr = lv_screen_active();
+  st.snap = lv_snapshot_take(scr, LV_COLOR_FORMAT_RGB565);
+  if (st.snap == nullptr) {
+    ESP_LOGW("rocket", "no memory for the screen snapshot: drawing over the live map");
+    return;
+  }
+  st.back = lv_obj_create(scr);
+  lv_obj_remove_style_all(st.back);
+  lv_obj_set_size(st.back, 480, 480);
+  lv_obj_set_pos(st.back, 0, 0);
+  lv_obj_remove_flag(st.back, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+  lv_obj_set_style_bg_color(st.back, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(st.back, LV_OPA_COVER, 0);
+  lv_obj_add_event_cb(st.back, back_draw, LV_EVENT_DRAW_MAIN_END, nullptr);
+  lv_obj_move_foreground(st.back);
+}
 inline void stop() {
+  if (st.anim && st.frames > 1)
+    st.last_fps = st.frames * 1000.0f / std::max<uint32_t>(1, st.last_refr - st.t0);
   if (st.anim && st.frames > 1)
     ESP_LOGI("rocket", "animation: %u frames in %u ms (%.1f fps), longest gap %u ms", (unsigned) st.frames,
              (unsigned) (st.last_refr - st.t0), st.frames * 1000.0f / std::max<uint32_t>(1, st.last_refr - st.t0),
@@ -386,6 +440,14 @@ inline void stop() {
     if (lv_display_t *d = lv_display_get_default())
       lv_display_remove_event_cb_with_user_data(d, on_refr, nullptr);
   }
+  if (st.back) {
+    lv_obj_delete(st.back);
+    st.back = nullptr;
+  }
+  if (st.snap) {
+    lv_draw_buf_destroy(st.snap);
+    st.snap = nullptr;
+  }
   lv_obj_t **all[] = {&st.catcher, &st.img, &st.banner};
   for (auto **o : all)
     if (*o) {
@@ -401,7 +463,15 @@ inline void stop() {
       lv_obj_delete(o);
       o = nullptr;
     }
-  for (lv_obj_t **o : {&st.sea, &st.chutes, &st.sea_front, &st.sea_line})
+  for (auto &c : st.can)
+    c = St::Can();
+  if (st.lines) {
+    lv_obj_delete(st.lines);
+    st.lines = nullptr;
+  }
+  st.nseg = 0;
+  st.seg_area = {0, 0, -1, -1};
+  for (lv_obj_t **o : {&st.sea, &st.sea_front, &st.sea_line})
     if (*o) {
       lv_obj_delete(*o);
       *o = nullptr;
@@ -413,13 +483,22 @@ inline void stop() {
 }
 inline bool playing() { return st.anim != nullptr; }
 bool active() { return playing(); }
+float last_fps() { return st.last_fps; }
 
 inline void frame_undock();
 inline void frame_launch() {
   const float ts = (now_ms() - st.t0) / 1000.0f, u = ts / DUR_S;
-  if (u > 1.25f) {  // the smoke has faded out
-    stop();
-    return;
+  if (u > 1.1f) {  // the rocket has left: it ends when the last of its smoke has cleared the display
+    bool smoke = false;
+    for (const auto &d : st.disc)
+      if (d.on) {
+        smoke = true;
+        break;
+      }
+    if (!smoke || u > 2.0f) {  // (2.0: a hard stop; the last puff lives about 0.6 of DUR_S)
+      stop();
+      return;
+    }
   }
   float x, y, deg;
   path(std::min(u, 1.1f), x, y, deg);
@@ -580,25 +659,13 @@ inline uint32_t capsule2_sample(float x, float y) {
     return 0xFF283250;  // windows
   return x < CAP2_W / 2 ? 0xFFEEF0F5 : 0xFFD9DCE4;  // white, shaded right
 }
-// four orange-and-white mains on lines meeting at the nose (bottom middle)
+// one orange-and-white main: a striped half-ellipse over its rim (the lines are drawn live)
 inline uint32_t chute_sample(float x, float y) {
-  static const float CX[4] = {11, 29, 47, 65}, CY[4] = {16, 9, 9, 16};
-  for (int i = 0; i < 4; i++) {  // the canopies: half-ellipses, striped
-    const float dx = (x - CX[i]) / 10.5f, dy = (y - CY[i]) / 8.0f;
-    if (dy <= 0 && dx * dx + dy * dy <= 1)
-      return ((int) ((x - CX[i] + 20) / 3.5f) & 1) ? 0xFFF4F6FA : 0xFFE8743B;
-    if (dy > 0 && dy < 0.22f && std::fabs(dx) <= 1)
-      return 0xFFC75A2A;  // the canopy's rim
-  }
-  const float ax = CHUTE_W / 2.0f, ay = CHUTE_H - 0.5f;  // the lines: rim edges to the nose
-  for (int i = 0; i < 4; i++)
-    for (int side = -1; side <= 1; side += 2) {
-      const float x0 = CX[i] + side * 10.0f, y0 = CY[i] + 1.5f;
-      const float vx = ax - x0, vy = ay - y0, t = std::max(0.0f, std::min(1.0f, ((x - x0) * vx + (y - y0) * vy) / (vx * vx + vy * vy)));
-      const float ex = x0 + t * vx - x, ey = y0 + t * vy - y;
-      if (ex * ex + ey * ey < 0.18f)
-        return 0xB0D8DCE6;
-    }
+  const float dx = (x - CAN_W / 2.0f) / 10.5f, dy = (y - 10.0f) / 8.0f;
+  if (dy <= 0 && dx * dx + dy * dy <= 1)
+    return ((int) ((x + 9) / 3.5f) & 1) ? 0xFFF4F6FA : 0xFFE8743B;
+  if (dy > 0 && dy < 0.22f && std::fabs(dx) <= 1)
+    return 0xFFC75A2A;  // the canopy's rim
   return 0;
 }
 // the ocean band, clipped to the sky disc: deep blue, lighter swell lines
@@ -654,6 +721,139 @@ inline void frame_undock() {
   }
 }
 
+inline void draw_lines(lv_event_t *e) {
+  lv_layer_t *layer = lv_event_get_layer(e);
+  lv_draw_line_dsc_t d;
+  lv_draw_line_dsc_init(&d);
+  d.color = lv_color_hex(0xD8DCE6);
+  d.width = 1;
+  d.opa = 200;
+  for (int i = 0; i < st.nseg; i++) {
+    d.p1.x = st.seg[i][0], d.p1.y = st.seg[i][1];
+    d.p2.x = st.seg[i][2], d.p2.y = st.seg[i][3];
+    lv_draw_line(layer, &d);
+  }
+  if (st.chute_buf == nullptr)
+    return;
+  for (const auto &c : st.can) {  // each canopy: the one picture, tipped and scaled about its rim's middle
+    if (!c.on)
+      continue;
+    lv_draw_image_dsc_t im;
+    lv_draw_image_dsc_init(&im);
+    im.src = st.chute_buf;
+    im.rotation = (int32_t) std::lround(c.tilt * 10.0f);
+    im.scale_x = (int32_t) std::lround(c.sx);
+    im.scale_y = (int32_t) std::lround(c.sy);
+    im.pivot.x = CAN_W / 2;
+    im.pivot.y = 10;
+    const int x = (int) std::lround(c.x - CAN_W / 2.0f), y = (int) std::lround(c.y - 10.0f);
+    const lv_area_t a = {x, y, x + CAN_W - 1, y + CAN_H - 1};
+    lv_draw_image(layer, &im, &a);
+  }
+}
+inline float smooth01(float x) {
+  x = std::max(0.0f, std::min(1.0f, x));
+  return x * x * (3 - 2 * x);
+}
+// UI-69m: the four canopies. Hanging, each flutters on its own: the set swings about the nose (two
+// unrelated swings), each canopy also tips and breathes (wide and flat, tall and narrow) out of step
+// with the others. At the water the capsule lets go (CHUTE_REL). Freed, the lines trail from a point
+// that drops to the sea first, and each canopy deflates in its own time: it flattens and widens,
+// flaps over (the flap dies away), drifts down on the wind like a sheet with a wobble of its own,
+// settles on the water and sinks. (Pre-rendered bitmaps scaled and tipped: no bitmap is redrawn.)
+inline void chutes_frame(float ts, float cx, float y, float rest) {
+  if (!st.lines)
+    return;
+  const float ph = st.sp_phase, dir = st.sp_drift, DEG = (float) (M_PI / 180.0);
+  float ex[4][2], ey[4][2], fx, fy, sag[4];
+  bool shown[4];
+  const bool free_ = ts >= CHUTE_REL;
+  const float tau = free_ ? ts - CHUTE_REL : 0.0f;
+  float rx = cx, ry = y + 1;  // the nose joint
+  const float swing = 5.0f * std::sin(ts * 2.3f + ph) + 2.2f * std::sin(ts * 5.7f + 1.3f * ph);
+  float rel_x = 0, rel_y = 0;  // where the nose was let go
+  if (free_) {
+    const float y_rel = rest + 2.0f * std::sin((CHUTE_REL - SPLASH_HIT) * 4.0f) * std::exp(-(CHUTE_REL - SPLASH_HIT) * 0.6f);
+    rel_x = MAP_CX + st.sp_land, rel_y = y_rel + 1;
+    rx = rel_x + dir * 30.0f * (1 - std::exp(-1.3f * tau));
+    ry = std::min(rel_y - 8.0f * tau + 40.0f * tau * tau, (float) SEA_Y - 3);  // the lines' end drops to the sea
+  }
+  fx = rx, fy = ry;
+  int n = 0;
+  for (int i = 0; i < 4; i++) {
+    const float h = std::fabs(std::sin(i * 12.9898f + ph * 78.233f));  // a stable 0..1 of its own
+    const float fp = ph * (1 + 0.3f * i) + i * 1.7f;
+    float c_x, c_y, tilt, sx, sy;
+    shown[i] = true;
+    sag[i] = 0;
+    if (!free_) {
+      const float a = swing * DEG, ca = std::cos(a), sa = std::sin(a);
+      c_x = rx + CAN_OX[i] * ca - CAN_OY[i] * sa;
+      c_y = ry + CAN_OX[i] * sa + CAN_OY[i] * ca;
+      tilt = swing + 5.0f * std::sin(ts * (2.9f + 0.4f * i) + fp);
+      const float br = std::sin(ts * (6.3f + 0.7f * i) + fp);
+      sx = 256 + 11 * br, sy = 256 - 9 * br;
+    } else {
+      const float de = 0.04f + 0.09f * i * (0.6f + 0.8f * h);  // when it starts to let go of its air
+      const float d = smooth01((tau - de) / (0.55f + 0.35f * h));  // 0 full .. 1 flat
+      const float wind = 0.8f + 0.5f * h;
+      const float lift = (-26.0f * tau + 30.0f * tau * tau) * (0.75f + 0.5f * h);  // up on the wind, then down
+      c_x = rel_x + CAN_OX[i] * (1 + 0.45f * (1 - std::exp(-1.5f * tau))) +
+            dir * wind * (46.0f / 1.5f) * (1 - std::exp(-1.5f * tau)) + 5.0f * std::sin(tau * (3.1f + i) + fp) * d;
+      c_y = rel_y + CAN_OY[i] + lift;
+      const float flap = 16.0f * std::sin(tau * (7.0f + 1.5f * i) + fp) * (1 - d) + 24.0f * std::sin(tau * (4.0f + i) + fp) * d * std::exp(-tau * 0.8f);
+      tilt = dir * 26.0f * d + flap * 0.7f + swing * std::exp(-tau * 3.0f);
+      sx = 256 * (1 + 0.30f * d), sy = 256 * (1 - 0.58f * d + 0.10f * d * std::sin(tau * (9.0f + i) + fp));  // a crumpled, shifting heap
+      if (c_y > SEA_Y - 3)  // on the water: it lies there
+        c_y = SEA_Y - 3 - 1.5f * i * d;
+      sag[i] = 9.0f * d;
+      if (tau > 2.0f + 0.12f * i + 0.2f * h)  // gone under
+        shown[i] = false;
+    }
+    st.can[i].on = shown[i];
+    if (!shown[i])
+      continue;
+    st.can[i].x = c_x, st.can[i].y = c_y, st.can[i].tilt = tilt, st.can[i].sx = sx, st.can[i].sy = sy;
+    // the rim's two ends: the lines' upper ends (the rim turns with the tilt and widens with the scale)
+    const float ta = tilt * DEG, w = CAN_HW * sx / 256.0f;
+    for (int k = 0; k < 2; k++) {
+      const float s2 = k ? 1.0f : -1.0f;
+      const float qx = c_x + s2 * w * std::cos(ta), qy = c_y + s2 * w * std::sin(ta);
+      const float mx = (qx + fx) / 2, my = (qy + fy) / 2 + sag[i];
+      st.seg[n][0] = (int16_t) std::lround(qx), st.seg[n][1] = (int16_t) std::lround(qy);
+      st.seg[n][2] = (int16_t) std::lround(mx), st.seg[n][3] = (int16_t) std::lround(my);
+      n++;
+      st.seg[n][0] = (int16_t) std::lround(mx), st.seg[n][1] = (int16_t) std::lround(my);
+      st.seg[n][2] = (int16_t) std::lround(fx), st.seg[n][3] = (int16_t) std::lround(fy);
+      n++;
+    }
+  }
+  st.nseg = n;
+  // the lines' area, old and new, as one redraw
+  lv_area_t a{480, 480, -1, -1};
+  for (const auto &c : st.can)  // a canopy reaches 20 px from its rim's middle
+    if (c.on) {
+      a.x1 = std::min<int>(a.x1, (int) c.x - 20), a.x2 = std::max<int>(a.x2, (int) c.x + 20);
+      a.y1 = std::min<int>(a.y1, (int) c.y - 20), a.y2 = std::max<int>(a.y2, (int) c.y + 6);
+    }
+  for (int i = 0; i < n; i++)
+    for (int p = 0; p < 2; p++) {
+      a.x1 = std::min<int>(a.x1, st.seg[i][2 * p] - 2), a.x2 = std::max<int>(a.x2, st.seg[i][2 * p] + 2);
+      a.y1 = std::min<int>(a.y1, st.seg[i][2 * p + 1] - 2), a.y2 = std::max<int>(a.y2, st.seg[i][2 * p + 1] + 2);
+    }
+  lv_area_t u = a;
+  if (st.seg_area.x2 >= st.seg_area.x1) {
+    if (a.x2 < a.x1)
+      u = st.seg_area;
+    else
+      u = {std::min(a.x1, st.seg_area.x1), std::min(a.y1, st.seg_area.y1), std::max(a.x2, st.seg_area.x2),
+           std::max(a.y2, st.seg_area.y2)};
+  }
+  st.seg_area = a;
+  if (u.x2 >= u.x1)
+    lv_obj_invalidate_area(st.lines, &u);
+}
+
 // UI-69m: down under the chutes with a slow sway, the splash, the chutes let go, a gentle bob
 inline void frame_splash() {
   const float ts = (now_ms() - st.t0) / 1000.0f;
@@ -694,14 +894,7 @@ inline void frame_splash() {
     if (lv_obj_has_flag(st.sea_front, LV_OBJ_FLAG_HIDDEN))
       lv_obj_remove_flag(st.sea_front, LV_OBJ_FLAG_HIDDEN);
   }
-  if (st.chutes) {
-    const float u = std::max(0.0f, ts - SPLASH_HIT - 0.3f);  // let go: they drift off downwind
-    const float chx = cx - CHUTE_W / 2.0f + st.sp_drift * 34.0f * u, chy = y - CHUTE_H + 2 + 14.0f * u * u;
-    if (u > 0 && chy > SEA_Y - CHUTE_H / 2)
-      lv_obj_add_flag(st.chutes, LV_OBJ_FLAG_HIDDEN);
-    else
-      lv_obj_set_pos(st.chutes, (int32_t) std::lround(chx), (int32_t) std::lround(chy));
-  }
+  chutes_frame(ts, cx, y, rest);
   if (ts >= SPLASH_HIT && !st.splashed) {  // the splash: spray thrown out both ways
     st.splashed = true;
     static const float DX[8] = {-14, 14, -26, 26, -8, 8, -36, 36}, DY[8] = {-6, -6, -2, -2, -12, -12, 0, 0};
@@ -738,6 +931,10 @@ inline void frame() {
 inline void on_refr(lv_event_t *) {
   if (!playing())
     return;
+  if (st.back && lv_obj_get_screen(st.back) != lv_screen_active()) {  // the page changed under it
+    stop();
+    return;
+  }
   const uint32_t t = now_ms();
   if (st.frames++ > 0)
     st.max_gap = std::max(st.max_gap, t - st.last_refr);
@@ -809,6 +1006,8 @@ inline void play_scene(bool undock, const char *name, bool boot = false, bool sp
   st.splashed = false;
   undock = st.undock;
   st.boot = boot && !undock && !splash;
+  if (!st.boot)
+    back_take();  // UI-69o
   // a transparent full-screen layer: any tap skips
   st.catcher = lv_obj_create(lv_layer_top());
   lv_obj_remove_style_all(st.catcher);
@@ -858,10 +1057,11 @@ inline void play_scene(bool undock, const char *name, bool boot = false, bool sp
   }
   smoke_create();  // over the ISS, under the rocket and the banner
   if (splash) {
-    st.chutes = lv_image_create(lv_layer_top());
-    lv_image_set_src(st.chutes, st.chute_buf);
-    lv_obj_set_pos(st.chutes, -200, -200);
-    lv_obj_remove_flag(st.chutes, LV_OBJ_FLAG_CLICKABLE);
+    st.lines = lv_obj_create(lv_layer_top());  // the lines and canopies
+    lv_obj_remove_style_all(st.lines);
+    lv_obj_set_size(st.lines, 480, 480);
+    lv_obj_remove_flag(st.lines, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_add_event_cb(st.lines, draw_lines, LV_EVENT_DRAW_MAIN, nullptr);
   }
   st.img = lv_image_create(lv_layer_top());
   lv_image_set_src(st.img, splash ? st.cap2_buf : undock ? st.capsule_buf : st.img_buf[0]);
@@ -1245,7 +1445,7 @@ void init(const lv_font_t *banner) {
     job(st.img_buf[i], IW, IH, 0, (uint8_t) i);
   job(st.capsule_buf, CAP_W, CAP_H, 1, 0);
   job(st.cap2_buf, CAP2_W, CAP2_H, 2, 0);  // UI-69m
-  job(st.chute_buf, CHUTE_W, CHUTE_H, 3, 0);
+  job(st.chute_buf, CAN_W, CAN_H, 3, 0);
   job(st.sea_buf, SEA_W, SEA_H, 4, 0);
 #ifdef SAT_HOST_TEST
   pics_work(UINT32_MAX);  // the host draws them at once

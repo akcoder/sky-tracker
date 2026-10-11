@@ -41,6 +41,7 @@ esphome:
     # off every LVGL part its widgets don't use, unless a define here (and only here) sets it.
     build_flags:
       - "-DLV_USE_QRCODE=1"
+      - "-DLV_USE_SNAPSHOT=1"        # UI-69o: the screen snapshot behind the animations
   on_boot:
     - priority: 1100               # HW-7: before the SPI bus (1000) and the panel init
       then:
@@ -1017,6 +1018,20 @@ sensor:
     web_server:
       sorting_group_id: grp_system
       sorting_weight: 8
+  - platform: template           # PERF-17: the frame rate of the last launch, undocking or splashdown animation
+    id: s_anim_fps
+    name: Last Animation FPS
+    icon: mdi:speedometer
+    unit_of_measurement: fps
+    accuracy_decimals: 1
+    update_interval: 5s
+    entity_category: diagnostic
+    lambda: return sat::rocket::last_fps();   // NaN (unknown) until one has played
+    filters:
+      - delta: 0.05
+    web_server:
+      sorting_group_id: grp_system
+      sorting_weight: 15
 
 select:
   - platform: template           # UI-70: the clock's time zone (Auto = Home Assistant's)

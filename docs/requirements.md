@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.36 (unreleased): a tap on a row of the list opens that object's details card on the map (UI-10); built with ESPHome 2026.9.1.
+- 4.6.36 (unreleased): a tap on a row of the list opens that object's details card on the map (UI-10); built with ESPHome 2026.9.1. The launch, undocking and splashdown animations draw over a snapshot of the screen: 21 / 31 / 27 fps on the unit (were 15 / 28 / 18) (UI-69o). Splashdown chutes flutter and are let go, deflate and settle on the sea (UI-69m). Last Animation FPS sensor (PERF-17).
 - 4.6.35 (queued): all firmware installs (GitHub, web upload, microSD) share one card with a progress bar and no percentage (UI-12). An install page at akcoder.github.io/sky-tracker, flashing over USB from the browser.
 - 4.6.34 (installed): the microSD card update looks for sky-tracker-esp32s3.ota.bin, the release's own file name, instead of sky_tracker_firmware_<version>.bin; the version shown is read from the image's app descriptor, where the build now stores fw_version (older images: from the project text inside) (UI-66). The list page scrolls instead of stopping at 18 rows with "+ N more" (UI-10).
 - 4.6.33 (queued): a re-entry plays as a random fireball across the sky view when its estimated time comes (UI-79). The countdown's "WEBCAST LIVE" shows a QR code to the webcast (UI-80). The web UI's logo links to the GitHub page (NET-1). HA: the satellite counts show as whole numbers, not "18.0", and Data Status no longer changes every minute. The Firmware entity has an icon. Re-entry cards say "+/-" (was a box), and cards with no button no longer leave space for one.
@@ -1149,6 +1149,19 @@ UI-69m Splashdown (7 s, with Launch Animation on, at a splashdown's time, or the
        the bottom; a surface line follows the disc's chord). Each splashdown has its own landing
        spot (within 60 px of the centre), sway (3-12 px, 0.9-2 rad/s, random phase) and chute
        drift direction. Pictures 4x4 supersampled (UI-69n).
+       The chutes flutter: the set swings about the capsule's nose (two unrelated swings, up to
+       about 7 degrees) and breathes (wide and flat, then tall and narrow). At the water the
+       capsule lets go (0.15 s after the splash): the freed chutes lift a little on the wind,
+       drift off with the wind dying down, deflate, tip over (34 degrees) and settle on the
+       sea, then sink (hidden) 1.9 s after release.
+UI-69o While an animation plays (not on the boot screen) the screen is snapshotted (RGB565, 450 KB)
+       and drawn as an opaque child of the active screen, so LVGL stops there instead of redrawing
+       the map under every dirty area (it only culls on the screen, not on lv_layer_top). The map is
+       frozen anyway (UI-69b). Without the memory the animation draws over the live map. If the
+       page changes under it the animation stops. Needs LV_USE_SNAPSHOT (a define in
+       platformio_options build_flags, as LV_USE_QRCODE). Measured on the unit with the same
+       buttons: launch 15.0 fps, refresh 52 ms (was) -> 21.2 fps, 31 ms; splashdown 18.2 -> 27.0
+       fps; undocking 27.8 -> 30.8 fps. From plane-tracker's plane_anim.h.
 BOOT-2 The boot screen (wifi_page: logo, "Loading") is drawn with lv_refr_now() at the start of
        the start-up lambda, before the slow work (marker pools, cache, data task); LVGL draws
        nothing on its own until setup ends. The title reads "Loading" until start-up is done,
@@ -1315,6 +1328,9 @@ PERF-15a The astro task never holds the PSRAM bus long (the panel lost sync afte
        8 ms rest every 16 rows. A streaming picture (UI-59f) redraws only the band of rows new
        since the last redraw, 4 times a second (was the whole 360 px picture 5 times); the
        jpgdec task rests a tick per row of blocks.
+PERF-17 The Last Animation FPS diagnostic sensor (web UI System group, Home Assistant) is the frame
+        rate of the last launch, undocking or splashdown animation, from the same count as the
+        log line; unknown until one has played.
 PERF-16 The display MUST NOT stay shifted: in IDF 5.5.5's RGB driver with bounce buffers and
        CONFIG_LCD_RGB_RESTART_IN_VSYNC, the DMA restarts from bounce buffer 0 every frame but
        bb_eof_count (its parity picks the buffer each refill goes to) is never reset; one late
@@ -1516,6 +1532,13 @@ FAIL-12 PSRAM is never asked for a large block after start-up. The four element 
        list (and the Starlink scan's list) aborted once downloads had cut PSRAM into pieces
        of 60-240 KB with 2.5 MB free. Checked with TEST-1: 79 layer switches over 8 rounds
        of every list downloading each minute, no abort (4.6.21: abort within 9-69).
+FAIL-13 The list's temporary rows are never built with plain `new`. ESPHome builds with
+       CONFIG_SPIRAM_USE_CAPS_ALLOC, so `new` reaches only internal RAM (~22 kB free), and
+       4.6.34's scrolling list (every object a row, up to 400 rows of 168 bytes) made
+       draw_list's std::vector<Cells> grow past it: bad_alloc, which aborts (Last Crash on 4.6.35,
+       Oct 9 4:38: Abort, decoded to draw_list's push_back at sat_tracker.h:2546). The rows, the
+       per-layer row lists (800 each, past that a row is dropped) and the row maps are persistent
+       PSRAM/reserved buffers, made on the first call and never grown (FAIL-12).
 FAIL-12b The picture buffers (JPEG 768 KB, sums 777 KB) are taken first, before the orbital
        lists. The lists are reserved at what the cache holds plus a margin (satellites +48,
        GNSS +24, GEO +48, Starlink +800) and only for layers that are on, and grow by a quarter
