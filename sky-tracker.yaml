@@ -14,6 +14,10 @@ substitutions:
   sat_group: "visual"     # DATA-2: CelesTrak GP group for the satellite layer (~160 brightest)
   starlink_radius: "80"   # DATA-3/UI-39: default LEO cone (radius from overhead; 80 = above 10° elevation); the LEO Cone entity sets it (15-90)
   map_heading: "0"        # UI-15: compass direction at the top of the map (0 = north)
+  ap_name: Sky Tracker    # the open fallback AP (renamed with the MAC suffix at boot)
+  timezone: UTC           # UI-70's picker sets the real one at run time
+  tracker_common_url: https://github.com/akcoder/tracker-common
+  tracker_common_ref: v0.4.2   # a tag, so a change in tracker-common cannot break this build
   backlight_min: "0.10"   # HW-6: lowest PWM duty that is still visible; raise if the
                           # panel goes dark at the bottom of the brightness slider
   # HW-8/HW-9: optional GPS and compass (see the wiring diagram)
@@ -153,6 +157,17 @@ esphome:
             }
             sat::sdfw::init("${fw_version}", id(setup_title)->get_lv_font(), id(mono16)->get_lv_font(),
                             id(mono12)->get_lv_font());  // UI-66
+            // NET-14: the update check and install wait for the data task to go quiet
+            // UI-12: an install (the web page's, HA's, the IDE's, GitHub's) pauses the data task, shows the map
+            // and puts up the install card; a failed one resumes the data task
+            tracker::upd::ota_hook_begin = []() {
+              sat::ota_begin();
+              id(lvgl_comp)->show_page(id(sky_page)->index, LV_SCREEN_LOAD_ANIM_NONE, 50);
+            };
+            tracker::upd::ota_hook_error = []() { sat::ota_error(); };
+            // UI-44: the package's Backlight number and touch wake ask us for the auto-brightness state
+            tracker::display::auto_on = []() { return id(auto_bright).state; };
+            tracker::display::factor_now = []() { return sat::auto_bright_factor(); };
             sat::upd::set_button(id(upd_btn));  // UI-68a: our icon, before init (which would make its own)
             sat::upd::init(id(fw_update), id(setup_title)->get_lv_font(), id(mono16)->get_lv_font(),
                            id(mono12)->get_lv_font());  // UI-68
@@ -218,6 +233,17 @@ esp32:
       # -0x7F00" (out of memory). Going through malloc (4.6.4) was not enough.
       CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: y
 
+# tracker-common (shared with f1-tracker): the board (panel, touch, backlight, Wi-Fi, time, OTA cards).
+# backlight.yaml: the brightness globals, the Backlight number, the light's slider sync, the touch wake.
+# NOT taken: its sdkconfig file (our memory and network tuning stays as it is below), BLE Improv, and its
+# diagnostics (our entity names and web order differ).
+packages:
+  tracker_board:
+    url: ${tracker_common_url}
+    ref: ${tracker_common_ref}
+    files: [boards/guition-4848s040.yaml, boards/backlight.yaml]
+    refresh: 1d
+
 # BUILD-7: the C++ (headers, sky_extra.cpp, build flags) is the sky_tracker external component
 external_components:
   - source:
@@ -227,16 +253,12 @@ external_components:
     components: [sky_tracker]
   - source:                    # the pieces shared with f1-tracker; a tag, so a change there cannot break this build
       type: git
-      url: https://github.com/akcoder/tracker-common
-      ref: v0.3.0
+      url: ${tracker_common_url}
+      ref: ${tracker_common_ref}
     components: [tracker_common]
     refresh: 1d
 sky_tracker:
 tracker_common:
-
-psram:
-  mode: octal
-  speed: 80MHz
 
 # Made for ESPHome: adopt into your own ESPHome Builder from this file, and set up Wi-Fi
 # over USB with Improv (https://www.improv-wifi.com) or from the fallback access point.
@@ -244,64 +266,14 @@ dashboard_import:
   package_import_url: github://akcoder/sky-tracker/sky-tracker.yaml@main
   import_full_config: true
 
-improv_serial:
-  id: improv_usb               # not "improv": that is a C++ namespace (build error)
-
-logger:
-  id: logger_main
-
-api:
-  reboot_timeout: 0s             # NET-2: the default 15 min "no HA client" reboot would kill the AP
-  max_connections: 8             # HA plus several log viewers; at the default 5 an extra
-                                 # viewer was dropped ("dropped immediately after encrypted hello")
-
-ota:
-  - platform: http_request         # UI-68: installs what the update entity finds
-    id: ota_http
-    on_begin:                      # UI-68b: the download blocks the loop; redraw from here
-      then:
-        - lambda: sat::upd::ota_begin();
-    on_progress:
-      then:
-        - lambda: sat::upd::ota_progress(x);
-    on_end:
-      then:
-        - lambda: sat::upd::ota_end(true);
-    on_error:
-      then:
-        - lambda: sat::upd::ota_end(false);
-  - platform: esphome
-    id: ota_esphome
-    on_begin:                      # UI-12: the web page's / HA's / the IDE's upload, on the same card
-      then:
-        - lambda: sat::ota_begin();
-        - lvgl.page.show: sky_page
-        - lambda: sat::upd::ota_begin("Receiving the file");
-    on_progress:
-      then:
-        - lambda: sat::upd::ota_progress(x);
-    on_end:
-      then:
-        - lambda: sat::upd::ota_end(true);
-    on_error:
-      then:
-        - lambda: |-
-            sat::upd::ota_end(false);
-            sat::ota_error();
-
 wifi:
   id: wifi_comp
-  ap:                            # NET-2: open fallback AP; renamed with the MAC suffix at boot
-    ssid: "Sky Tracker"
-    ap_timeout: 30s              # NET-2: start the AP 30 s after Wi-Fi fails (default 90 s)
-  reboot_timeout: 0s             # never reboot away from the AP while someone is configuring
+  # NET-2: the board package's open fallback AP (named by ap_name, renamed with the MAC suffix at boot, started
+  # 30 s after Wi-Fi fails) and reboot_timeout 0s: never reboot away from the AP while someone is configuring
   on_connect:                    # NET-7: ask for the time as soon as there is a network
     - lambda: sat::sntp_kick();
   on_disconnect:                 # NET-8: no network calls while Wi-Fi is down
     - lambda: sat::sntp_hold();
-
-captive_portal:                  # NET-2: Wi-Fi setup page while the fallback AP is up
-  id: portal
 
 web_server:                      # NET-1: built-in web UI on port 80
   port: 80
@@ -331,19 +303,6 @@ web_server:                      # NET-1: built-in web UI on port 80
       name: System
       sorting_weight: 50
 
-time:
-  - platform: sntp
-    id: sntp_time
-  - platform: homeassistant      # NET-7: second source; sets the clock as soon as HA connects
-    id: ha_time
-
-# ARCH-3: issues no requests. It is here because it pulls in esp_http_client,
-# esp-tls, the certificate bundle and ArduinoJson for sat_net.h.
-http_request:
-  id: http_req
-  verify_ssl: true
-  timeout: 10s
-
 # UI-68: internet updates. GitHub Actions builds every release and publishes the firmware
 # and its manifest on GitHub Pages; the device checks every hour, on Settings > Upgrade Check
 # and on the Upgrade Check button (web UI, HA).
@@ -358,15 +317,7 @@ update:
       sorting_group_id: grp_system
 
 # ------------------------------------------------------------------ hardware
-spi:
-  id: spi_panel
-  clk_pin: GPIO48
-  mosi_pin: GPIO47
-
-i2c:
-  - id: bus_a                    # touch (GT911)
-    sda: GPIO19
-    scl: GPIO45
+i2c:               # bus_a (the touch) is the board package's
   - id: bus_b                    # HW-9: optional compass, its own bus (module has pull-ups)
     sda: ${compass_sda}
     scl: ${compass_scl}
@@ -382,50 +333,6 @@ uart:                            # HW-8: optional GPS, receive only (NMEA, 9600 
       pullup: true               # idle high when no GPS is fitted
   baud_rate: 9600
   rx_buffer_size: 1024
-
-# HW-8: NMEA is read by sat::hw::nmea_feed (interval below), not the gps component,
-# so the raw sentences can be shown on the debug page (UI-27).
-display:
-  - platform: mipi_rgb
-    model: GUITION-4848S040      # HW-1/HW-5: pins, timings, 12 MHz pclk from the model
-    id: main_display
-    update_interval: never
-    auto_clear_enabled: false
-    transform:                   # HW-1: 180° rotation (model default is true/true)
-      mirror_x: false
-      mirror_y: false
-
-touchscreen:
-  - platform: gt911              # HW-2: no transform; any tap flips the page
-    id: touch
-    i2c_id: bus_a
-    # UI-2: page flipping is an LVGL on_click on each page, so the gear button
-    # (UI-16) can take its own taps.
-
-output:
-  - platform: ledc
-    pin: GPIO38
-    id: backlight_pwm
-    frequency: 1000Hz
-    min_power: ${backlight_min}  # HW-6: 1% brightness = this duty, never darker
-    zero_means_zero: true        # only an explicit OFF turns the backlight off
-
-light:
-  - platform: monochromatic     # HW-3
-    id: backlight
-    name: Backlight Light
-    internal: true               # HA and the web UI get the 1-100 % "Backlight" number instead
-    output: backlight_pwm
-    restore_mode: RESTORE_AND_ON # HW-3: always boots on, keeps the brightness
-    default_transition_length: 250ms
-    on_state:                    # keep the settings slider in step with HA / web changes
-      - lambda: |-
-          const float pct = roundf(id(backlight).remote_values.get_brightness() * 100.0f);
-          lv_obj_t *s = id(sl_bright);   // null until LVGL is set up (the light restores first)
-          if (s != nullptr && (int) pct != lv_slider_get_value(s))
-            lv_slider_set_value(s, (int) pct, LV_ANIM_OFF);
-          if (pct >= 1 && id(backlight_pct).state != pct)
-            id(backlight_pct).publish_state(pct);
 
 font:
   - file: "gfonts://Roboto Mono"
@@ -506,16 +413,6 @@ font:
     glyphs: *ascii
 
 globals:
-  - id: bright_on_open           # UI-16: brightness when settings opened (Cancel restores it)
-    type: float
-    initial_value: "1.0"
-  - id: bright_day               # UI-44: daytime brightness for Auto Brightness (0..1)
-    type: float
-    restore_value: true
-    initial_value: "0.8"
-  - id: bright_day_open          # UI-44: bright_day when settings opened (Cancel restores it)
-    type: float
-    initial_value: "0.8"
   - id: coord_dms                # UI-16: coordinate entry format (false = decimal, true = DMS)
     type: bool
     restore_value: true
@@ -1079,28 +976,10 @@ number:
       sorting_weight: 0
     on_value:
       - lambda: sat::set_starlink_radius((int) x);
-  - platform: template           # HW-6: brightness as 1-100 % (the light itself is internal)
-    id: backlight_pct
-    name: Backlight
-    icon: mdi:brightness-percent
-    min_value: 1
-    max_value: 100
-    step: 1
-    unit_of_measurement: "%"
-    mode: slider
+  - id: !extend backlight_pct    # HW-6: the board package's 1-100 % Backlight number
     web_server:
       sorting_group_id: grp_display
       sorting_weight: 1
-    set_action:
-      - lambda: |-
-          float v = x / 100.0f;
-          if (id(auto_bright).state) {  // UI-44: sets the daytime level
-            id(bright_day) = v;
-            v = std::max(0.01f, v * sat::auto_bright_factor());
-          }
-          auto call = id(backlight).turn_on();
-          call.set_brightness(v);
-          call.perform();
   - platform: template           # UI-15: rotate the map from Home Assistant
     id: map_heading
     name: Map Heading
