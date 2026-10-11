@@ -1,0 +1,7 @@
+# the map alone: what draws, and for how long
+wait 5
+reset
+wait 45
+perf
+wait 45
+perf

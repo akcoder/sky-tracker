@@ -19,9 +19,6 @@
 
 #include "esphome/components/tracker_common/tracker_about.h"  // shared with f1-tracker
 #include "sat_net.h"
-#ifndef SAT_HOST_TEST
-#include "driver/uart.h"
-#endif
 #include "sky_stars.h"
 #include "sky_flags.h"
 #include "sky_wmm.h"
@@ -667,6 +664,19 @@ inline lv_obj_t *tag(lv_obj_t *parent, const char *s) {
   return l;
 }
 
+// PERF-19: the time spent in each custom draw callback, per minute (printed with the refresh numbers)
+inline int64_t perf_cb_sum[5] = {}, perf_cb_max[5] = {};
+inline uint32_t perf_cb_n[5] = {};
+inline const char *const PERF_CB_NAME[5] = {"sky disc (Milky Way, aurora)", "figures, stars, overlays", "Milky Way", "aurora", "list rows"};
+struct PerfCb {
+  int i;
+  int64_t t0;
+  explicit PerfCb(int idx) : i(idx), t0(ui_us()) {}
+  ~PerfCb() {
+    const int64_t d = ui_us() - t0;
+    perf_cb_sum[i] += d, perf_cb_n[i]++, perf_cb_max[i] = std::max(perf_cb_max[i], d);
+  }
+};
 // UI-21: the star layer is drawn by the sky disc itself (LV_EVENT_DRAW_MAIN, after its
 // background, before its children), straight into LVGL's draw buffer. There is no
 // star image: a PSRAM canvas meant every redraw of a moving marker read the image
@@ -1779,13 +1789,16 @@ inline void draw_starmap(double t) {
 // marker redraws a few pixels, so only the lines and stars touching them are drawn.
 inline void draw_overlays(lv_layer_t *layer, const lv_area_t &clip, int ox, int oy);
 inline void star_draw_cb(lv_event_t *e) {
+  PerfCb pcb(0);
   lv_layer_t *layer = lv_event_get_layer(e);
   lv_area_t box;
   lv_obj_get_coords(ui.w.sky, &box);
   const lv_area_t &clip = layer->_clip_area;
   const int ox = box.x1, oy = box.y1;
-  if (ui.stars_shown && ui.mw_on)  // UI-64: the bottom-most thing on the disc
+  if (ui.stars_shown && ui.mw_on) {  // UI-64: the bottom-most thing on the disc
+    PerfCb pmw(2);
     draw_milky_way(layer, clip, ox, oy);
+  }
   if (aur.show && aur.dark_now && ui.aurora_alerts) {  // UI-38: faint glow hugging the northern horizon (UI-41a switch)
     const int bands = 18, reach = aur.likely ? 48 : 32, max_opa = aur.likely ? 64 : 48;
     const float step = (float) reach / bands;
@@ -1821,6 +1834,7 @@ inline void star_draw_cb(lv_event_t *e) {
 }
 // UI-46d: the rest of the star layer, on its own object above the rings and the cross
 inline void fig_draw_cb(lv_event_t *e) {
+  PerfCb pcb(1);
   lv_layer_t *layer = lv_event_get_layer(e);
   lv_area_t box;
   lv_obj_get_coords(ui.w.sky, &box);
@@ -2392,6 +2406,7 @@ inline void view_azel(float ra, float dec, double t, float &az, float &el);  // 
 
 // UI-10: header and row colours, applied as each cell's text is drawn.
 inline void list_draw_cb(lv_event_t *e) {
+  PerfCb pcb(4);
   lv_draw_task_t *task = lv_event_get_draw_task(e);
   lv_draw_dsc_base_t *base = (lv_draw_dsc_base_t *) lv_draw_task_get_draw_dsc(task);
   if (base == nullptr || base->part != LV_PART_ITEMS)
@@ -7176,7 +7191,9 @@ inline void setup(const Config &cfg, const Widgets &w) {
 
 // UI-47: the radiant of a shower near its peak, at the time drawn
 inline void update_radiant(double tv) {
-  const int r = ui.sky_alerts ? radiant_shower(tv) : -1;
+  // (not before the clock is set: the peaks are still 0 and the time is January 1970, so the first shower of the list,
+  // the Quadrantids, was drawn on the map until the first time sync)
+  const int r = ui.sky_alerts && clock_valid() ? radiant_shower(tv) : -1;
   int x = 0, y = 0;
   bool up = false;
   if (r >= 0) {
@@ -7414,36 +7431,18 @@ inline void perf_report(const char *why) {
   ESP_LOGI(UI_TAG, "perf[%s]: %u refreshes (%u slow), mean %.0f ms, longest %.0f ms; per refresh: %.1f strips, %.0f ms drawing, %.0f ms flushing, %.0f Kpx",
            why, (unsigned) perf.n, (unsigned) perf.slow, perf.refr_sum / n / 1000.0, perf.refr_max / 1000.0, perf.strips / n,
            perf.render_sum / n / 1000.0, perf.flush_sum / n / 1000.0, perf.px_sum / n / 1000.0);
+  for (int i = 0; i < 5; i++)
+    if (perf_cb_n[i])
+      ESP_LOGI(UI_TAG, "perf[%s]:   %s: %u calls, %.0f ms in all, longest %.0f ms", why, PERF_CB_NAME[i], (unsigned) perf_cb_n[i],
+               perf_cb_sum[i] / 1000.0, perf_cb_max[i] / 1000.0);
+  for (int i = 0; i < 5; i++)
+    perf_cb_sum[i] = perf_cb_max[i] = 0, perf_cb_n[i] = 0;
   perf.n = perf.strips = perf.slow = 0, perf.refr_sum = perf.refr_max = perf.render_sum = perf.flush_sum = perf.px_sum = 0;
 }
-// PERF-20: a serial command line, to open things without a finger while measuring (tools/dbg.py): one command per
-// line on UART0's receive pin, e.g. "open earth", "open planet 3", "close", "page settings" (handled in the YAML,
-// which knows the pages), "perf". The answers are log lines, which the web page's log shows too.
+// PERF-20: a command line, to open things without a finger while measuring (tools/dbg.py calls the API action
+// debug_cmd): "open earth", "open planet 3", "close", "page settings" (handled in the YAML, which knows the pages),
+// "perf". The answers are log lines (the API's log stream and the web page's log).
 namespace dbg {
-inline bool poll(char *out, size_t n) {
-#ifndef SAT_HOST_TEST
-  static char buf[96];
-  static size_t len = 0;
-  if (!uart_is_driver_installed(UART_NUM_0))
-    uart_driver_install(UART_NUM_0, 256, 0, 0, nullptr, 0);
-  uint8_t c;
-  while (uart_read_bytes(UART_NUM_0, &c, 1, 0) == 1) {
-    if (c == '\n' || c == '\r') {
-      if (len > 0) {
-        buf[len] = 0;
-        len = 0;
-        snprintf(out, n, "%s", buf);
-        return true;
-      }
-    } else if (len < sizeof(buf) - 1) {
-      buf[len++] = (char) c;
-    }
-  }
-#else
-  (void) out, (void) n;
-#endif
-  return false;
-}
 inline void run(const char *cmd) {
   char what[24] = "";
   int n = -1;

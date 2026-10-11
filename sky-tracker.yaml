@@ -254,9 +254,10 @@ time:
 
 # PERF-18: the console is UART0 (the board package's). A log line is written to it with a blocking call through a
 # 512-byte buffer: at the default 115200 baud a 100-byte line holds the calling task for ~9 ms, so a burst of
-# logging when a screen opens stalls the screen. 921600 baud is 8x faster (the USB-serial chip handles 2 Mbaud).
+# logging when a screen opens stalls the screen.
+# 230400: twice the default, and a rate the USB-serial chip and macOS agree on (921600 and 1 Mbaud came out as garbage).
 logger:
-  baud_rate: 921600
+  baud_rate: 230400
 
 # BUILD-7: the C++ (headers, sky_extra.cpp, build flags) is the sky_tracker external component
 external_components:
@@ -279,6 +280,29 @@ tracker_common:
 dashboard_import:
   package_import_url: github://akcoder/sky-tracker/sky-tracker.yaml@main
   import_full_config: true
+
+# PERF-20: the unit takes a command over the network, from tools/dbg.py (the API's log stream is its answer): open a
+# picture, change page, print the screen-drawing numbers. Nothing here shows in Home Assistant but an action.
+api:
+  actions:
+    - action: debug_cmd
+      variables:
+        cmd: string
+      then:
+        - lambda: |-
+            ESP_LOGI("dbg", "command: %s", cmd.c_str());
+            if (!strncmp(cmd.c_str(), "page ", 5)) {
+              const char *p = cmd.c_str() + 5;
+              auto go = [&](int idx) { id(lvgl_comp)->show_page(idx, LV_SCREEN_LOAD_ANIM_NONE, 0); };
+              if (!strcmp(p, "sky")) go(id(sky_page)->index);
+              else if (!strcmp(p, "list")) go(id(list_page)->index);
+              else if (!strcmp(p, "settings")) go(id(settings_page)->index);
+              else if (!strcmp(p, "about")) go(id(about_page)->index);
+              else if (!strcmp(p, "debug")) go(id(debug_page)->index);
+              else ESP_LOGW("dbg", "page what? (sky list settings about debug)");
+            } else {
+              sat::dbg::run(cmd.c_str());
+            }
 
 wifi:
   id: wifi_comp
@@ -487,25 +511,6 @@ interval:
           call.set_brightness(want);
           call.set_transition_length(3000);
           call.perform();
-  - interval: 250ms             # PERF-20: serial commands (tools/dbg.py): open a picture, a page, print the perf numbers
-    then:
-      - lambda: |-
-          char l[96];
-          while (sat::dbg::poll(l, sizeof(l))) {
-            ESP_LOGI("dbg", "command: %s", l);
-            if (!strncmp(l, "page ", 5)) {
-              const char *p = l + 5;
-              auto go = [&](int idx) { id(lvgl_comp)->show_page(idx, LV_SCREEN_LOAD_ANIM_NONE, 0); };
-              if (!strcmp(p, "sky")) go(id(sky_page)->index);
-              else if (!strcmp(p, "list")) go(id(list_page)->index);
-              else if (!strcmp(p, "settings")) go(id(settings_page)->index);
-              else if (!strcmp(p, "about")) go(id(about_page)->index);
-              else if (!strcmp(p, "debug")) go(id(debug_page)->index);
-              else ESP_LOGW("dbg", "page what? (sky list settings about debug)");
-            } else {
-              sat::dbg::run(l);
-            }
-          }
   - interval: 1s                 # UI-27: debug pages, only while one is showing
     id: interval_4
     then:
@@ -571,12 +576,7 @@ interval:
               id(gps_uart).set_baud_rate(nb);
               id(gps_uart).load_settings(false);
             }
-            static uint8_t n = 0;
-            if (++n % 5 == 0) {
-              char d[128];
-              sat::hw::gps_diag_text(d, sizeof(d));
-              if (n % 10 == 0) ESP_LOGI("sky_hw", "GPS diag: %s", d);
-            }
+            // (the GPS diagnostic line that was logged here every 10 s is gone)
           }
           double lat, lon;
           if (sat::hw::gps_new_position(id(obs_lat).state, id(obs_lon).state, lat, lon)) {
