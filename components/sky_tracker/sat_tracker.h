@@ -7528,8 +7528,17 @@ inline void run(const char *cmd) {
              (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 #endif
+  } else if (!strcmp(cmd, "state")) {
+    lv_obj_t *scr = lv_screen_active();
+    ESP_LOGI(UI_TAG, "dbg: active screen %p has %u children; the sky disc %p is %s, its parent %p; viewer open %d, %d objects hidden under it; "
+                     "layer_top has %u children",
+             (void *) scr, (unsigned) (scr ? lv_obj_get_child_count(scr) : 0), (void *) ui.w.sky,
+             ui.w.sky && lv_obj_is_visible(ui.w.sky) ? "VISIBLE" : "hidden", ui.w.sky ? (void *) lv_obj_get_parent(ui.w.sky) : nullptr,
+             (int) img_view_open(), sv.n_under, (unsigned) lv_obj_get_child_count(lv_layer_top()));
   } else if (!strcmp(cmd, "reset")) {
     perf = Perf();
+    for (int i = 0; i < 5; i++)
+      perf_cb_sum[i] = perf_cb_max[i] = 0, perf_cb_n[i] = 0;
   } else if (!strcmp(cmd, "close")) {
     img_view_close();
     finder_close();

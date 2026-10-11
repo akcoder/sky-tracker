@@ -2159,6 +2159,7 @@ int main() {
       sat::deselect();
       sat::img_view_open_now(sat::VIEW_PLANET + p);
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
+      CHECK(sat::sv.n_under > 0 && !lv_obj_is_visible(sat::ui.w.sky), "the viewer hides the map under it (%d objects, sky visible %d)", sat::sv.n_under, (int) lv_obj_is_visible(sat::ui.w.sky));
       printf("planet view %d: tab %s | \"%s\" / \"%s\"\n", p, sat::sv.tab[2] ? lv_label_get_text(lv_obj_get_child(sat::sv.tab[2], 0)) : "-",
              lv_label_get_text(sat::sv.cap1), lv_label_get_text(sat::sv.cap2));
       run_jobs();

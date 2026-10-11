@@ -1,0 +1,13 @@
+# the picture viewer over the map
+page sky
+wait 3
+state
+reset
+open sun
+wait 2
+state
+wait 20
+perf
+close
+wait 2
+state
