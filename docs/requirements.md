@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.40 (unreleased): each re-entry on its card shows the launch year (UI-74); the update prompt's release notes use the 16 px font (they were blurry at 12 px).
+- 4.6.40 (unreleased): the picture viewer's All-sky tab is named UAF; each re-entry on its card shows the launch year (UI-74); the update prompt's release notes use the 16 px font (they were blurry at 12 px).
 - 4.6.39 (released): the constellation figures and the highlight are drawn above the rings and cross lines (UI-46d).
 - 4.6.38 (released): touching a constellation's figure on the map shows its details (UI-46c).
 - 4.6.37 (installed): the object a star, deep-sky, radiant or constellation card is for is lit on the map: a ring, or the constellation's whole figure in gold (UI-50b, UI-46b). the list has a Close button and scrolls in a box under the title row, never under Close (UI-10c); the row lines no longer go missing in patches as cells change (UI-10d). the list shows the named stars and the major constellations above the horizon, and a tap opens their cards (UI-10b). the firmware check no longer fails with "sock < 0" or "esp-aes: Failed to allocate memory" when the data task is on the network: it drops its kept connection and waits while the check runs (NET-14). A new Moon is drawn under the Sun's halo instead of in front of it (UI-6a).
@@ -731,7 +731,7 @@ UI-75  All-sky camera: the University of Alaska Fairbanks Geophysical Institute'
        first event, view "1") names the picture; by day a card saying when it runs. The fisheye
        fills the top square of the 514x600 JPEG: decoded as it arrives (UI-59f) with a 176/180 px
        round edge; frames over 2:1 are halved by TJpgDec first. The picture viewer's fourth tab
-       ("All-sky", when no planet tab) and a "Sky cam" button on the aurora, solar wind and space
+       ("UAF", when no planet tab) and a "Sky cam" button on the aurora, solar wind and space
        weather cards; refreshed every 2 min while open. Caption "UAF Poker Flat all-sky camera,
        Alaska"; by day "Off until dark".
 UI-76  Launch countdown (sky_rocket.h): from T-10 min to liftoff a full-screen card on the top

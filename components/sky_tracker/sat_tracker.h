@@ -6381,7 +6381,7 @@ inline void img_view_open_now(int kind, int planet) {
                      {net::IMG_MOON, 92, 80, "Moon"},
                      {kind == net::IMG_REGION || kind == net::IMG_EARTH ? kind : earth_kind(), 176, 84, "Earth"},
                      {planet >= 0 ? VIEW_PLANET + planet : (int) net::IMG_ALLSKY, 264, 104,
-                      planet >= 0 ? planets::name(planet) : "All-sky"}};
+                      planet >= 0 ? planets::name(planet) : "UAF"}};
   for (int i = 0; i < 4; i++) {
     if (tabs[i].kind < 0)
       continue;
