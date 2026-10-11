@@ -6039,7 +6039,7 @@ inline ImgView sv;
 // size: nothing is scaled on the device; LVGL's own scaling of an RGB565 picture needs RGB565A8 drawing, which this
 // build leaves out), centred at y PV_CY, with the caption (the name and the facts), the credit under it, the tab's own
 // controls and a strip of the planets (Earth among them) under that. Other tabs: the full 360 px picture.
-constexpr int PV_PX = 300, PV_CY = 196, PV_CAP_Y = 348, PV_CAP2_Y = 366, PV_SUB_Y = 386, PV_STRIP_Y = 410;
+constexpr int PV_PX = 300, PV_CY = 209, PV_CAP_Y = 361, PV_CAP2_Y = 379, PV_STRIP_Y = 410;  // picture and captions centred between the buttons (46) and the strip
 constexpr int PV_X0 = 240 - PV_PX / 2, PV_Y0 = PV_CY - PV_PX / 2;
 inline int pv_x(int x) { return sv.pf ? PV_X0 + x : (480 - net::IMG_PX) / 2 + x; }
 inline int pv_y(int y) { return sv.pf ? PV_Y0 + y : 48 + y; }
@@ -6276,7 +6276,7 @@ inline void planet_view_update(double t) {
       memcpy(planet_px, planet_src, PV_PX * PV_PX * 2);
       pview::shade_photo(v, planet_px, PV_PX, PV_PX, planet_phase && p <= planets::MARS);  // phase: inner planets, Mars
       if (p == planets::JUPITER)
-        pview::draw_strip(v, planet_px, PV_PX, PV_PX, mk, 0.80f * PV_PX);
+        pview::draw_strip(v, planet_px, PV_PX, PV_PX, mk, 0.91f * PV_PX);  // (below the larger Jupiter)
     } else {
       pview::render(v, planet_px, PV_PX, PV_PX, mk);
     }
@@ -6616,10 +6616,10 @@ inline void img_view_open_now(int kind, int planet) {
   lv_obj_set_size(sv.img, pf ? PV_PX : net::IMG_PX, pf ? PV_PX : net::IMG_PX);
   lv_obj_set_pos(sv.img, pf ? PV_X0 : (480 - net::IMG_PX) / 2, pf ? PV_Y0 : 48);
   lv_obj_add_flag(sv.img, LV_OBJ_FLAG_HIDDEN);
-  sv.msg = finder_label(root, w.card_font ? w.card_font : w.label_font, 0xC9D3F2, 150);
+  sv.msg = finder_label(root, w.card_font ? w.card_font : w.label_font, 0xC9D3F2, pf ? 150 + (PV_CY - 196) : 150);
   sv.bar = lv_bar_create(root);  // download progress, below the message
   lv_obj_set_size(sv.bar, 300, 10);
-  lv_obj_align(sv.bar, LV_ALIGN_TOP_MID, 0, 236);
+  lv_obj_align(sv.bar, LV_ALIGN_TOP_MID, 0, pf ? 236 + (PV_CY - 196) : 236);
   lv_bar_set_range(sv.bar, 0, 100);
   lv_obj_set_style_bg_color(sv.bar, lv_color_hex(C_BAR_BG), LV_PART_MAIN);
   lv_obj_set_style_bg_opa(sv.bar, LV_OPA_COVER, LV_PART_MAIN);
@@ -6651,7 +6651,7 @@ inline void img_view_open_now(int kind, int planet) {
   if (pl && kind - VIEW_PLANET <= planets::MARS) {  // UI-61g: "Tonight's phase" switch, lower right
     lv_obj_t *sw = lv_switch_create(root);  // as the settings switches (theme look)
     lv_obj_set_size(sw, 46, 24);
-    lv_obj_set_pos(sw, 414, PV_SUB_Y);  // right of the controls row
+    lv_obj_set_pos(sw, 414, PV_STRIP_Y - 28);  // lower right, a little above the strip
     if (planet_phase)
       lv_obj_add_state(sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw, img_phase_cb, LV_EVENT_VALUE_CHANGED, nullptr);
