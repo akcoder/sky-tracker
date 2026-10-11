@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Design comps for the picture viewer (not firmware renders): docs/comps/viewer_swipe.png (swipe between
-# pictures, page dots, title chip) and docs/comps/viewer_planets.png (a strip of the visible planets).
+# pictures, page dots, title chip) and docs/comps/viewer_planets.png (a strip of the planets, Earth among them).
 # Built from the checked-in viewer renders, so the pictures are the firmware's own.
 import os
 from PIL import Image, ImageDraw, ImageFont
@@ -74,12 +74,12 @@ def swipe():
 def planets():
     im = Image.new("RGB", (480, 480), BG)
     d = ImageDraw.Draw(im, "RGBA")
-    tabs = ["Sun", "Moon", "Earth", "Planets", "UAF"]
+    tabs = ["Sun", "Moon", "Planets", "UAF"]
     x = 8
     for i, t in enumerate(tabs):
-        w = 82 if i < 4 else 70
-        rbox(d, (x, 4, x + w, 40), BLUE if i == 3 else (26, 37, 71, 255), 10)
-        text(d, (x + w // 2, 22), t, F(MONO, 16), ORANGE if i == 3 else WHITE, "mm")
+        w = 96 if i != 2 else 112
+        rbox(d, (x, 4, x + w, 40), BLUE if i == 2 else (26, 37, 71, 255), 10)
+        text(d, (x + w // 2, 22), t, F(MONO, 16), ORANGE if i == 2 else WHITE, "mm")
         x += w + 6
     rbox(d, (x, 4, 472, 40), (26, 37, 71, 255), 10)
     text(d, ((x + 472) // 2, 22), "×", F(ROBO, 28), WHITE, "mm")
@@ -89,19 +89,18 @@ def planets():
     text(d, (240, 336), "Jupiter: 32.9\" across  I Io  E Europa  G Ganymede  C Callisto", F(MONO, 12), (201, 211, 242), "mm")
     # the strip: the planets above the horizon now, as small discs with their phase
     srcs = [("Mercury", img("r10_planet0"), (150, 60, 410, 390)), ("Venus", img("r10_planet1"), (170, 52, 372, 330)),
+            ("Earth", img("r10_earth"), (62, 52, 420, 408)),
             ("Jupiter", img("r10_planet3"), (118, 62, 362, 302)), ("Saturn", img("r10_planet4"), (90, 168, 390, 292))]
-    w = 108
-    x0 = 240 - (len(srcs) * w + (len(srcs) - 1) * 6) // 2
+    w, gap = 88, 6
+    x0 = 240 - (len(srcs) * w + (len(srcs) - 1) * gap) // 2
     for i, (n, s, box) in enumerate(srcs):
-        x = x0 + i * (w + 6)
+        x = x0 + i * (w + gap)
         sel = n == "Jupiter"
-        rbox(d, (x, 360, x + w, 456), BLUE if sel else (26, 37, 71, 255), 12, outline=ORANGE if sel else None)
+        rbox(d, (x, 372, x + w, 450), BLUE if sel else (26, 37, 71, 255), 12, outline=ORANGE if sel else None)
         icon, mask = disc_icon(s, box, 44)
-        im.paste(icon, (x + (w - 44) // 2, 368), mask)
+        im.paste(icon, (x + (w - 44) // 2, 380), mask)
         d = ImageDraw.Draw(im, "RGBA")
-        text(d, (x + w // 2, 428), n, F(MONO, 15), ORANGE if sel else WHITE, "mm")
-        text(d, (x + w // 2, 445), {"Mercury": "83% lit", "Venus": "20% lit", "Jupiter": "up 41°", "Saturn": "up 28°"}[n],
-             F(MONO, 11), DIM, "mm")
+        text(d, (x + w // 2, 435), n, F(MONO, 14), ORANGE if sel else WHITE, "mm")
     im.save(os.path.join(OUT, "viewer_planets.png"))
 
 
