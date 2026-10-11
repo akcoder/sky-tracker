@@ -32,7 +32,7 @@ std::string host_last_url;
 #include "sky_rocket.h"
 #include "sky_tz.h"
 #include "sky_history.h"
-extern "C" const lv_font_t mono16, mono18, mono24, roboto34;  // roboto34: setup_title (Roboto 300, 34 px)
+extern "C" const lv_font_t mono16, mono18, mono24, roboto34, pm14, pm16;  // pm14/pm16: just the plus-minus sign, Roboto Mono  // roboto34: setup_title (Roboto 300, 34 px)
 
 static int failures = 0;
 #define CHECK(cond, ...)                                                   \
@@ -233,9 +233,13 @@ int main() {
   lv_obj_set_style_border_side(w.list, LV_BORDER_SIDE_TOP, LV_PART_ITEMS);  // UI-10d
   w.label_font = f12;
   w.title_font = f16;
-  w.card_font = &lv_font_montserrat_14;  // stands in for mono14
+  // Montserrat has no plus-minus sign (the device's Roboto Mono fonts do): the stand-ins fall back to it
+  static lv_font_t card14 = lv_font_montserrat_14, alert16 = lv_font_montserrat_16;
+  card14.fallback = &pm14;
+  alert16.fallback = &pm16;
+  w.card_font = &card14;  // stands in for mono14
   w.card_title_font = f16;               // (no 18 pt Montserrat in the host LVGL)
-  w.alert_font = &lv_font_montserrat_16;  // stands in for mono15
+  w.alert_font = &alert16;  // stands in for mono15
   w.card_icon_big = &mdi40;
   w.icon_font = &mdi14;
   w.card_icon_font = &mdi20;
@@ -2859,8 +2863,20 @@ int main() {
               sat::live.decays[0].est < sat_host_now + 48 * 3600.0,
           "re-entries: some within two days, soonest first (%zu)", sat::live.decays.size());
     sat::set_reentry_alerts(true);
-    if (sat::reentry_top(sat_host_now))
+    if (sat::reentry_top(sat_host_now)) {
       alert_and_card(sat::AI_REENTRY, "r23_reentry_alert", "r23_reentry_card", "Estimated from how fast");
+      // the uncertainty is written with the plus-minus sign (U+00B1), which the text fonts hold, not "+/-"
+      char line[96];
+      net::DecayRec nd = *sat::reentry_top(sat_host_now);
+      nd.over_el = -90;  // (the "over you" wording has no uncertainty; this is the other one)
+      sat::reentry_text(nd, sat_host_now, line, sizeof(line));
+      const char *body = lv_label_get_text(sat::ui.card_body);
+      lv_font_glyph_dsc_t gd;
+      CHECK(strstr(line, "\xC2\xB1") && !strstr(line, "+/-") && strstr(body, "\xC2\xB1") && !strstr(body, "+/-"),
+            "re-entry: the alert line and the card use the plus-minus sign (%s)", line);
+      CHECK(lv_font_get_glyph_dsc(&mono16, &gd, 0xB1, 0) && lv_font_get_glyph_dsc(&mono18, &gd, 0xB1, 0),
+            "the plus-minus sign is in the mono16 and mono18 fonts");
+    }
     {  // UI-79: the re-entry fireball: starts when the clock passes an estimate, once, never twice alike
       namespace fx = sat::reentry_fx;
       sat::set_reentry_alerts(true);

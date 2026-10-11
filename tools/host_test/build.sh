@@ -29,12 +29,12 @@ if [ ! -f build/liblvgl.a ] || [ lv_conf.h -nt build/liblvgl.a ]; then
   rm -f build/liblvgl.a
   ar rcs build/liblvgl.a build/lvgl/*.o
 fi
-for f in mdi14 mdi20 mdi40 roboto34 mono16 mono18 mono24 tjpg/tjpgd; do
+for f in mdi14 mdi20 mdi40 pm14 pm16 roboto34 mono16 mono18 mono24 tjpg/tjpgd; do
   o=build/$(basename $f).o
   [ -f "$o" ] && [ "$o" -nt $f.c ] || $CC $CFLAGS -c $f.c -o "$o"
 done
 echo "building t4..."
 $CXX -std=gnu++20 $CFLAGS -Istubs -I$DEPS/tc_inc -DTRACKER_HOST_TEST -Itjpg -I$DEPS/ArduinoJson/src -I../../components/sky_tracker test4.cpp \
-  build/mdi14.o build/mdi20.o build/mdi40.o build/roboto34.o build/mono16.o build/mono18.o build/mono24.o build/tjpgd.o \
+  build/mdi14.o build/mdi20.o build/mdi40.o build/pm14.o build/pm16.o build/roboto34.o build/mono16.o build/mono18.o build/mono24.o build/tjpgd.o \
   build/liblvgl.a -lm -lpthread -lz -o t4
 if [ "${1:-}" = run ]; then ./t4; fi

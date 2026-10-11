@@ -3945,7 +3945,7 @@ inline void reentry_text(const net::DecayRec &d, double t, char *b, size_t n) {
     snprintf(b, n, "%s re-enters %s%s - over you %s, %.0f\xC2\xB0 %s", d.name, d.est > t ? "in ~" : "now",
              d.est > t ? in : "", hm, d.over_el, d.over_dir);
   } else if (d.est > t) {
-    snprintf(b, n, "%s re-enters in ~%s (+/-%.0fh)", d.name, in, std::max(1.0f, d.unc_h));
+    snprintf(b, n, "%s re-enters in ~%s (\xC2\xB1%.0fh)", d.name, in, std::max(1.0f, d.unc_h));
   } else {
     snprintf(b, n, "%s re-entering about now", d.name);
   }
@@ -4977,7 +4977,7 @@ inline void info_card_update(double t) {
           fmt_dur(d.est - t, in, sizeof(in));
         else
           snprintf(in, sizeof(in), "about now");
-        k += snprintf(body + k, sizeof(body) - k, "%s%s (%s): %s%s, +/-%.0fh", k ? "\n" : "", d.name,
+        k += snprintf(body + k, sizeof(body) - k, "%s%s (%s): %s%s, \xC2\xB1%.0fh", k ? "\n" : "", d.name,
                       d.rb ? "rocket stage" : d.deb ? "debris" : "satellite", d.est > t ? "in ~" : "", in,
                       std::max(1.0f, d.unc_h));
         int ly = 0;  // the launch year, from the international designator (the feed has no exact date)
