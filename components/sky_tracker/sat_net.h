@@ -2950,6 +2950,10 @@ inline const char *moon_image(ImageInfo &info, uint16_t *work, double now, char 
   info.south_up = jc.lat < 0;
   static char url[200];
   copy_cstr(url, sizeof(url), (info.south_up ? doc["su_image"]["url"] : doc["image"]["url"]) | "");
+  if (strncmp(url, "http://svs.gsfc.nasa.gov/", 25) == 0) {  // NASA now names the picture with http://; the site serves https too
+    memmove(url + 8, url + 7, strlen(url + 7) + 1);
+    memcpy(url, "https://", 8);
+  }
   if (strncmp(url, "https://", 8) != 0)
     return "NASA sent no picture";
   info.obs = (double) hr;

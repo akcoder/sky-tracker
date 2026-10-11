@@ -23,7 +23,7 @@ async def main(a):
 
     def on_log(msg):
         t = re.sub(r"\x1b\[[0-9;]*m", "", msg.message.decode("utf-8", "replace"))
-        if "perf" in t or "dbg" in t or "took a long time" in t or "dino" in t or "mage" in t:
+        if a.all or "perf" in t or "dbg" in t or "took a long time" in t or "dino" in t or "mage" in t or "Moon" in t or "sat_net" in t:
             print(f"  {time.time() - t0:7.1f}s  {t[:230]}", flush=True)
 
     cli.subscribe_logs(on_log, log_level=LogLevel.LOG_LEVEL_DEBUG)
@@ -44,5 +44,6 @@ async def main(a):
 
 ap = argparse.ArgumentParser()
 ap.add_argument("script")
+ap.add_argument("--all", action="store_true", help="print every log line")
 ap.add_argument("--host", default="192.168.0.217")
 asyncio.run(main(ap.parse_args()))
