@@ -202,16 +202,35 @@ int main() {
   lv_obj_set_style_pad_all(w.sky, 0, 0);
   w.foot_iss = label(page1, 10, 432, "", f16, 0xC9D3F2);
   w.foot_pass = label(page1, 10, 454, "", f16, 0xFFD54A);
-  w.list = lv_table_create(page2);
-  lv_obj_set_pos(w.list, 10, 8);
+  // the list page as sky-tracker.yaml builds it (UI-10c): a title row with Close, and the list in a scrolling box under it
+  label(page2, 8, 12, "LIST", f16, 0xFF8A1F);
+  {
+    lv_obj_t *cb = lv_button_create(page2);
+    lv_obj_set_pos(cb, 376, 4);
+    lv_obj_set_size(cb, 96, 36);
+    lv_obj_set_style_bg_color(cb, lv_color_hex(0x1A2547), 0);
+    lv_obj_set_style_shadow_width(cb, 0, 0);
+    lv_obj_t *cl = lv_label_create(cb);
+    lv_label_set_text(cl, "Close");
+    lv_obj_set_style_text_font(cl, f16, 0);
+    lv_obj_center(cl);
+  }
+  lv_obj_t *list_box = lv_obj_create(page2);
+  lv_obj_remove_style_all(list_box);
+  lv_obj_set_pos(list_box, 0, 44);
+  lv_obj_set_size(list_box, 480, 436);
+  lv_obj_set_style_pad_bottom(list_box, 8, 0);
+  lv_obj_set_scroll_dir(list_box, LV_DIR_VER);
+  w.list = lv_table_create(list_box);
+  lv_obj_set_pos(w.list, 10, 0);
   lv_obj_set_style_text_font(w.list, f12, LV_PART_ITEMS);
-  lv_obj_set_style_pad_all(w.list, 4, LV_PART_ITEMS);
+  lv_obj_set_style_pad_all(w.list, 5, LV_PART_ITEMS);
   lv_obj_set_style_bg_opa(w.list, LV_OPA_TRANSP, 0);
   lv_obj_set_style_bg_opa(w.list, LV_OPA_TRANSP, LV_PART_ITEMS);
   lv_obj_set_style_border_width(w.list, 0, 0);
   lv_obj_set_style_border_color(w.list, lv_color_hex(0x22305A), LV_PART_ITEMS);
   lv_obj_set_style_border_width(w.list, 1, LV_PART_ITEMS);
-  lv_obj_set_style_border_side(w.list, LV_BORDER_SIDE_BOTTOM, LV_PART_ITEMS);
+  lv_obj_set_style_border_side(w.list, LV_BORDER_SIDE_TOP, LV_PART_ITEMS);  // UI-10d
   w.label_font = f12;
   w.title_font = f16;
   w.card_font = &lv_font_montserrat_14;  // stands in for mono14
@@ -500,7 +519,15 @@ int main() {
     lv_area_t la;
     lv_obj_get_coords(sat::ui.w.list, &la);
     const int n = (int) sat::ui.row_sel_kind.size(), total = la.y2 - la.y1 + 1;
-    auto row_y = [&](int r) { return la.y1 + (int) ((r + 0.5) * total / n); };
+    lv_obj_t *const box = lv_obj_get_parent(sat::ui.w.list);  // the scrolling box: a row is only under a finger once scrolled into it
+    auto row_y = [&](int r) {
+      const int mid = (int) ((r + 0.5) * total / n);
+      lv_obj_scroll_to_y(box, std::max(0, mid - 200), LV_ANIM_OFF);
+      lv_obj_update_layout(box);
+      lv_area_t a;
+      lv_obj_get_coords(sat::ui.w.list, &a);
+      return a.y1 + mid;
+    };
     CHECK(n > 5 && n == (int) sat::ui.row_kind.size(), "list row map (%d rows)", n);
     CHECK(!sat::list_pick(row_y(0)), "header row opens nothing");
     int tested = 0, scratch = 0;
@@ -552,6 +579,45 @@ int main() {
         break;
       }
     CHECK(tested > 5, "list rows tested (%d)", tested);
+    {  // UI-10d: a cell that changes redraws only its own area; the row lines MUST survive that (LVGL draws a
+       // BOTTOM border one pixel below the cell, outside the area it invalidates: the line under the row above
+       // lost a cell's width of itself each time, "horizontal lines partially missing randomly")
+      lv_obj_scroll_to_y(box, 0, LV_ANIM_OFF);
+      lv_obj_update_layout(box);
+      lv_screen_load(page2);
+      lv_obj_invalidate(lv_screen_active());
+      lv_refr_now(disp);
+      lv_area_t ta;
+      lv_obj_get_coords(sat::ui.w.list, &ta);
+      const int rowh = (ta.y2 - ta.y1 + 1) / n;
+      auto line_px = [&](int x, int y) {  // is a row line (the 0x22305A) drawn at x, y
+        const uint16_t c = (uint16_t) ((fb[y * 480 + x] >> 8) | (fb[y * 480 + x] << 8));  // the display's own pixels, as save_ppm
+        const int r = (c >> 11) << 3, g = ((c >> 5) & 63) << 2, b = (c & 31) << 3;
+        return std::abs(r - 0x22) < 16 && std::abs(g - 0x30) < 16 && std::abs(b - 0x5A) < 24;
+      };
+      // a x inside the EL column (6th of 7): 10 + 24 + 128 + 46 + 42 + 82 = 332 .. 394
+      int line_y = -1;  // the line between the header and the first row: whichever of the two rows' edges carries it
+      for (int dy = -2; dy <= 2 && line_y < 0; dy++)
+        if (line_px(360, ta.y1 + rowh + dy))
+          line_y = ta.y1 + rowh + dy;
+      CHECK(line_y >= 0, "the line under the header is drawn before a cell changes");
+      char cur[24];
+      snprintf(cur, sizeof(cur), "%s", lv_table_get_cell_value(sat::ui.w.list, 1, 5));
+      for (int k = 0; k < 3; k++) {  // the first row's EL cell changes, as it does every few seconds
+        lv_table_set_cell_value(sat::ui.w.list, 1, 5, k % 2 ? "-12.3\xC2\xB0" : "7.7\xC2\xB0");
+        lv_refr_now(disp);
+      }
+      CHECK(line_y >= 0 && line_px(360, line_y) && line_px(340, line_y) && line_px(390, line_y),
+            "the line under the header survives a change of the cell below it (y %d)", line_y);
+      lv_table_set_cell_value(sat::ui.w.list, 1, 5, cur);
+      lv_refr_now(disp);
+    }
+    {  // UI-10c: a tap on the title row or Close is not a row, whatever is scrolled under it
+      lv_obj_scroll_to_y(box, 300, LV_ANIM_OFF);
+      lv_obj_update_layout(box);
+      CHECK(!sat::list_pick(10) && !sat::list_pick(43), "taps above the scrolling box are not rows");
+      lv_obj_scroll_to_y(box, 0, LV_ANIM_OFF);
+    }
     {  // UI-10b: named stars and constellations above the horizon, each opening its card
       int stars = 0, consts = 0;
       for (int r = 1; r < n; r++) {

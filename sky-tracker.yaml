@@ -2144,11 +2144,9 @@ lvgl:
     - id: list_page              # UI-2 / UI-10
       bg_color: 0x000000
       bg_opa: COVER
-      scroll_dir: VER              # UI-10: every object gets a row; drag to scroll (a tap still flips)
-      scrollbar_mode: AUTO
-      pad_bottom: 8
+      scrollable: false            # UI-10c: the page stays; the list scrolls in its own box under the title row
       on_load:
-        - lambda: lv_obj_scroll_to_y(lv_obj_get_parent(id(list_table)->obj), 0, LV_ANIM_OFF);
+        - lambda: lv_obj_scroll_to_y(id(list_box), 0, LV_ANIM_OFF);
       on_click:                  # UI-10: a tap on a row opens its card on the map, elsewhere the page flips
         - if:
             condition:
@@ -2161,25 +2159,60 @@ lvgl:
                   animation: FADE_IN
                   time: 200ms
       widgets:
-        - table:                 # UI-10: columns and row colours set in sat::list_build / draw_list
-            id: list_table
-            x: 10
-            y: 8
+        - label:                 # UI-10c: the title row, as the other pages (Close top right)
+            x: 8
+            y: 12
+            text: "LIST"
+            text_font: mono16
+            text_color: 0xFF8A1F
+        - button:
+            id: btn_list_close
+            x: 376
+            y: 4
+            width: 96
+            height: 36
+            bg_color: 0x1A2547
+            shadow_width: 0
+            widgets:
+              - label:
+                  align: CENTER
+                  text: "Close"
+                  text_font: mono16
+            on_click:
+              - lvgl.page.show: sky_page
+        - obj:                   # UI-10c: the list scrolls in this box, which starts under the title row
+            id: list_box
+            x: 0
+            y: 44
+            width: 480
+            height: 436
             bg_opa: TRANSP
             border_width: 0
             pad_all: 0
-            clickable: false
-            items:
-              text_font: mono12
-              text_color: 0xC9D3F2
-              bg_opa: TRANSP
-              pad_all: 5
-              border_width: 1
-              border_side: BOTTOM
-              border_color: 0x22305A
-            column_count: 5
-            rows:
-              - ["NAME", "CTRY", "DIR", "EL", "HEIGHT"]
+            pad_bottom: 8
+            scroll_dir: VER        # UI-10: every object gets a row; drag to scroll (a tap still flips)
+            scrollbar_mode: AUTO
+            event_bubble: true     # its taps reach the page's on_click
+            widgets:
+              - table:             # UI-10: columns and row colours set in sat::list_build / draw_list
+                  id: list_table
+                  x: 10
+                  y: 0
+                  bg_opa: TRANSP
+                  border_width: 0
+                  pad_all: 0
+                  clickable: false
+                  items:
+                    text_font: mono12
+                    text_color: 0xC9D3F2
+                    bg_opa: TRANSP
+                    pad_all: 5
+                    border_width: 1
+                    border_side: TOP       # UI-10d: not BOTTOM: LVGL draws that line 1 px below the cell, outside what a changed cell redraws
+                    border_color: 0x22305A
+                  column_count: 5
+                  rows:
+                    - ["NAME", "CTRY", "DIR", "EL", "HEIGHT"]
     - id: about_page             # UI-67: from Settings > About; Close returns to Settings
       skip: true
       bg_color: 0x000000

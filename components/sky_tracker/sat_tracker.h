@@ -2398,6 +2398,11 @@ inline void list_draw_cb(lv_event_t *e) {
       im.src = planet_dsc(k - RK_PLANET, false);
       lv_draw_image(base->layer, &im, &ia);
     }
+  } else if (lv_draw_task_get_type(task) == LV_DRAW_TASK_TYPE_BORDER && row == 0) {
+    // UI-10d: the lines are each row's TOP border (a BOTTOM one is drawn outside the area a changed cell
+    // redraws and went missing); the header has none above it
+    if (lv_draw_border_dsc_t *d = lv_draw_task_get_border_dsc(task))
+      d->opa = LV_OPA_TRANSP;
   } else if (lv_draw_task_get_type(task) == LV_DRAW_TASK_TYPE_FILL && k == RK_HEAD) {
     lv_draw_fill_dsc_t *d = lv_draw_task_get_fill_dsc(task);
     if (d)
@@ -6644,10 +6649,11 @@ inline bool list_pick(int y) {
   list_pick_kind = -1;
   if (tb == nullptr || n < 2)
     return false;
-  lv_area_t a;
+  lv_area_t a, box;
   lv_obj_get_coords(tb, &a);
+  lv_obj_get_coords(lv_obj_get_parent(tb), &box);  // the scrolling box: rows scrolled out of it are not under the finger
   const int total = a.y2 - a.y1 + 1;
-  if (total <= 0 || y < a.y1 || y > a.y2)
+  if (total <= 0 || y < a.y1 || y > a.y2 || y < box.y1 || y > box.y2)
     return false;
   const int row = (int) ((int64_t) (y - a.y1) * n / total);
   if (row < 0 || row >= n || ui.row_sel_kind[row] < 0)
