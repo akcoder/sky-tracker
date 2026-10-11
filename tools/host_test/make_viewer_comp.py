@@ -28,6 +28,18 @@ def text(d, xy, t, font, fill, anchor="la"):
     d.text(xy, t, font=font, fill=fill, anchor=anchor)
 
 
+def picon(n, size):
+    """The firmware's own 20 px planet picture (sky_picons.h BIG_PX, ARGB), enlarged."""
+    import re
+    t = open(os.path.join(HERE, "../../components/sky_tracker/sky_picons.h")).read()
+    body = t[t.index("BIG_PX"):]
+    rows = re.findall(r"\{([^{}]*)\}", body)[:5]
+    px = [int(x, 16) for x in re.findall(r"0x[0-9A-Fa-f]{8}", rows[n])][:400]
+    im = Image.new("RGBA", (20, 20))
+    im.putdata([((v >> 16) & 255, (v >> 8) & 255, v & 255, (v >> 24) & 255) for v in px])
+    return im.resize((size, size), Image.LANCZOS)
+
+
 def disc_icon(src, box, size, bg=(14, 20, 44)):
     c = Image.new("RGB", (size, size), bg)
     p = src.crop(box)
@@ -89,18 +101,25 @@ def planets():
     text(d, (240, 336), "Jupiter: 32.9\" across  I Io  E Europa  G Ganymede  C Callisto", F(MONO, 12), (201, 211, 242), "mm")
     # the strip: the planets above the horizon now, as small discs with their phase
     srcs = [("Mercury", img("r10_planet0"), (150, 60, 410, 390)), ("Venus", img("r10_planet1"), (170, 52, 372, 330)),
-            ("Earth", img("r10_earth"), (62, 52, 420, 408)),
+            ("Earth", img("r10_earth"), (62, 52, 420, 408)), ("Mars", None, None),
             ("Jupiter", img("r10_planet3"), (118, 62, 362, 302)), ("Saturn", img("r10_planet4"), (90, 168, 390, 292))]
-    w, gap = 88, 6
+    w, gap = 72, 6
     x0 = 240 - (len(srcs) * w + (len(srcs) - 1) * gap) // 2
     for i, (n, s, box) in enumerate(srcs):
         x = x0 + i * (w + gap)
         sel = n == "Jupiter"
         rbox(d, (x, 372, x + w, 450), BLUE if sel else (26, 37, 71, 255), 12, outline=ORANGE if sel else None)
-        icon, mask = disc_icon(s, box, 44)
+        if s is None:                                   # Mars: the firmware's own small picture
+            pi = picon(2, 44)
+            icon = Image.new("RGB", (44, 44), (14, 20, 44))
+            icon.paste(pi, (0, 0), pi)
+            mask = Image.new("L", (44, 44), 0)
+            ImageDraw.Draw(mask).ellipse((0, 0, 43, 43), fill=255)
+        else:
+            icon, mask = disc_icon(s, box, 44)
         im.paste(icon, (x + (w - 44) // 2, 380), mask)
         d = ImageDraw.Draw(im, "RGBA")
-        text(d, (x + w // 2, 435), n, F(MONO, 14), ORANGE if sel else WHITE, "mm")
+        text(d, (x + w // 2, 435), n, F(MONO, 12), ORANGE if sel else WHITE, "mm")
     im.save(os.path.join(OUT, "viewer_planets.png"))
 
 
