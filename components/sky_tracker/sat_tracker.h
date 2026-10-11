@@ -25,7 +25,7 @@
 #include "sky_planets.h"
 #include "sky_pview.h"
 #include "sky_photos_outer.h"  // Uranus, Neptune, Pluto: pictures only
-#include "sky_photos_icons.h"  // the strip's 40 px pictures of Mercury .. Saturn
+#include "sky_photos_icons.h"  // the strip's 40 px pictures of Mercury .. Jupiter
 #include "sky_facts.h"  // UI-84
 #include "sky_picons.h"
 #include "sky_lore.h"
@@ -6599,6 +6599,13 @@ inline void facts_open_cb(lv_event_t *) {
   add(body, 0xC9D3F2, b.named, 0);
   add(w.label_font, 0x7E8BB3, "Facts", 6);
   add(body, 0xC9D3F2, b.facts, 0);
+  lv_obj_t *hint = lv_label_create(sv.facts);  // as f1-tracker's detail card
+  lv_obj_add_flag(hint, LV_OBJ_FLAG_FLOATING);
+  if (w.label_font)
+    lv_obj_set_style_text_font(hint, w.label_font, 0);
+  lv_obj_set_style_text_color(hint, lv_color_hex(0x5A6687), 0);
+  lv_label_set_text(hint, "Tap to close");
+  lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, 0);
   lv_obj_remove_flag(sv.facts, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(sv.facts);
 }
@@ -6775,7 +6782,10 @@ inline void img_view_open_now(int kind, int planet) {
         outer_dsc[o] = make_dsc(photos::outer(o).icon, 40, 40);
         im = lv_image_create(c);
         lv_image_set_src(im, &outer_dsc[o]);
-      } else if (chips[i].p >= 0) {  // Mercury .. Saturn: their photos, as the others
+      } else if (chips[i].p == planets::SATURN) {  // (a photo cut down to 40 px looked bad: the drawn icon)
+        im = lv_image_create(c);
+        lv_image_set_src(im, planet_card_dsc(chips[i].p));
+      } else if (chips[i].p >= 0) {  // Mercury .. Jupiter: their photos, as the others
         static lv_image_dsc_t inner_dsc[5];
         inner_dsc[chips[i].p] = make_dsc(photos::icon(chips[i].p), 40, 40);
         im = lv_image_create(c);
