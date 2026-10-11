@@ -2894,6 +2894,13 @@ int main() {
           sat_host_now += 0.04;
           fx::step();
           lv_refr_now(disp);
+          if (run == 0 && getenv("REENTRY_GIF")) {  // the README animation, 25 fps
+            if (f == 0)
+              system("rm -rf " OUT_DIR "/fgif && mkdir -p " OUT_DIR "/fgif");
+            char fn[80];
+            snprintf(fn, sizeof(fn), OUT_DIR "/fgif/f%03d.ppm", f);
+            save_ppm(fn);
+          }
           if (run == 0 && f == 40)
             shoot("reentry_fx_a");
           if (run == 0 && f == 60)

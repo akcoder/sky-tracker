@@ -4,12 +4,13 @@ Every screen of the firmware, drawn by the desktop test build (`tools/host_test`
 
 ## Animations
 
+Each is a GIF with a four-frame strip beside it (`make_anims.py`).
+
 | | |
 |---|---|
-| ![launch](launch.gif)<br>**launch**<br>A rocket flies across the sky view at lift-off, with the mission name. | ![splashdown](splashdown.gif)<br>**splashdown**<br>A capsule comes down on parachutes into the sea at the bottom of the map. |
-| ![undocking](undocking.gif)<br>**undocking**<br>A spacecraft backs away from the ISS in a close-up of the station. | |
-
-Strips of four frames each: [splashdown_strip.png](splashdown_strip.png), [undocking_strip.png](undocking_strip.png).
+| ![launch](launch.gif)<br>**launch** ([strip](launch_strip.png))<br>A rocket flies across the sky view at lift-off, with the mission name. | ![splashdown](splashdown.gif)<br>**splashdown** ([strip](splashdown_strip.png))<br>A capsule comes down on parachutes into the sea at the bottom of the map. |
+| ![undocking](undocking.gif)<br>**undocking** ([strip](undocking_strip.png))<br>A spacecraft backs away from the ISS in a close-up of the station. | ![boot_launch](boot_launch.gif)<br>**boot_launch** ([strip](boot_launch_strip.png))<br>A launch over the boot screen while the device starts. |
+| ![reentry](reentry.gif)<br>**reentry** ([strip](reentry_strip.png))<br>A re-entering object streaks across the sky view as its estimated time passes. | ![about_meteor](about_meteor.gif)<br>**about_meteor** ([strip](about_meteor_strip.png))<br>A shooting star crosses the logo on the About page. |
 
 ## Screens
 
