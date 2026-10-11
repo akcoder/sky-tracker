@@ -12,7 +12,7 @@ mkdir -p "$DEPS" out/renders build/lvgl
 [ -f fixtures/saturn_test.jpg ] || python3 gen_fixtures.py  # synthetic picture fixtures (needs Pillow)
 [ -d "$DEPS/lvgl" ] || git clone -q --depth 1 -b v9.5.0 https://github.com/lvgl/lvgl "$DEPS/lvgl"
 [ -d "$DEPS/ArduinoJson" ] || git clone -q --depth 1 -b v7.4.3 https://github.com/bblanchon/ArduinoJson "$DEPS/ArduinoJson"
-# tracker-common (shared with f1-tracker, tag in the YAML, now v0.5.1): the sibling checkout, or TRACKER_COMMON=<dir>
+# tracker-common (shared with f1-tracker, tag in the YAML, now v0.4.3): the sibling checkout, or TRACKER_COMMON=<dir>
 TC=${TRACKER_COMMON:-$(cd ../../.. && pwd)/tracker-common}
 [ -d "$TC/components/tracker_common" ] || { echo "tracker-common not found at $TC (set TRACKER_COMMON)"; exit 1; }
 mkdir -p "$DEPS/tc_inc/esphome/components"
