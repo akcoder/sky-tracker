@@ -64,7 +64,8 @@ esphome:
     - priority: 600                # NET-10: sun tab icon; before web_server's setup (249)
       then:
         - lambda: |-
-            skyweb::install();
+            tracker::web::install({skyweb::FAVICON_SVG, skyweb::HEADER_SVG, sizeof(skyweb::HEADER_SVG) - 1,
+                                   "https://github.com/akcoder/sky-tracker"});  // NET-10: tab icon, header badge, logo link
             skydiag::install("${fw_version}");  // FAIL-10: before the API takes the crash record
     - priority: -100
       then:

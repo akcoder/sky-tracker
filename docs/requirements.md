@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.40 (unreleased): the panel soft reset (HW-7) and the Wi-Fi status page logic (NET-2b; also fixes the offline timer for even clock ticks) are tracker-common's; the Sun maths and the About text are tracker-common's too; the JPEG and PNG decoders are tracker-common's (shared with f1-tracker), with one shared work buffer (8 KB less internal RAM); the picture viewer's All-sky tab is named UAF; each re-entry on its card shows the launch year (UI-74); the update prompt's release notes use the 16 px font (they were blurry at 12 px).
+- 4.6.40 (unreleased): the web page patch (tab icon, header badge, logo link) is tracker-common's and runs when the page is served, not at build time; the panel soft reset (HW-7) and the Wi-Fi status page logic (NET-2b; also fixes the offline timer for even clock ticks) are tracker-common's; the Sun maths and the About text are tracker-common's too; the JPEG and PNG decoders are tracker-common's (shared with f1-tracker), with one shared work buffer (8 KB less internal RAM); the picture viewer's All-sky tab is named UAF; each re-entry on its card shows the launch year (UI-74); the update prompt's release notes use the 16 px font (they were blurry at 12 px).
 - 4.6.39 (released): the constellation figures and the highlight are drawn above the rings and cross lines (UI-46d).
 - 4.6.38 (released): touching a constellation's figure on the map shows its details (UI-46c).
 - 4.6.37 (installed): the object a star, deep-sky, radiant or constellation card is for is lit on the map: a ring, or the constellation's whole figure in gold (UI-50b, UI-46b). the list has a Close button and scrolls in a box under the title row, never under Close (UI-10c); the row lines no longer go missing in patches as cells change (UI-10d). the list shows the named stars and the major constellations above the horizon, and a tap opens their cards (UI-10b). the firmware check no longer fails with "sock < 0" or "esp-aes: Failed to allocate memory" when the data task is on the network: it drops its kept connection and waits while the check runs (NET-14). A new Moon is drawn under the Sun's halo instead of in front of it (UI-6a).
@@ -1400,8 +1400,8 @@ NET-1  ESPHome's web server runs on port 80 (version 3, with the UI bundled loca
        change entities or flash firmware; add `auth:` to the web_server block if
        that matters. The Builder's encrypted native OTA (BUILD-1) still works.
        The page's logo links to this project's GitHub page, not esphome.io/web-api (ESPHome
-       hardcodes it in its bundled page): the sky_tracker component swaps the link in the
-       build folder's copy of the page after ESPHome copies its sources (__init__.py). A
+       hardcodes it in its bundled page): tracker-common's tracker::web swaps the link in the
+       page it serves at "/" (NET-10; it replaces the build-time patch in __init__.py). A
        later ESPHome that words the page differently leaves the link alone and warns.
 NET-2  Fallback AP "Sky Tracker - XXXX", where XXXX is the last 4 hex digits of the
        MAC, with no password. The captive portal serves Wi-Fi setup while the AP is
@@ -1478,7 +1478,7 @@ NET-9  Diagnostic entities (entity_category diagnostic; web group System):
        and GPS Altitude carry state_class measurement (HA long-term statistics).
 NET-10 Browser-tab icon: a sun (disc and eight rays, C_SUN #FFD54A, inline SVG).
        The bundled v3 page has an empty icon and no option for one (js_include is
-       not loaded by it), so sky_web.h answers GET "/" first: at boot (on_boot 600,
+       not loaded by it), so tracker-common's tracker::web (with sky_web.h's icon and badge) answers GET "/" first: at boot (on_boot 600,
        before web_server's setup) ESPHome's own INDEX_GZ is inflated into PSRAM
        with the ROM miniz, the icon link is replaced, and the page is served
        uncompressed (~78 KB). The app's firstUpdated() sets the first
