@@ -32,7 +32,7 @@ std::string host_last_url;
 #include "sky_rocket.h"
 #include "sky_tz.h"
 #include "sky_history.h"
-extern "C" const lv_font_t mono16, mono18, mono24;
+extern "C" const lv_font_t mono16, mono18, mono24, roboto34;  // roboto34: setup_title (Roboto 300, 34 px)
 
 static int failures = 0;
 #define CHECK(cond, ...)                                                   \
@@ -2319,7 +2319,7 @@ int main() {
   // ---- UI-68 internet updates: Settings > Updates, and the hourly check's offer
   {
     namespace up = sat::upd;
-    up::init(nullptr, &mono16, &mono16, &mono16);
+    up::init(nullptr, &roboto34, &mono16, &mono16);  // as the YAML: setup_title, mono16
     up::host = up::HostUpdate();
     up::host.current = "4.6.0";
     up::host.state = 1;
