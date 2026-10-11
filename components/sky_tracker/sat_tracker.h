@@ -6247,6 +6247,10 @@ inline bool planet_photo_ready(int p) {
 }
 inline void planet_view_update(double t) {
   const int p = sv.kind - VIEW_PLANET;
+  for (int k : {(int) net::IMG_EARTH, (int) net::IMG_REGION})  // planet_px is no longer the Blue Marble
+    if (net::img_shown[k] == planet_px && !live.img_px[k])
+      net::img_shown[k] = nullptr;
+  bm_in_px = false;
   const int K = net::IMG_PLANET;
   const bool photo = !planet_drawn && planet_photo_ready(p);
   const bool loading = false;
@@ -6332,13 +6336,16 @@ inline void earth_view_update(int k, double t) {
   char prog[48];
   const int pc = loading ? img_progress(k, prog, sizeof(prog)) : -1;
   char c1[140] = "", c2[96] = "";
-  if (!have) {  // the Blue Marble
+  if (!have) {  // the Blue Marble: shown until the first picture starts to arrive, and under it as it does
     const photos::Outer bm = photos::blue_marble();
     if (planet_px == nullptr)
       planet_px = (uint16_t *) heap_caps_malloc(PV_PX * PV_PX * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (planet_px != nullptr && (!bm_in_px || sv.dsc_px != planet_px)) {
+    if (planet_px != nullptr && bm_in_px && !streaming)
+      net::img_shown[k] = planet_px;  // the net task starts its rows from it (img_prog_fill)
+    if (!streaming && planet_px != nullptr && (!bm_in_px || sv.dsc_px != planet_px)) {
       if (!tracker::jpg::decode_copy(bm.data, bm.len, planet_px, PV_PX, bm.w, bm.h, nullptr, ui_jpg_pool)) {
         bm_in_px = true;
+        net::img_shown[k] = planet_px;
         img_show(planet_px, true);
       }
     }
@@ -6349,11 +6356,28 @@ inline void earth_view_update(int k, double t) {
     else
       snprintf(c1, sizeof(c1), "Earth: the Blue Marble (%s)", !net::link_up ? "no network" : in.err[0] ? in.err : "waiting to start");
     snprintf(c2, sizeof(c2), "%s", bm.credit);
-  } else {
+  }
+  if (streaming || have) {  // the picture as it arrives (rows done so far), else the finished one
     uint16_t *px = streaming ? net::img_work_buf : live.img_px[k];
     bm_in_px = false;
-    img_show(px, live.img_new[k] || streaming || sv.dsc_px != px);
+    static int prog_rows = -2;
+    const int rows_now = streaming ? net::img_prog_rows : -2;
+    if (streaming && sv.dsc_px == px && prog_rows >= 0 && rows_now > prog_rows && sv.img) {
+      lv_image_cache_drop(&sv.dsc[sv.cur]);
+      lv_area_t a;
+      lv_obj_get_coords(sv.img, &a);
+      const lv_area_t band = {a.x1, a.y1 + prog_rows, a.x2, a.y1 + rows_now - 1};
+      lv_obj_invalidate_area(sv.img, &band);
+      prog_rows = rows_now;
+      img_show(px, false);
+    } else {
+      if (rows_now >= 0 || !streaming)
+        prog_rows = rows_now;
+      img_show(px, live.img_new[k] || streaming || sv.dsc_px != px);
+    }
     live.img_new[k] = false;
+  }
+  if (have) {
     char tail[48] = "", hm[12], ago[16], when[96];
     if (loading)
       pc >= 0 ? snprintf(tail, sizeof(tail), " - updating %d%%", pc) : snprintf(tail, sizeof(tail), "%s", " - updating");
@@ -6556,7 +6580,7 @@ inline void img_view_open_now(int kind, int planet) {
   auto button = [&](int x, int wd, const char *text, bool on) {
     lv_obj_t *b = lv_button_create(root);
     lv_obj_set_size(b, wd, 36);
-    lv_obj_set_pos(b, x, 4);
+    lv_obj_set_pos(b, x, 8);
     lv_obj_set_style_bg_color(b, lv_color_hex(on ? 0x24356A : 0x121A36), 0);
     lv_obj_set_style_shadow_width(b, 0, 0);
     lv_obj_set_style_pad_all(b, 0, 0);

@@ -2695,9 +2695,9 @@ inline const char *http_err(const HttpResult &r, const char *who, char *e, size_
   return e;
 }
 // UI-59f: before a live picture streams in: the one showing (or the page colour) under it
-inline void img_prog_fill(uint16_t *work, int kind) {
+inline void img_prog_fill(uint16_t *work, int kind, int dim = IMG_PX) {
   if (const uint16_t *old = img_shown[kind])
-    memcpy(work, old, IMG_PX * IMG_PX * 2);
+    memcpy(work, old, dim * dim * 2);
   else
     for (int i = 0; i < IMG_PX * IMG_PX; i++)
       work[i] = (uint16_t) (((PAGE_BG >> 19) & 31) << 11 | ((PAGE_BG >> 10) & 63) << 5 | ((PAGE_BG >> 3) & 31));
@@ -3056,7 +3056,7 @@ inline const char *earth_image(ImageInfo &info, uint16_t *work, char *e, size_t 
     if (!rg)
       js.r0 = 176, js.r1 = 180;  // UI-62b: a crisp limb, the corner label gone
     js.show = true;
-    img_prog_fill(work, kind);
+    img_prog_fill(work, kind, EARTH_PX);
     img_stage = STG_DOWNLOAD;
     dl_track = true;
     r = http_stream(url, regional ? "Region image" : "Earth image", [&](const char *d, int k) {
