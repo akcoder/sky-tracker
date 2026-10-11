@@ -24,6 +24,7 @@
 #include "sky_wmm.h"
 #include "sky_planets.h"
 #include "sky_pview.h"
+#include "sky_photos_outer.h"  // Uranus, Neptune, Pluto: pictures only
 #include "sky_picons.h"
 #include "sky_lore.h"
 #include "sky_cfig.h"
@@ -5947,26 +5948,36 @@ inline int pv_y(int y) { return sv.pf ? PV_Y0 + y * PV_PX / net::IMG_PX : 48 + y
 // the source pixels it reads)
 inline void pv_scale(const uint16_t *src, uint16_t *dst) {
   const int N = net::IMG_PX;
-  const float k = (float) N / PV_PX;
-  for (int y = 0; y < PV_PX; y++) {
-    const float fy = (y + 0.5f) * k - 0.5f;
-    const int y0 = std::max(0, (int) fy), y1 = std::min(N - 1, y0 + 1);
-    const int wy = (int) ((fy - y0) * 256.0f + 0.5f);
+  static int16_t xi[PV_PX];  // the source column, and the weight (0..32) of the one after it, per output column
+  static uint8_t xw[PV_PX];
+  static bool made = false;
+  if (!made) {
+    made = true;
     for (int x = 0; x < PV_PX; x++) {
-      const float fx = (x + 0.5f) * k - 0.5f;
-      const int x0 = std::max(0, (int) fx), x1 = std::min(N - 1, x0 + 1);
-      const int wx = (int) ((fx - x0) * 256.0f + 0.5f);
-      const uint16_t a = src[y0 * N + x0], b = src[y0 * N + x1], c = src[y1 * N + x0], d = src[y1 * N + x1];
-      int ch[3];
-      for (int i = 0; i < 3; i++) {
-        const int sh = i == 0 ? 11 : i == 1 ? 5 : 0, mk = i == 1 ? 63 : 31;
-        const int ta = (a >> sh) & mk, tb = (b >> sh) & mk, tc = (c >> sh) & mk, td = (d >> sh) & mk;
-        const int top = ta * (256 - wx) + tb * wx, bot = tc * (256 - wx) + td * wx;
-        ch[i] = (top * (256 - wy) + bot * wy + (1 << 15)) >> 16;
-      }
-      dst[y * PV_PX + x] = (uint16_t) (ch[0] << 11 | ch[1] << 5 | ch[2]);
+      const int f = (int) (((x * 2 + 1) * N * 128) / PV_PX) - 128;  // (x + 0.5) * N / PV_PX - 0.5, in 1/256
+      xi[x] = (int16_t) std::min(N - 2, std::max(0, f >> 8));
+      xw[x] = (uint8_t) std::max(0, std::min(32, (f - (xi[x] << 8)) >> 3));
     }
   }
+  const int64_t t0 = ui_us();
+  constexpr uint32_t M = 0x07E0F81F;  // a 565 pixel spread so that the three channels have room for a 5-bit weight
+  auto spread = [](uint32_t c) { return (c | (c << 16)) & M; };
+  for (int y = 0; y < PV_PX; y++) {
+    const int f = (int) (((y * 2 + 1) * N * 128) / PV_PX) - 128;
+    const int y0 = std::min(N - 2, std::max(0, f >> 8));
+    const uint32_t wy = (uint32_t) std::max(0, std::min(32, (f - (y0 << 8)) >> 3));
+    const uint16_t *r0 = src + y0 * N, *r1 = r0 + N;
+    uint16_t *o = dst + y * PV_PX;
+    for (int x = 0; x < PV_PX; x++) {
+      const int x0 = xi[x];
+      const uint32_t wx = xw[x];
+      const uint32_t top = ((spread(r0[x0]) * (32 - wx) + spread(r0[x0 + 1]) * wx) >> 5) & M;
+      const uint32_t bot = ((spread(r1[x0]) * (32 - wx) + spread(r1[x0 + 1]) * wx) >> 5) & M;
+      const uint32_t v = ((top * (32 - wy) + bot * wy) >> 5) & M;
+      o[x] = (uint16_t) (v | (v >> 16));
+    }
+  }
+  ESP_LOGI(UI_TAG, "planets picture scaled to %d px in %.0f ms", PV_PX, (ui_us() - t0) / 1000.0);
 }
 inline int planets_last_kind = -1;  // what the Planets tab opens: the last planet (or Earth) looked at
 inline bool earth_regional = false;  // UI-62a: the Earth tab opens on the globe (4.5.31); the region is one tap away
@@ -6130,12 +6141,19 @@ inline void planet_marks(const pview::Marks &mk) {
 // UI-61e: the photos are stored at display size (sky_photos.h), so showing one is a plain
 // 1:1 JPEG decode (~0.1 s) straight into its place, right here in the loop: no job, no
 // queue behind downloads, no waiting message. The last one decoded is kept.
+// Uranus, Neptune and Pluto (viewer kinds VIEW_PLANET + 5 .. + 7): a picture each and nothing else
+inline bool outer_view(int p) { return p >= (int) planets::N_PLANETS && p < (int) planets::N_PLANETS + photos::N_OUTER; }
+inline const char *view_name(int p) { return outer_view(p) ? photos::outer(p - planets::N_PLANETS).name : planets::name(p); }
 inline uint16_t *planet_src = nullptr;
 inline int planet_src_of = -1;
 inline bool planet_photo_ready(int p) {
   if (planet_src_of == p && planet_src)
     return true;
-  const photos::Photo ph = photos::get(p);
+  const photos::Photo ph = outer_view(p) ? photos::Photo{photos::outer(p - planets::N_PLANETS).data,
+                                                           photos::outer(p - planets::N_PLANETS).len,
+                                                           photos::outer(p - planets::N_PLANETS).w,
+                                                           photos::outer(p - planets::N_PLANETS).h}
+                                          : photos::get(p);
   if (ph.data == nullptr || ph.w <= 0 || ph.w > net::IMG_PX || ph.h > net::IMG_PX)
     return false;
   if (planet_src == nullptr)
@@ -6165,14 +6183,18 @@ inline void planet_view_update(double t) {
   const bool photo = !planet_drawn && planet_photo_ready(p);
   const bool loading = false;
   const bool drawn = !photo;
-  const pview::View v = pview::compute(p, astro::jd(t));
-  if ((photo || drawn) && (t - sv.drawn_at >= 60 || sv.drawn_at == 0)) {
+  const bool outer = outer_view(p);
+  const pview::View v = outer ? pview::View{} : pview::compute(p, astro::jd(t));
+  // (redrawn each minute for the phase and the moons; Uranus, Neptune and Pluto are one picture, drawn once)
+  if ((photo || drawn) && (t - sv.drawn_at >= (outer ? 1e9 : 60) || sv.drawn_at == 0)) {
     if (planet_px == nullptr)
       planet_px = (uint16_t *) heap_caps_malloc(net::IMG_PX * net::IMG_PX * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (planet_px == nullptr)
       return;
     pview::Marks mk;
-    if (photo) {
+    if (photo && outer) {
+      memcpy(planet_px, planet_src, net::IMG_PX * net::IMG_PX * 2);
+    } else if (photo) {
       memcpy(planet_px, planet_src, net::IMG_PX * net::IMG_PX * 2);
       pview::shade_photo(v, planet_px, net::IMG_PX, net::IMG_PX, planet_phase && p <= planets::MARS);  // phase: inner planets, Mars
       if (p == planets::JUPITER)
@@ -6191,14 +6213,16 @@ inline void planet_view_update(double t) {
   char prog[48], m[128] = "";
   const int pc = loading ? img_progress(K, prog, sizeof(prog)) : -1;
   if (loading)
-    snprintf(m, sizeof(m), "Preparing the photo\nof %s", planets::name(p));
+    snprintf(m, sizeof(m), "Preparing the photo\nof %s", view_name(p));
   else if (!photo && !drawn)
     snprintf(m, sizeof(m), "%s", "Waiting for the photo...");
   set_text_if(sv.msg, m);
   img_bar(loading ? std::max(0, pc) : -1);
   char c1[112];
-  const char *nm = planets::name(p);
-  if (p == planets::SATURN)
+  const char *nm = view_name(p);
+  if (outer)
+    snprintf(c1, sizeof(c1), "%s: a picture only, its position is not tracked", nm);
+  else if (p == planets::SATURN)
     snprintf(c1, sizeof(c1), "%s: rings tilted %.1f\xC2\xB0 (%s face), %.1f\" across", nm, fabsf(v.earth_lat),
              v.earth_lat >= 0 ? "north" : "south", v.diam);
   else if (p == planets::JUPITER)
@@ -6208,7 +6232,9 @@ inline void planet_view_update(double t) {
              v.lit < 0.45f ? " (crescent)" : v.lit < 0.55f ? " (half)" : v.lit < 0.97f ? " (gibbous)" : "", v.diam);
   // UI-61b: the switch takes the second caption line; the credit sits on the picture
   char cr[64] = "";
-  if (photo)
+  if (photo && outer)
+    snprintf(cr, sizeof(cr), "%s", photos::outer(p - planets::N_PLANETS).credit);
+  else if (photo)
     snprintf(cr, sizeof(cr), "%s%s", net::planet_photo(p).credit, p == planets::SATURN ? ", 2004" : "");
   else if (drawn && !planet_drawn)
     snprintf(cr, sizeof(cr), "%s", "Photo unavailable: drawn");
@@ -6246,8 +6272,8 @@ inline void img_view_update(double t) {
   if (sv.pf && px != nullptr) {  // the planets tab (Earth) shows a scaled copy, in the planet picture's buffer
     if (planet_px == nullptr)
       planet_px = (uint16_t *) heap_caps_malloc(net::IMG_PX * net::IMG_PX * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (planet_px != nullptr)
-      pv_scale(px, planet_px);
+    if (planet_px != nullptr && (streaming || live.img_new[k] || sv.dsc_px != planet_px))
+      pv_scale(px, planet_px);  // (only when the picture changed)
     px = planet_px;
   }
   // PERF-15a: while it streams in, only the band of rows new since the last redraw is redrawn
@@ -6517,33 +6543,44 @@ inline void img_view_open_now(int kind, int planet) {
       const char *name;
     };
     const int ek = kind == net::IMG_EARTH || kind == net::IMG_REGION ? kind : earth_kind();
-    const C chips[6] = {{VIEW_PLANET + planets::MERCURY, planets::MERCURY, "Mercury"},
+    const C chips[9] = {{VIEW_PLANET + planets::MERCURY, planets::MERCURY, "Mercury"},
                         {VIEW_PLANET + planets::VENUS, planets::VENUS, "Venus"},
                         {ek, -1, "Earth"},
                         {VIEW_PLANET + planets::MARS, planets::MARS, "Mars"},
                         {VIEW_PLANET + planets::JUPITER, planets::JUPITER, "Jupiter"},
-                        {VIEW_PLANET + planets::SATURN, planets::SATURN, "Saturn"}};
-    for (int i = 0; i < 6; i++) {
+                        {VIEW_PLANET + planets::SATURN, planets::SATURN, "Saturn"},
+                        {VIEW_PLANET + planets::N_PLANETS, planets::N_PLANETS, "Uranus"},
+                        {VIEW_PLANET + planets::N_PLANETS + 1, planets::N_PLANETS + 1, "Neptune"},
+                        {VIEW_PLANET + planets::N_PLANETS + 2, planets::N_PLANETS + 2, "Pluto"}};
+    static lv_image_dsc_t outer_dsc[photos::N_OUTER];
+    for (int i = 0; i < 9; i++) {
       const bool on = chips[i].p >= 0 ? kind == chips[i].kind : kind == net::IMG_EARTH || kind == net::IMG_REGION;
       lv_obj_t *c = lv_button_create(root);
-      lv_obj_set_size(c, 72, 62);
-      lv_obj_set_pos(c, 9 + i * 78, PV_STRIP_Y);
+      lv_obj_set_size(c, 52, 62);
+      lv_obj_set_pos(c, 1 + i * 53, PV_STRIP_Y);
       lv_obj_set_style_bg_color(c, lv_color_hex(on ? 0x24356A : 0x121A36), 0);
       lv_obj_set_style_shadow_width(c, 0, 0);
       lv_obj_set_style_pad_all(c, 0, 0);
+      lv_obj_set_style_radius(c, 10, 0);
       if (on)
         lv_obj_set_style_border_color(c, lv_color_hex(0xFF8A1F), 0), lv_obj_set_style_border_width(c, 1, 0);
-      if (chips[i].p >= 0) {
-        lv_obj_t *im = lv_image_create(c);
+      lv_obj_t *im = nullptr;
+      if (chips[i].p >= planets::N_PLANETS) {  // Uranus, Neptune, Pluto: their own 40 px pictures
+        const int o = chips[i].p - planets::N_PLANETS;
+        outer_dsc[o] = make_dsc(photos::outer(o).icon, 40, 40);
+        im = lv_image_create(c);
+        lv_image_set_src(im, &outer_dsc[o]);
+      } else if (chips[i].p >= 0) {
+        im = lv_image_create(c);
         lv_image_set_src(im, planet_card_dsc(chips[i].p));
-        lv_obj_align(im, LV_ALIGN_TOP_MID, 0, 3);
       } else if (w.card_icon_big) {  // Earth has no picture of its own: the globe glyph
-        lv_obj_t *gl = lv_label_create(c);
-        lv_obj_set_style_text_font(gl, w.card_icon_big, 0);
-        lv_obj_set_style_text_color(gl, lv_color_hex(0x4A9BE6), 0);
-        lv_label_set_text(gl, "\xF3\xB0\x87\xA7");
-        lv_obj_align(gl, LV_ALIGN_TOP_MID, 0, 3);
+        im = lv_label_create(c);
+        lv_obj_set_style_text_font(im, w.card_icon_big, 0);
+        lv_obj_set_style_text_color(im, lv_color_hex(0x4A9BE6), 0);
+        lv_label_set_text(im, "\xF3\xB0\x87\xA7");
       }
+      if (im)
+        lv_obj_align(im, LV_ALIGN_TOP_MID, 0, 3);
       lv_obj_t *nl = lv_label_create(c);
       if (w.label_font)
         lv_obj_set_style_text_font(nl, w.label_font, 0);

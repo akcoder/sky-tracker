@@ -2202,6 +2202,22 @@ int main() {
       }
       sat::img_view_close();
     }
+    // Uranus, Neptune and Pluto: pictures only (no orbit data), in the Planets strip
+    for (int o = 0; o < sat::photos::N_OUTER; o++) {
+      const int p = sat::planets::N_PLANETS + o;
+      sat::img_view_open_now(sat::VIEW_PLANET + p);
+      sat::sv.drawn_at = 0;
+      sat::img_view_update(sat_host_now);
+      lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
+      CHECK(sat::sv.pf && sat::planet_src_of == p && !lv_obj_has_flag(sat::sv.img, LV_OBJ_FLAG_HIDDEN) &&
+                strstr(lv_label_get_text(sat::sv.cap1), sat::photos::outer(o).name) &&
+                lv_label_get_text(sat::sv.credit)[0] && !sat::sv.phase_mark,
+            "outer planet %s: its picture, a caption, a credit, no phase switch", sat::photos::outer(o).name);
+      char fnp[64];
+      snprintf(fnp, sizeof(fnp), OUT_DIR "/renders/r10_planet%d.ppm", p);
+      save_ppm(fnp);
+      sat::img_view_close();
+    }
     {  // UI-61d: the photos are built in: Venus again with no network body at all
       host_http_bodies.erase("Venus-real_color.jpg");
       host_last_url.clear();
