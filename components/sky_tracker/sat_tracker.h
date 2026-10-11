@@ -7313,6 +7313,22 @@ namespace rocket {
 bool active();  // sky_rocket.h (UI-69): the launch animation is on screen
 }
 
+// PERF-19: how long each LVGL refresh takes (from REFR_START to REFR_READY): the count, the sum and the longest in the
+// last minute (logged with the draw buffer's place), and any over 150 ms as it happens
+inline int64_t perf_refr_t0 = 0, perf_refr_max = 0, perf_refr_sum = 0;
+inline uint32_t perf_refr_n = 0;
+inline void perf_refr_start_cb(lv_event_t *) { perf_refr_t0 = ui_us(); }
+inline void perf_refr_ready_cb(lv_event_t *) {
+  if (perf_refr_t0 == 0)
+    return;
+  const int64_t d = ui_us() - perf_refr_t0;
+  perf_refr_t0 = 0;
+  perf_refr_n++;
+  perf_refr_sum += d;
+  perf_refr_max = std::max(perf_refr_max, d);
+  if (d > 150000)
+    ESP_LOGW(UI_TAG, "perf: a screen refresh took %lld ms", (long long) (d / 1000));
+}
 inline void tick() {
   if (!ui.ready || ui.ota)
     return;  // BUILD-6
@@ -7330,6 +7346,16 @@ inline void tick() {
       last_perf = us;
       lv_display_t *d = lv_display_get_default();
       lv_draw_buf_t *db = d ? lv_display_get_buf_active(d) : nullptr;
+      static bool hooked = false;
+      if (!hooked && d) {
+        hooked = true;
+        lv_display_add_event_cb(d, perf_refr_start_cb, LV_EVENT_REFR_START, nullptr);
+        lv_display_add_event_cb(d, perf_refr_ready_cb, LV_EVENT_REFR_READY, nullptr);
+      }
+      ESP_LOGI(UI_TAG, "perf: %u refreshes in the last minute, mean %lld ms, longest %lld ms",
+               (unsigned) perf_refr_n, perf_refr_n ? (long long) (perf_refr_sum / perf_refr_n / 1000) : 0LL,
+               (long long) (perf_refr_max / 1000));
+      perf_refr_n = 0, perf_refr_sum = perf_refr_max = 0;
       ESP_LOGI(UI_TAG, "perf: LVGL draw buffer in %s (%u KB); internal RAM free %u KB, largest block %u KB",
                db && db->data ? (esp_ptr_internal(db->data) ? "internal RAM" : "PSRAM") : "?",
                db ? (unsigned) (db->data_size / 1024) : 0u, (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
