@@ -17,7 +17,7 @@ substitutions:
   ap_name: Sky Tracker    # the open fallback AP (renamed with the MAC suffix at boot)
   timezone: UTC           # (the board package's default; removed again below so the picker (UI-70) decides)
   tracker_common_url: https://github.com/akcoder/tracker-common
-  tracker_common_ref: v0.4.2   # a tag, so a change in tracker-common cannot break this build
+  tracker_common_ref: v0.4.3   # a tag, so a change in tracker-common cannot break this build
   backlight_min: "0.10"   # HW-6: lowest PWM duty that is still visible; raise if the
                           # panel goes dark at the bottom of the brightness slider
   # HW-8/HW-9: optional GPS and compass (see the wiring diagram)
@@ -165,8 +165,7 @@ esphome:
               id(lvgl_comp)->show_page(id(sky_page)->index, LV_SCREEN_LOAD_ANIM_NONE, 50);
             };
             tracker::upd::ota_hook_error = []() { sat::ota_error(); };
-            // UI-44: the package's Backlight number and touch wake ask us for the auto-brightness state
-            tracker::display::auto_on = []() { return id(auto_bright).state; };
+            // UI-44: the package's Backlight number asks us for tonight's brightness factor
             tracker::display::factor_now = []() { return sat::auto_bright_factor(); };
             sat::upd::set_button(id(upd_btn));  // UI-68a: our icon, before init (which would make its own)
             sat::upd::init(id(fw_update), id(setup_title)->get_lv_font(), id(mono16)->get_lv_font(),
@@ -234,7 +233,8 @@ esp32:
       CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: y
 
 # tracker-common (shared with f1-tracker): the board (panel, touch, backlight, Wi-Fi, time, OTA cards).
-# backlight.yaml: the brightness globals, the Backlight number, the light's slider sync, the touch wake.
+# backlight.yaml: the brightness globals, the Backlight number, the Auto Brightness switch, the light's slider sync,
+# the touch wake.
 # NOT taken: its sdkconfig file (our memory and network tuning stays as it is below), BLE Improv, and its
 # diagnostics (our entity names and web order differ).
 packages:
@@ -1410,17 +1410,6 @@ switch:
       - lambda: sat::set_alert_kinds(id(station_alerts).state, id(launch_alerts).state, true);
     on_turn_off:
       - lambda: sat::set_alert_kinds(id(station_alerts).state, id(launch_alerts).state, false);
-  - platform: template           # UI-44: brightness follows the Sun (Backlight = daytime level)
-    id: auto_bright
-    name: Auto Brightness
-    web_server:
-      sorting_group_id: grp_display
-      sorting_weight: 2
-    icon: mdi:brightness-auto
-    optimistic: true
-    restore_mode: RESTORE_DEFAULT_OFF
-    on_turn_on:
-      - lambda: id(bright_day) = std::max(0.05f, id(backlight).current_values.get_brightness());
   - platform: template           # UI-45: red display after dusk
     id: night_mode
     name: Night Mode
