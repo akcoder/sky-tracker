@@ -203,8 +203,8 @@ inline void open() {
   lv_obj_add_flag(n, LV_OBJ_FLAG_HIDDEN);
   ui_.notes = n;
   ui_.notes_lbl = lv_label_create(n);
-  if (f_small)
-    lv_obj_set_style_text_font(ui_.notes_lbl, f_small, 0);
+  if (f_body)  // the 16 px font: the 12 px one was blurry
+    lv_obj_set_style_text_font(ui_.notes_lbl, f_body, 0);
   lv_obj_set_style_text_color(ui_.notes_lbl, lv_color_hex(0xC9D3F2), 0);
   lv_obj_set_width(ui_.notes_lbl, 384);
   lv_label_set_long_mode(ui_.notes_lbl, LV_LABEL_LONG_WRAP);

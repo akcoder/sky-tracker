@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.40 (unreleased): the update prompt's release notes use the 16 px font (they were blurry at 12 px).
 - 4.6.39 (released): the constellation figures and the highlight are drawn above the rings and cross lines (UI-46d).
 - 4.6.38 (released): touching a constellation's figure on the map shows its details (UI-46c).
 - 4.6.37 (installed): the object a star, deep-sky, radiant or constellation card is for is lit on the map: a ring, or the constellation's whole figure in gold (UI-50b, UI-46b). the list has a Close button and scrolls in a box under the title row, never under Close (UI-10c); the row lines no longer go missing in patches as cells change (UI-10d). the list shows the named stars and the major constellations above the horizon, and a tap opens their cards (UI-10b). the firmware check no longer fails with "sock < 0" or "esp-aes: Failed to allocate memory" when the data task is on the network: it drops its kept connection and waits while the check runs (NET-14). A new Moon is drawn under the Sun's halo instead of in front of it (UI-6a).
@@ -703,7 +704,7 @@ UI-41j The Alerts tab in two columns of seven: the sky on the left (Aurora, Plan
 UI-68c The "Update available" prompt shows the release's notes: the manifest's ota.summary (the
        GitHub release text, which the release workflow copies in), read from ESPHome's update
        entity (update_info.summary). The card grows to 440x440 with the notes in a 400x244 box that
-       scrolls (mono12), the buttons below it; Markdown's * ` and # marks are dropped, runs of blank
+       scrolls (mono16), the buttons below it; Markdown's * ` and # marks are dropped, runs of blank
        lines squeezed, the text folded to the fonts (UI-78), at most ~1.5 KB. Without notes the
        card is as before. The other prompts (checking, up to date, installing) keep the short card.
 UI-73  Space weather (NOAA SWPC products/alerts.json, ~40 KB, every 30 min; net::do_swx): the
