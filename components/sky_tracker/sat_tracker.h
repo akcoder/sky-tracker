@@ -2007,6 +2007,7 @@ inline void fig_draw_cb(lv_event_t *e) {
   draw_overlays(layer, clip, ox, oy);
 }
 
+inline void draw_list(double t);
 // Show, hide or refresh the star layer (every tick; the positions once per STAR_PERIOD).
 inline void update_starmap(double t) {
   if (!ui.star_cb)
@@ -2022,6 +2023,8 @@ inline void update_starmap(double t) {
     ui.stars_shown = want;
     lv_obj_invalidate(ui.w.sky);
     changed = true;
+    if (ui.ready)
+      draw_list(t);  // the list's STR and CON rows come and go with the stars (it was built before they were first shown)
   }
   if (changed)
     declutter_labels();  // names follow the layer
@@ -2799,6 +2802,12 @@ inline void draw_list(double t) {
     lv_obj_invalidate(tb);
   }
 }
+// The List page's rows are built from fresh satellite data, a setting change, or the stars appearing; opening the page
+// builds them again so what it shows is current (planets and stars come in after the clock is set).
+inline void list_refresh() {
+  if (ui.ready)
+    draw_list(clock_now());
+}
 
 // ================================================================== UI-26 motion trails
 // Where each satellite (and the ISS) was 10, 20 and 30 s ago, drawn under the markers
@@ -3342,6 +3351,7 @@ inline void update_planets(double t, bool force = false) {
   ui.planet_next = t + PLANET_PERIOD;
   const Config &c = config();
   constexpr int H = picons::SMALL / 2;
+  bool planets_changed = false;  // which planets are up: the list's PL rows
   for (int p = 0; p < planets::N_PLANETS; p++) {
     planets::Pos ps;
     const geo::AzEl a = planets::horizontal(p, t, c.lat, c.lon, &ps);
@@ -3352,6 +3362,8 @@ inline void update_planets(double t, bool force = false) {
     if (!ui.scrub_on)  // UI-53: alerts are about now
       ui.planet_visible[p] = a.el >= PLANET_ALERT_EL && ps.mag <= PLANET_ALERT_MAG && planet_sky_dark(ps.mag);
     const bool show = ui.planets_on && a.el >= 0;
+    if (show != ui.planet_shown[p])
+      planets_changed = true;
     set_shown(ui.planet_img[p], ui.planet_shown[p], show);
     const bool tag = show;  // 4.5.6: planets keep their names even low (UI-43 is for satellites)
     set_shown(ui.planet_lbl[p], ui.planet_lbl_shown[p], tag);
@@ -3373,6 +3385,8 @@ inline void update_planets(double t, bool force = false) {
       }
     }
   }
+  if (planets_changed && ui.ready)
+    draw_list(t);  // the list's PL rows follow the planets that are up
 }
 // UI-41a: the aurora notice (and its glow) and the planet alerts can be turned off
 inline void set_alerts(bool aurora, bool planet) {
@@ -7695,6 +7709,15 @@ inline void run(const char *cmd) {
     reentry_fx::s.on = false;
     reentry_fx::play(d);
     ESP_LOGI(UI_TAG, "dbg: re-entry fireball started");
+  } else if (!strcmp(cmd, "list")) {  // what the List page holds, by class (column 3)
+    int n = 0, str = 0, pl = 0, con = 0, rows = ui.w.list ? (int) lv_table_get_row_count(ui.w.list) : 0;
+    for (int r = 0; r < rows; r++) {
+      const char *c = lv_table_get_cell_value(ui.w.list, r, 3);
+      n++;
+      str += !strcmp(c, "STR"), pl += !strcmp(c, "PL"), con += !strcmp(c, "CON");
+    }
+    ESP_LOGI(UI_TAG, "dbg: list %d rows: STR %d, PL %d, CON %d (stars shown %d, sun el %.1f)", n, str, pl, con, (int) ui.stars_shown,
+             (double) ui.view_sun_el);
   } else if (!strcmp(cmd, "dino")) {
     ESP_LOGI(UI_TAG, "dbg: dino walk %s", dino::walk(lv_tick_get() * 2654435761u + 1) ? "started" : "NOT started");
   } else if (!strcmp(cmd, "state")) {

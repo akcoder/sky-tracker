@@ -2059,7 +2059,9 @@ lvgl:
       bg_opa: COVER
       scrollable: false            # UI-10c: the page stays; the list scrolls in its own box under the title row
       on_load:
-        - lambda: lv_obj_scroll_to_y(id(list_box), 0, LV_ANIM_OFF);
+        - lambda: |-
+            sat::list_refresh();   // current when opened (the stars and planets were not up when it was built)
+            lv_obj_scroll_to_y(id(list_box), 0, LV_ANIM_OFF);
       on_click:                  # UI-10: a tap on a row opens its card on the map, elsewhere the page flips
         - if:
             condition:
