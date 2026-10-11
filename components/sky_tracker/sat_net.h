@@ -3194,8 +3194,9 @@ inline const char *allsky_image(ImageInfo &info, uint16_t *work, char *e, size_t
   js.acc = acc;
   js.keep = -1.0f;            // the top square
   js.r0 = 176, js.r1 = 180;   // the fisheye's rim
+  js.dim = EARTH_PX;          // 300 px: shown 1:1 on the Alaska tab
   js.show = true;
-  img_prog_fill(work, IMG_ALLSKY);
+  img_prog_fill(work, IMG_ALLSKY, EARTH_PX);
   img_stage = STG_DOWNLOAD;
   dl_track = true;
   http_last_modified[0] = 0;

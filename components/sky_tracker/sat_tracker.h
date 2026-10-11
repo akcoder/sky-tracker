@@ -3155,6 +3155,15 @@ inline void step() {
   }
 }
 // called from tick(): the clock has just passed an estimate shown on the Alerts tab
+// the fireball now, from the estimate's moment (or, within REPLAY_WINDOW_S after it, from whenever the map is next showing)
+constexpr double REPLAY_WINDOW_S = 15 * 60.0;
+inline void play(const net::DecayRec &d) {
+  start(d);
+#ifndef SAT_HOST_TEST
+  s.timer = lv_timer_create([](lv_timer_t *) { step(); }, 40, nullptr);
+#endif
+  step();
+}
 inline void check(double t) {
   if (s.on || !ui.reentry_alerts || ui.scrub_on || !ui.ready || !ui.w.sky || !clock_valid())
     return;
@@ -3163,13 +3172,9 @@ inline void check(double t) {
     return;  // not showing: it may still play within the two minutes
 #endif
   for (const auto &d : live.decays) {
-    if (d.est > t || t - d.est > 120.0 || was_played(d.id))
+    if (d.est > t || t - d.est > REPLAY_WINDOW_S || was_played(d.id))
       continue;
-    start(d);
-#ifndef SAT_HOST_TEST
-    s.timer = lv_timer_create([](lv_timer_t *) { step(); }, 40, nullptr);
-#endif
-    step();
+    play(d);
     return;
   }
 }
@@ -6039,9 +6044,10 @@ constexpr int PV_X0 = 240 - PV_PX / 2, PV_Y0 = PV_CY - PV_PX / 2;
 inline int pv_x(int x) { return sv.pf ? PV_X0 + x : (480 - net::IMG_PX) / 2 + x; }
 inline int pv_y(int y) { return sv.pf ? PV_Y0 + y : 48 + y; }
 inline int planets_last_kind = -1;  // what the Planets tab opens: the last planet (or Earth) looked at
-inline bool earth_regional = false;  // UI-62a: the Earth tab opens on the globe (4.5.31); the region is one tap away
+inline int alaska_last_kind = -1;  // what the Alaska tab opens: Poker Flat's camera or the NOAA region
+inline bool is_alaska(int k) { return k == net::IMG_ALLSKY || k == net::IMG_REGION; }
 inline const net::Region *my_region() { return net::region_for(config().lat, config().lon); }
-inline int earth_kind() { return earth_regional && my_region() ? net::IMG_REGION : net::IMG_EARTH; }
+inline int earth_kind() { return net::IMG_EARTH; }
 inline bool planet_drawn = false;      // UI-61g: the drawn planet is only a fallback now (no photo)
 inline bool planet_phase = true;       // UI-61g: "Tonight's phase" shading on the photo (kept between opens)
 inline bool bm_in_px = false;  // planet_px holds the Blue Marble (the Earth before its first picture is in)
@@ -6408,7 +6414,7 @@ inline void img_view_update(double t) {
     planet_view_update(t);
     return;
   }
-  if (sv.kind == net::IMG_EARTH || sv.kind == net::IMG_REGION) {
+  if (sv.kind == net::IMG_EARTH) {
     earth_view_update(sv.kind, t);
     return;
   }
@@ -6526,12 +6532,6 @@ inline void img_view_update(double t) {
   set_text_if(sv.cap2, c2);
 }
 inline void img_view_open_now(int kind, int planet = -2);
-inline void img_seg_cb(lv_event_t *e) {  // UI-62a: Globe / region
-  const int kind = (int) (intptr_t) lv_event_get_user_data(e);
-  earth_regional = kind == net::IMG_REGION;
-  if (kind != sv.kind)
-    img_view_open_now(kind, sv.planet);
-}
 inline void img_view_update(double t);
 inline void img_phase_cb(lv_event_t *e) {  // UI-61g: "Tonight's phase" on / off
   planet_phase = lv_obj_has_state((lv_obj_t *) lv_event_get_target(e), LV_STATE_CHECKED);
@@ -6551,9 +6551,10 @@ inline void img_view_open_now(int kind, int planet) {
   sv.kind = kind;
   sv.planet = planet;
   sv.drawn_at = 0;
-  sv.pf = kind >= VIEW_PLANET || kind == net::IMG_EARTH || kind == net::IMG_REGION;
+  sv.pf = kind >= VIEW_PLANET || kind == net::IMG_EARTH || is_alaska(kind);
+  const bool alaska = is_alaska(kind);
   if (sv.pf)
-    planets_last_kind = kind;
+    (alaska ? alaska_last_kind : planets_last_kind) = kind;
   const bool pf = sv.pf;
   const auto &w = ui.w;
   lv_obj_t *root = lv_obj_create(lv_layer_top());
@@ -6600,13 +6601,15 @@ inline void img_view_open_now(int kind, int planet) {
   };
   const T tabs[4] = {{net::IMG_SUN, 8, 72, "Sun"},
                      {net::IMG_MOON, 84, 72, "Moon"},
-                     {pf ? kind : planets_last_kind >= 0 ? planets_last_kind : earth_kind(), 160, 104, "Planets"},
-                     {net::IMG_ALLSKY, 268, 72, "UAF"}};
+                     {pf && !alaska ? kind : planets_last_kind >= 0 ? planets_last_kind : earth_kind(), 160, 104, "Planets"},
+                     {alaska ? kind : alaska_last_kind >= 0 && (alaska_last_kind != net::IMG_REGION || my_region()) ? alaska_last_kind
+                                                                                                                      : (int) net::IMG_ALLSKY,
+                      268, 80, "Alaska"}};
   for (int i = 0; i < 4; i++) {
-    sv.tab[i] = button(tabs[i].x, tabs[i].w, tabs[i].name, i == 2 ? pf : tabs[i].kind == kind);
+    sv.tab[i] = button(tabs[i].x, tabs[i].w, tabs[i].name, i == 2 ? pf && !alaska : i == 3 ? alaska : tabs[i].kind == kind);
     lv_obj_add_event_cb(sv.tab[i], img_tab_cb, LV_EVENT_CLICKED, (void *) (intptr_t) tabs[i].kind);
   }
-  lv_obj_t *b = button(376, 96, "Close", false);
+  lv_obj_t *b = button(376, 96, "Close", false);  // (Alaska ends at 348)
   lv_obj_set_style_bg_color(b, lv_color_hex(0x1A2547), 0);
   lv_obj_add_event_cb(b, img_view_close_cb, LV_EVENT_CLICKED, nullptr);
   sv.img = lv_image_create(root);
@@ -6660,33 +6663,12 @@ inline void img_view_open_now(int kind, int planet) {
     lv_label_set_text(l, "Tonight's phase");
     lv_obj_align_to(l, sw, LV_ALIGN_OUT_LEFT_MID, -10, 0);
   }
-  if (!pl && (kind == net::IMG_EARTH || kind == net::IMG_REGION) && my_region()) {  // UI-62a Globe | region
-    const char *names[2] = {"Globe", my_region()->name};
-    for (int i = 0; i < 2; i++) {
-      const int want = i == 0 ? net::IMG_EARTH : net::IMG_REGION;
-      lv_obj_t *sb = lv_button_create(root);
-      sv.seg[i] = sb;
-      lv_obj_set_size(sb, 128, 24);
-      lv_obj_set_pos(sb, i == 0 ? 108 : 244, PV_SUB_Y);
-      const bool on = kind == want;
-      lv_obj_set_style_bg_color(sb, lv_color_hex(on ? 0x24356A : 0x121A36), 0);
-      lv_obj_set_style_shadow_width(sb, 0, 0);
-      lv_obj_set_style_pad_all(sb, 0, 0);
-      lv_obj_t *l = lv_label_create(sb);
-      if (w.label_font)
-        lv_obj_set_style_text_font(l, w.label_font, 0);
-      lv_obj_set_style_text_color(l, lv_color_hex(on ? 0xFF8A1F : 0xC9D3F2), 0);
-      lv_label_set_text(l, names[i]);
-      lv_obj_center(l);
-      lv_obj_add_event_cb(sb, img_seg_cb, LV_EVENT_CLICKED, (void *) (intptr_t) want);
-    }
-  }
-  if (pf) {  // the planets, Earth among them: tap one to see it
+  if (pf && !alaska) {  // the planets, Earth among them: tap one to see it
     struct C {
       int kind, p;
       const char *name;
     };
-    const int ek = kind == net::IMG_EARTH || kind == net::IMG_REGION ? kind : earth_kind();
+    const int ek = net::IMG_EARTH;
     const C chips[9] = {{VIEW_PLANET + planets::MERCURY, planets::MERCURY, "Mercury"},
                         {VIEW_PLANET + planets::VENUS, planets::VENUS, "Venus"},
                         {ek, -1, "Earth"},
@@ -6698,7 +6680,7 @@ inline void img_view_open_now(int kind, int planet) {
                         {VIEW_PLANET + planets::N_PLANETS + 2, planets::N_PLANETS + 2, "Pluto"}};
     static lv_image_dsc_t outer_dsc[photos::N_OUTER];
     for (int i = 0; i < 9; i++) {
-      const bool on = chips[i].p >= 0 ? kind == chips[i].kind : kind == net::IMG_EARTH || kind == net::IMG_REGION;
+      const bool on = chips[i].p >= 0 ? kind == chips[i].kind : kind == net::IMG_EARTH;
       lv_obj_t *c = lv_button_create(root);
       lv_obj_set_size(c, 52, 62);
       lv_obj_set_pos(c, 1 + i * 53, PV_STRIP_Y);
@@ -6725,6 +6707,46 @@ inline void img_view_open_now(int kind, int planet) {
       }
       if (im)
         lv_obj_align(im, LV_ALIGN_TOP_MID, 0, 3);
+      lv_obj_t *nl = lv_label_create(c);
+      if (w.label_font)
+        lv_obj_set_style_text_font(nl, w.label_font, 0);
+      lv_obj_set_style_text_color(nl, lv_color_hex(on ? 0xFF8A1F : 0xC9D3F2), 0);
+      lv_label_set_text(nl, chips[i].name);
+      lv_obj_align(nl, LV_ALIGN_BOTTOM_MID, 0, -3);
+      lv_obj_add_event_cb(c, img_tab_cb, LV_EVENT_CLICKED, (void *) (intptr_t) chips[i].kind);
+    }
+  }
+  if (pf && alaska) {  // Poker Flat's all-sky camera, and NOAA's picture of the region (the satellite)
+    struct C {
+      int kind;
+      char name[24];
+      const char *glyph;
+      uint32_t col;
+    };
+    C chips[2] = {{net::IMG_ALLSKY, "Poker Flat", "\xF3\xB1\xAE\xB9", C_AURORA}};  // mdi:aurora
+    int n = 1;
+    if (my_region()) {
+      chips[1] = {net::IMG_REGION, "", "\xF3\xB0\x91\xB1", 0x8FA8F0};  // mdi:satellite-variant
+      snprintf(chips[1].name, sizeof(chips[1].name), "NOAA %.15s", my_region()->name);
+      n = 2;
+    }
+    for (int i = 0; i < n; i++) {
+      const bool on = kind == chips[i].kind;
+      lv_obj_t *c = lv_button_create(root);
+      lv_obj_set_size(c, 130, 62);
+      lv_obj_set_pos(c, 1 + i * 131, PV_STRIP_Y);
+      lv_obj_set_style_bg_color(c, lv_color_hex(on ? 0x24356A : 0x121A36), 0);
+      lv_obj_set_style_shadow_width(c, 0, 0);
+      lv_obj_set_style_pad_all(c, 0, 0);
+      lv_obj_set_style_radius(c, 10, 0);
+      if (on)
+        lv_obj_set_style_border_color(c, lv_color_hex(0xFF8A1F), 0), lv_obj_set_style_border_width(c, 1, 0);
+      lv_obj_t *ic = lv_label_create(c);
+      if (w.card_icon_big)
+        lv_obj_set_style_text_font(ic, w.card_icon_big, 0);
+      lv_obj_set_style_text_color(ic, lv_color_hex(chips[i].col), 0);
+      lv_label_set_text(ic, chips[i].glyph);
+      lv_obj_align(ic, LV_ALIGN_TOP_MID, 0, 2);
       lv_obj_t *nl = lv_label_create(c);
       if (w.label_font)
         lv_obj_set_style_text_font(nl, w.label_font, 0);
@@ -7133,6 +7155,7 @@ inline void card_build() {
   lv_obj_add_flag(fb, LV_OBJ_FLAG_FLOATING);
   lv_obj_set_size(fb, 104, 36);
   lv_obj_align(fb, LV_ALIGN_BOTTOM_RIGHT, 0, 42);
+  lv_obj_set_ext_click_area(fb, 18);  // as Image
   lv_obj_set_style_bg_color(fb, lv_color_hex(0x24356A), 0);
   lv_obj_set_style_shadow_width(fb, 0, 0);
   lv_obj_t *fl = lv_label_create(fb);
@@ -7148,6 +7171,7 @@ inline void card_build() {
   lv_obj_add_flag(sb, (lv_obj_flag_t) (LV_OBJ_FLAG_FLOATING | LV_OBJ_FLAG_HIDDEN));
   lv_obj_set_size(sb, 104, 36);  // same size as Find
   lv_obj_align(sb, LV_ALIGN_BOTTOM_LEFT, 0, 42);
+  lv_obj_set_ext_click_area(sb, 18);  // a bigger target than it looks (the thumb missed the 104 x 36 button)
   lv_obj_set_style_bg_color(sb, lv_color_hex(0x24356A), 0);
   lv_obj_set_style_shadow_width(sb, 0, 0);
   lv_obj_t *sl = lv_label_create(sb);
@@ -7560,6 +7584,19 @@ inline void run(const char *cmd) {
              (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
              (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
 #endif
+  } else if (!strcmp(cmd, "card moon") || !strcmp(cmd, "card sun")) {  // the Sun / Moon card, as a touch on the icon opens it
+    select_object(cmd[5] == 'm' ? K_MOON : K_SUN, 0);
+    ESP_LOGI(UI_TAG, "dbg: card open, image button %s", ui.card_img_btn && !lv_obj_has_flag(ui.card_img_btn, LV_OBJ_FLAG_HIDDEN) ? "shown" : "HIDDEN");
+  } else if (!strcmp(cmd, "card image")) {  // a touch on the card's Image button
+    lv_obj_send_event(ui.card_img_btn, LV_EVENT_CLICKED, nullptr);
+    ESP_LOGI(UI_TAG, "dbg: image button pressed; viewer %s, picture %s, text \"%s\"", sv.root ? "open" : "NOT open",
+             sv.img && !lv_obj_has_flag(sv.img, LV_OBJ_FLAG_HIDDEN) ? "shown" : "hidden", sv.msg ? lv_label_get_text(sv.msg) : "");
+  } else if (!strcmp(cmd, "reentry")) {  // the fireball now (the map must be showing: close, page sky)
+    net::DecayRec d;
+    d.id = (int32_t) lv_tick_get();
+    reentry_fx::s.on = false;
+    reentry_fx::play(d);
+    ESP_LOGI(UI_TAG, "dbg: re-entry fireball started");
   } else if (!strcmp(cmd, "dino")) {
     ESP_LOGI(UI_TAG, "dbg: dino walk %s", dino::walk(lv_tick_get() * 2654435761u + 1) ? "started" : "NOT started");
   } else if (!strcmp(cmd, "state")) {
@@ -7664,7 +7701,8 @@ inline void tick() {
   update_planets(tv);  // UI-40
   update_comets(tv);   // UI-63
   update_radiant(tv);  // UI-47
-  reentry_fx::check(t);  // UI-79
+  if (!img_view_open())  // (under the picture viewer the map is hidden: it would play unseen)
+    reentry_fx::check(t);  // UI-79
 #ifdef SAT_HOST_TEST
   align_step(t);      // UI-41: one day of the look-ahead per tick (the astro task's on the device)
 #endif

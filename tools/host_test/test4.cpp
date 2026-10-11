@@ -2094,7 +2094,6 @@ int main() {
       sat::net::star_stamp(f10 - 600, st1, sizeof(st1));
       sat::net::star_stamp(f10 - 1200, st2, sizeof(st2));
       host_http_bodies[std::string(st1) + "_GOES18-ABI-FD-GEOCOLOR-678x678.jpg"] = slurp(HOST_DIR "/fixtures/earth_test.jpg");
-      sat::earth_regional = false;
       sat::img_view_open_now(sat::net::IMG_EARTH, -1);
       hold_loading(sat::net::IMG_EARTH, sat::net::STG_DOWNLOAD, 180 * 1024, 460 * 1024);
       sat::img_view_update(sat_host_now);
@@ -2117,8 +2116,7 @@ int main() {
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
       printf("earth view: \"%s\" / \"%s\"\n", lv_label_get_text(sat::sv.cap1), lv_label_get_text(sat::sv.cap2));
       CHECK(strstr(lv_label_get_text(sat::sv.cap1), "GOES-18 ") && strstr(lv_label_get_text(sat::sv.cap1), " ago") &&
-            strstr(lv_label_get_text(sat::sv.cap2), "NOAA GOES-18") && !sat::bm_in_px &&
-            sat::sv.seg[0] && sat::sv.seg[1] && !strcmp(lv_label_get_text(lv_obj_get_child(sat::sv.seg[1], 0)), "Alaska"), "earth captions + switch");
+            strstr(lv_label_get_text(sat::sv.cap2), "NOAA GOES-18") && !sat::bm_in_px, "earth captions");
       {  // UI-62b: the corners fade into the page colour
         const uint16_t cpx = sat::live.img_px[sat::net::IMG_EARTH][0];
         CHECK(cpx == (uint16_t) ((7 >> 3) << 11 | (11 >> 2) << 5 | (24 >> 3)), "earth corner masked (%04x)", cpx);
@@ -2136,7 +2134,6 @@ int main() {
       CHECK(sat::net::img_work_owner == -1, "work buffer free after the copy");
       // ---- UI-62a the region (Alaska for the test location), label strip cropped
       host_http_bodies["_GOES18-ABI-ak-GEOCOLOR-500x500.jpg"] = slurp(HOST_DIR "/fixtures/region_test.jpg");
-      sat::earth_regional = true;  // as the Alaska button does
       sat::img_view_open_now(sat::net::IMG_REGION, -1);
       host_last_url.clear();
       sat::net::do_image(sat::net::IMG_REGION);
@@ -2146,7 +2143,8 @@ int main() {
       const auto &ri = sat::live.img[sat::net::IMG_REGION];
       printf("region: ok %d err '%s' url %s cap \"%s\"\n", ri.ok, ri.err, host_last_url.c_str(), lv_label_get_text(sat::sv.cap1));
       CHECK(ri.ok && host_last_url.find("SECTOR/ak/GEOCOLOR/") != std::string::npos && host_last_url.find("-ak-GEOCOLOR-500x500.jpg") != std::string::npos &&
-            strstr(lv_label_get_text(sat::sv.cap1), "Alaska: GOES-18 ") && sat::earth_kind() == sat::net::IMG_REGION, "region image");
+            strstr(lv_label_get_text(sat::sv.cap1), "Alaska") && strstr(lv_label_get_text(sat::sv.cap1), "GOES-18") && sat::sv.pf &&
+            sat::alaska_last_kind == sat::net::IMG_REGION, "region image");
       save_ppm(OUT_DIR "/renders/r10_region.ppm");
       sat::img_view_close();
     }

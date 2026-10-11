@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.41 (unreleased): the viewer's UAF tab is named Alaska and has a strip of two chips, Poker Flat's all-sky camera and NOAA's picture of the region (the Globe | region buttons on the Earth tab, hard to hit, are gone); the card's Image and Find buttons have a larger hit zone; a re-entry's fireball plays for up to 15 minutes after its estimate (it was 2), and not under the picture viewer; a debug command plays one (reentry); the dinosaur button has an icon and sets Last Animation FPS.
 - 4.6.40 (released): every button in a screen's top row starts at y=10 (their tops sat on the panel's edge); the Moon picture shows again (NASA now names it with an http:// address, which was refused as "NASA sent no picture"; the same address over https is used); the web page has an Animations section with the Play ... Animation buttons, now including the dinosaur; touching the logo on the About page makes a dinosaur walk across the screen (UI-83); the Earth tab shows its picture as it arrives, over the Blue Marble; the picture viewer's tab row is 4 px lower; the loading screen appears sooner (the boot log is 45 lines, not 600: PERF-23); the launch smoke trail has no gap where a slow frame crossed (the map's first draw); the Earth tab shows the Blue Marble until its first picture is in, its progress in the caption, and every picture of the Planets tab is made at its size (nothing scaled on the device); the screen no longer freezes for ~1 s every 10 s at night with an aurora forecast, and the picture viewer redraws in ~10 ms instead of ~1 s (the aurora glow is a picture; the map is hidden under the viewer; PERF-21/22), with screen-drawing numbers and debug commands over the network (PERF-19/20); no meteor radiant (the Quadrantids) on the first map before the clock is set; Uranus, Neptune and Pluto are in the Planets strip, as pictures only (UI-59b); the web page's logo tooltip shows "Sky Tracker <version>" instead of the web UI's own 3.0.0 (tracker-common v0.4.4); the picture viewer's tabs are Sun, Moon, Planets and UAF; Planets shows Earth, Mercury, Venus, Mars, Jupiter and Saturn with a strip to switch between them (UI-59b); the console log runs at 230400 baud (a log line at 115200 held the calling task ~9 ms: screens stalled while they logged); the Auto Brightness switch is tracker-common's (v0.4.3, identical); the splashdown's canopies settle as rounded heaps, not flat sheets (UI-69m); no fixed time zone in the firmware (the board package's UTC had overridden Home Assistant's), and the time zone picker defaults to Alaska (UI-70); the board setup (panel, touch, backlight at 30 kHz, Wi-Fi, time, safe mode, the three install paths on one card, the Backlight number) is tracker-common's v0.4.2 package, with our own memory and network settings kept and no BLE; the console log is on UART0; page and section titles are in sentence case ("About", "This device", "Display", "List", "Sky Tracker", "Launch countdown"), not all capitals; re-entry uncertainty is written with the plus-minus sign instead of "+/-" (UI-74); the update card is tracker-common's (v0.3.0), shared with f1-tracker; the web page patch (tab icon, header badge, logo link) is tracker-common's and runs when the page is served, not at build time; the panel soft reset (HW-7) and the Wi-Fi status page logic (NET-2b; also fixes the offline timer for even clock ticks) are tracker-common's; the Sun maths and the About text are tracker-common's too; the JPEG and PNG decoders are tracker-common's (shared with f1-tracker), with one shared work buffer (8 KB less internal RAM); the picture viewer's All-sky tab is named UAF; each re-entry on its card shows the launch year (UI-74); the update prompt's release notes use the 16 px font (they were blurry at 12 px).
 - 4.6.39 (released): the constellation figures and the highlight are drawn above the rings and cross lines (UI-46d).
 - 4.6.38 (released): touching a constellation's figure on the map shows its details (UI-46c).
@@ -752,8 +753,8 @@ UI-78  Glyphs: the text fonts (*glyphs) hold printable ASCII except ^ ` { } \, p
        stored (net::fold_text): accented Latin letters to their base letter (U+00C0..U+017F, by
        Unicode decomposition), dashes and minus to "-", curly quotes to straight, no-break and thin
        spaces to a space, the ellipsis to "...", anything else to "?".
-UI-79  Re-entry animation: when the clock passes a listed re-entry's estimate (UI-74; within 2 min,
-       once per object, Re-entry Alerts on, not while scrubbing time), a fireball crosses the sky
+UI-79  Re-entry animation: when the clock passes a listed re-entry's estimate (UI-74; for up to 15 min
+       after it, once per object, only while the map is showing (not under the picture viewer), Re-entry Alerts on, not while scrubbing time), a fireball crosses the sky
        view for 2.6-4.4 s: a white-hot head, a tail cooling to orange and red, the body breaking
        into 2-5 fainter pieces (1-2 for debris) at 30-62 % of the run, then burning out. Every
        one is random: the start (55-90 % of the radius out), the heading (within 60 deg of
@@ -949,8 +950,12 @@ UI-60  The Moon now: "Moon image" (bottom left of the Moon card; the same button
        full size, averaged 2x2 to 365 px and cropped to 360. Captions: "94% lit, 17.7
        days old, 372,667 km away" / "NASA Dial-A-Moon for 20:00, north up". Same request
        rules as the Sun (10 min, 90 s after a failure); the same hour is not fetched twice.
-UI-59b Picture tabs: Sun (72), Moon (72), Planets (104) and UAF (72, the all-sky camera) along
-       the top at y 4, 36 high; the one showing is navy with orange text; Close stays at 376,4.
+UI-59b Picture tabs: Sun (72), Moon (72), Planets (104) and Alaska (80) along
+       the top at y 10, 36 high; the one showing is navy with orange text; Close stays at 376,10.
+       ALASKA tab (the old UAF tab, renamed): the same layout as Planets, with a strip of two big chips (130x62)
+       at y 410: Poker Flat (the UAF all-sky camera, an aurora icon) and NOAA <region> (GOES's picture of the
+       region, a satellite icon; only where a region covers the place); both pictures are 300 px, decoded straight
+       to that size. The Earth tab has no Globe | region buttons any more (the region is on the Alaska tab).
        A tab switches in place. Planets opens the last planet or Earth looked at (a planet's
        card opens that planet). On the Planets tab the picture is 300 px square, centred at y 196,
        and NOTHING IS SCALED ON THE DEVICE: the planet photos (sky_photos.h, tools/prescale_photos.py)
@@ -959,8 +964,7 @@ UI-59b Picture tabs: Sun (72), Moon (72), Planets (104) and UAF (72, the all-sky
        from NOAA's JPEG straight to 300 px (LVGL's own scaling of an RGB565 picture draws nothing on
        this build: it needs RGB565A8 drawing). Under the picture: the caption (y 348: the name and its
        facts) and the picture's source under it (y 366, dim: the photo's credit; for Earth "NOAA
-       GOES-18 GeoColor..."), the tab's own controls at y 386 (24 px high: Earth: Globe | region;
-       Mercury, Venus, Mars: Tonight's phase) and a strip of nine chips at y 410 (52x62, one px
+       GOES-18 GeoColor..."), the tab's own controls at y 386 (24 px high: Mercury, Venus, Mars: Tonight's phase) and a strip of nine chips at y 410 (52x62, one px
        apart): Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto, each with its
        40 px picture and name; the one showing has an orange rim. Tap one to see it. Uranus, Neptune
        and Pluto are pictures only: no orbit data, so no map marker, no phase and no position; the
