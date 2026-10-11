@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # Regenerates the harness icon fonts from the device YAML's glyph lists, so the harness draws
 # every icon the device can: mdi40.c from mdi_card40, mdi20.c from mdi_card20 (plus whatever
-# mdi20.c already held). Needs node (npx lv_font_conv).
-import os, re, subprocess, urllib.request
+# mdi20.c already held), mdi14.c from mdi_icon14 (the list's icons). Needs node (npx lv_font_conv).
+#   ./gen_icon_fonts.py [mdi14 mdi20 mdi40]   (default: all)
+import os, re, subprocess, sys, urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 y = open(os.path.join(HERE, "../../sky-tracker.yaml"), encoding="utf-8").read()
 
@@ -23,8 +24,14 @@ def build(name, size, cps, url):
     open(out, "w").write(re.sub(r"--font \S*/deps/", "--font deps/", src))
     print(name, len(cps), "glyphs")
 
-url, g40 = glyphs("mdi_card40")
-build("mdi40", 40, g40, url)
-url, g20 = glyphs("mdi_card20")
-old = re.findall(r"0x(F[0-9A-F]{4})", open(os.path.join(HERE, "mdi20.c")).read().split("\n")[3])
-build("mdi20", 20, sorted(set(g20) | set(old)), url)
+only = set(sys.argv[1:]) or {"mdi14", "mdi20", "mdi40"}
+if "mdi40" in only:
+    url, g40 = glyphs("mdi_card40")
+    build("mdi40", 40, g40, url)
+if "mdi20" in only:
+    url, g20 = glyphs("mdi_card20")
+    old = re.findall(r"0x(F[0-9A-F]{4})", open(os.path.join(HERE, "mdi20.c")).read().split("\n")[3])
+    build("mdi20", 20, sorted(set(g20) | set(old)), url)
+if "mdi14" in only:
+    url, g14 = glyphs("mdi_icon14")
+    build("mdi14", 14, g14, url)

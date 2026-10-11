@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.37 (unreleased): the firmware check no longer fails with "sock < 0" or "esp-aes: Failed to allocate memory" when the data task is on the network: it drops its kept connection and waits while the check runs (NET-14). A new Moon is drawn under the Sun's halo instead of in front of it (UI-6a).
+- 4.6.37 (unreleased): the list shows the named stars and the major constellations above the horizon, and a tap opens their cards (UI-10b). the firmware check no longer fails with "sock < 0" or "esp-aes: Failed to allocate memory" when the data task is on the network: it drops its kept connection and waits while the check runs (NET-14). A new Moon is drawn under the Sun's halo instead of in front of it (UI-6a).
 - 4.6.36 (queued): a tap on a row of the list opens that object's details card on the map (UI-10); built with ESPHome 2026.9.1. The launch, undocking and splashdown animations draw over a snapshot of the screen: 21 / 31 / 27 fps on the unit (were 15 / 28 / 18) (UI-69o). Splashdown chutes flutter and are let go, deflate and settle on the sea (UI-69m). Last Animation FPS sensor (PERF-17). The launch animation runs until its smoke has cleared (UI-69). Fixes a crash (abort) when the list was built: its rows now live in persistent PSRAM buffers (FAIL-13).
 - 4.6.35 (queued): all firmware installs (GitHub, web upload, microSD) share one card with a progress bar and no percentage (UI-12). An install page at akcoder.github.io/sky-tracker, flashing over USB from the browser.
 - 4.6.34 (installed): the microSD card update looks for sky-tracker-esp32s3.ota.bin, the release's own file name, instead of sky_tracker_firmware_<version>.bin; the version shown is read from the image's app descriptor, where the build now stores fw_version (older images: from the project text inside) (UI-66). The list page scrolls instead of stopping at 18 rows with "+ N more" (UI-10).
@@ -394,6 +394,12 @@ UI-10  The list page MUST show a row for every object, in this order: header, IS
        flips the page as before. Only
        a sanity limit of 400 rows ends the list, with a "+ N more" line. The list
        sorts a copy.
+UI-10b The list also shows the named stars (the 20 of UI-50, magnitude in the last column, class STR,
+       gold) and the major constellations (rank 1-2, the ones the map names and has a story for,
+       class CON) that are above the horizon, each group highest first, after the launches and
+       before the satellites. They follow the map: only while it shows stars (the Stars switch,
+       and "only after dusk"). A tap opens the same card as on the map (UI-46, UI-50). Icons:
+       star, star-four-points (mdi_icon14).
 UI-11  Palette (4.3.2): pages are black (#000000, PAGE_BG); the sky disc is a deep,
        slightly desaturated blue (#0B1220, SKY_BG); cards and panels #101B3D. Dim
        colours (Starlink icons, moon edge, arcs, trails) are mixed against SKY_BG.

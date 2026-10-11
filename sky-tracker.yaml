@@ -464,7 +464,7 @@ font:
     bpp: 4
     # trash-can (debris on the map) plus the UI-30 list icons: space-station,
     # satellite-uplink, satellite-variant, earth, crosshairs-gps, weather-sunny, moon-waning-crescent, orbit (UI-40b planets)
-    glyphs: ["\U000F0A79", "\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0599", "\U000F0F65", "\U000F0018", "\U000F14DE", "\U000F0629"]  # + rocket-launch (UI-54 list), meteor (UI-63 comets)
+    glyphs: ["\U000F0A79", "\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0599", "\U000F0F65", "\U000F0018", "\U000F14DE", "\U000F0629", "\U000F04CE", "\U000F0AE2"]  # + rocket-launch (UI-54 list), meteor (UI-63 comets), star, star-four-points (UI-10b)
   - file:
       type: web
       url: https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf

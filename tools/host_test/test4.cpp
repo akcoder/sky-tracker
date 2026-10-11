@@ -552,6 +552,24 @@ int main() {
         break;
       }
     CHECK(tested > 5, "list rows tested (%d)", tested);
+    {  // UI-10b: named stars and constellations above the horizon, each opening its card
+      int stars = 0, consts = 0;
+      for (int r = 1; r < n; r++) {
+        const int k = sat::ui.row_sel_kind[r];
+        if (k != sat::K_STAR && k != sat::K_CONST)
+          continue;
+        (k == sat::K_STAR ? stars : consts)++;
+        if ((k == sat::K_STAR ? stars : consts) > 1)
+          continue;
+        CHECK(sat::list_pick(row_y(r)), "star/constellation row is a pick");
+        sat::list_open();
+        CHECK(sat::card_open() && sat::ui.sel_kind == k && sat::ui.sel_id == sat::ui.row_sel_id[r], "row %d opens its %s card", r,
+              k == sat::K_STAR ? "star" : "constellation");
+        sat::deselect();
+      }
+      printf("list: %d stars, %d constellations\n", stars, consts);
+      CHECK(stars > 0 && consts > 0 && sat::ui.stars_shown, "stars and constellations are on the list (%d, %d)", stars, consts);
+    }
   }
   lv_screen_load(page1);
   {  // UI-6a: a new Moon (Oct 10 2026, 4 degrees from the Sun) is drawn under the Sun's halo, a far one over it

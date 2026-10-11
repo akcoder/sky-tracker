@@ -2348,7 +2348,10 @@ inline void rows_for(const pvector<SatRec> &v, double t, pvector<Row> &out, floa
   std::sort(out.begin(), out.end(), [](const Row &a, const Row &b) { return a.el > b.el; });
 }
 
-enum RowKind : uint8_t { RK_HEAD, RK_ISS, RK_SUN, RK_MOON, RK_SAT, RK_STARLINK, RK_NOTE, RK_PLANET, RK_CSS = 20, RK_LAUNCH = 21, RK_COMET = 22 };  // RK_PLANET + p (UI-40b)
+enum RowKind : uint8_t { RK_HEAD, RK_ISS, RK_SUN, RK_MOON, RK_SAT, RK_STARLINK, RK_NOTE, RK_PLANET, RK_CSS = 20, RK_LAUNCH = 21, RK_COMET = 22, RK_STAR = 23, RK_CONST = 24 };  // RK_PLANET + p (UI-40b)
+
+constexpr uint32_t C_LIST_STAR = 0xFFF1B8, C_LIST_CONST = 0xB8C4F0;  // the star and constellation card colours
+inline void view_azel(float ra, float dec, double t, float &az, float &el);  // below (UI-50)
 
 // UI-10: header and row colours, applied as each cell's text is drawn.
 inline void list_draw_cb(lv_event_t *e) {
@@ -2369,6 +2372,8 @@ inline void list_draw_cb(lv_event_t *e) {
       case RK_CSS: c = C_CSS; break;  // UI-52
       case RK_LAUNCH: c = C_LAUNCH; break;  // UI-54
       case RK_COMET: c = C_COMET; break;    // UI-63
+      case RK_STAR: c = C_LIST_STAR; break;
+      case RK_CONST: c = C_LIST_CONST; break;
       case RK_SUN: c = C_SUN; break;
       case RK_MOON: c = C_MOON; break;
       case RK_STARLINK: c = 0x8FA8F0; break;
@@ -2556,6 +2561,47 @@ inline void draw_list(double t) {
       add(RK_LAUNCH, "\xF3\xB1\x93\x9E", nm, "", "RKT", d, "", alt, K_INFO, li);
       n++;
     }
+  }
+  // UI-10b: the named stars and the major constellations above the horizon, highest first, as the map
+  // shows them (the Stars switch and "only after dusk"); a tap opens the same card as on the map
+  if (ui.stars_shown) {
+    struct Sky {
+      float az, el;
+      int i;
+    };
+    Sky v[ev::N_BRIGHT > sky::N_NAMES ? ev::N_BRIGHT : sky::N_NAMES];
+    auto emit = [&](int n, uint8_t rk, const char *icon, const char *cl, int kind) {
+      for (int a = 1; a < n; a++)  // highest first (insertion sort)
+        for (int b = a; b > 0 && v[b].el > v[b - 1].el; b--)
+          std::swap(v[b], v[b - 1]);
+      for (int k = 0; k < n; k++) {
+        fmt_pos({v[k].az, v[k].el});
+        if (kind == K_STAR) {
+          snprintf(alt, sizeof(alt), "mag %.1f", ev::BRIGHT[v[k].i].mag);
+          add(rk, icon, ev::BRIGHT[v[k].i].name, "", cl, dir, el, alt, kind, v[k].i);
+        } else {
+          add(rk, icon, sky::NAMES[v[k].i].text, "", cl, dir, el, "", kind, v[k].i);
+        }
+      }
+    };
+    int n = 0;
+    for (int i = 0; i < ev::N_BRIGHT; i++) {
+      float az, e;
+      view_azel(ev::BRIGHT[i].ra, ev::BRIGHT[i].dec, t, az, e);
+      if (e >= 0)
+        v[n++] = {az, e, i};
+    }
+    emit(n, RK_STAR, "\xF3\xB0\x93\x8E", "STR", K_STAR);  // star
+    n = 0;
+    for (int i = 0; i < sky::N_NAMES; i++) {
+      if (sky::NAMES[i].rank > 2)  // the named constellations the map labels and has a story for
+        continue;
+      float az, e;
+      view_azel(sky::NAMES[i].ra * (360.0f / 65536.0f), sky::NAMES[i].dec * (90.0f / 32767.0f), t, az, e);
+      if (e >= 0)
+        v[n++] = {az, e, i};
+    }
+    emit(n, RK_CONST, "\xF3\xB0\xAB\xA2", "CON", K_CONST);  // star-four-points
   }
   static pvector<Row> sl_rows, sat_rows, geo_rows;  // (FAIL-13: kept, see rows_for)
   if (ui.starlink_on)
