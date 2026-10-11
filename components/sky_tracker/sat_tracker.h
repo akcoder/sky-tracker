@@ -6734,7 +6734,7 @@ inline void img_view_open_now(int kind, int planet) {
       const bool on = kind == chips[i].kind;
       lv_obj_t *c = lv_button_create(root);
       lv_obj_set_size(c, 130, 62);
-      lv_obj_set_pos(c, 1 + i * 131, PV_STRIP_Y);
+      lv_obj_set_pos(c, (480 - (n * 130 + (n - 1))) / 2 + i * 131, PV_STRIP_Y);  // the chips centred
       lv_obj_set_style_bg_color(c, lv_color_hex(on ? 0x24356A : 0x121A36), 0);
       lv_obj_set_style_shadow_width(c, 0, 0);
       lv_obj_set_style_pad_all(c, 0, 0);

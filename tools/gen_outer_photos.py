@@ -35,14 +35,15 @@ def disc_box(im):
     return g.getbbox()
 
 
-def prepare(im):
+def prepare(im, zoom=1.0):
     x0, y0, x1, y1 = disc_box(im)
     cx, cy, r = (x0 + x1) / 2, (y0 + y1) / 2, max(x1 - x0, y1 - y0) / 2
     m = 6  # margin, source pixels
-    box = (int(cx - r - m), int(cy - r - m), int(cx + r + m), int(cy + r + m))
+    h = (r + m) / zoom  # half the crop; zoom > 1 fills the frame more (the Blue Marble's lit disc is ~4 % smaller than its limb)
+    box = (int(cx - h), int(cy - h), int(cx + h), int(cy + h))
     sq = im.crop(box)
     sq = sq.resize((SIZE, SIZE), Image.LANCZOS)
-    rr = SIZE / 2 * r / (r + m)  # the disc's radius now
+    rr = SIZE / 2 * r / h  # the disc's radius now
     mask = Image.new("L", (SIZE * 4, SIZE * 4), 0)
     ImageDraw.Draw(mask).ellipse((SIZE * 2 - rr * 4 - 2, SIZE * 2 - rr * 4 - 2, SIZE * 2 + rr * 4 + 2, SIZE * 2 + rr * 4 + 2), fill=255)
     mask = mask.resize((SIZE, SIZE), Image.LANCZOS)
@@ -67,7 +68,7 @@ def main():
            "#include <cstddef>", "#include <cstdint>", "namespace sat {", "namespace photos {", ""]
     names, creds = [], []
     for name, credit, url in PHOTOS + [BLUE]:
-        pic = prepare(fetch(url))
+        pic = prepare(fetch(url), 1.045 if name == "EARTH" else 1.0)  # the Blue Marble as large as the GOES disc
         buf = io.BytesIO()
         pic.save(buf, "JPEG", quality=86, optimize=False, progressive=False, subsampling=0)
         data = buf.getvalue()
