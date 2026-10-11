@@ -1,7 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
-- 4.6.40 (unreleased): the web page patch (tab icon, header badge, logo link) is tracker-common's and runs when the page is served, not at build time; the panel soft reset (HW-7) and the Wi-Fi status page logic (NET-2b; also fixes the offline timer for even clock ticks) are tracker-common's; the Sun maths and the About text are tracker-common's too; the JPEG and PNG decoders are tracker-common's (shared with f1-tracker), with one shared work buffer (8 KB less internal RAM); the picture viewer's All-sky tab is named UAF; each re-entry on its card shows the launch year (UI-74); the update prompt's release notes use the 16 px font (they were blurry at 12 px).
+- 4.6.40 (unreleased): the update card is tracker-common's (v0.3.0), shared with f1-tracker; the web page patch (tab icon, header badge, logo link) is tracker-common's and runs when the page is served, not at build time; the panel soft reset (HW-7) and the Wi-Fi status page logic (NET-2b; also fixes the offline timer for even clock ticks) are tracker-common's; the Sun maths and the About text are tracker-common's too; the JPEG and PNG decoders are tracker-common's (shared with f1-tracker), with one shared work buffer (8 KB less internal RAM); the picture viewer's All-sky tab is named UAF; each re-entry on its card shows the launch year (UI-74); the update prompt's release notes use the 16 px font (they were blurry at 12 px).
 - 4.6.39 (released): the constellation figures and the highlight are drawn above the rings and cross lines (UI-46d).
 - 4.6.38 (released): touching a constellation's figure on the map shows its details (UI-46c).
 - 4.6.37 (installed): the object a star, deep-sky, radiant or constellation card is for is lit on the map: a ring, or the constellation's whole figure in gold (UI-50b, UI-46b). the list has a Close button and scrolls in a box under the title row, never under Close (UI-10c); the row lines no longer go missing in patches as cells change (UI-10d). the list shows the named stars and the major constellations above the horizon, and a tap opens their cards (UI-10b). the firmware check no longer fails with "sock < 0" or "esp-aes: Failed to allocate memory" when the data task is on the network: it drops its kept connection and waits while the check runs (NET-14). A new Moon is drawn under the Sun's halo instead of in front of it (UI-6a).
@@ -1090,7 +1090,7 @@ UI-67  About page (Settings > About, a button lower right in place of the versio
        and signal, MAC, uptime as "3h 12m", refreshed each second while shown); DATA FROM
        (CelesTrak, NOAA SWPC, NOAA GOES-19/18, NASA SVS, NASA JPL, The Space Devs, NASA
        via Wikimedia); a footer naming the microSD update file.
-UI-68  Internet updates (sky_update.h): ESPHome's http_request update entity reads
+UI-68  Internet updates (tracker-common tracker_update.h, shared with f1-tracker; sky_update.h holds NET-14): ESPHome's http_request update entity reads
        manifest.json from GitHub Pages (built by the Firmware workflow for each release);
        first check 3 min after boot, then hourly. Settings > Upgrade Check checks now: "Checking",
        "Up to date" / "Update available" (Not now, Update), download progress, or "Couldn't

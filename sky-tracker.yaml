@@ -153,9 +153,9 @@ esphome:
             }
             sat::sdfw::init("${fw_version}", id(setup_title)->get_lv_font(), id(mono16)->get_lv_font(),
                             id(mono12)->get_lv_font());  // UI-66
+            sat::upd::set_button(id(upd_btn));  // UI-68a: our icon, before init (which would make its own)
             sat::upd::init(id(fw_update), id(setup_title)->get_lv_font(), id(mono16)->get_lv_font(),
                            id(mono12)->get_lv_font());  // UI-68
-            sat::upd::set_button(id(upd_btn));  // UI-68a
             sat::upd::set_source("${manifest_url}");  // NET-13a
             sat::rocket::init(id(mono18)->get_lv_font());  // UI-69
             sat::rocket::set_enabled(id(launch_anim).state);
@@ -228,7 +228,7 @@ external_components:
   - source:                    # the pieces shared with f1-tracker; a tag, so a change there cannot break this build
       type: git
       url: https://github.com/akcoder/tracker-common
-      ref: v0.2.1
+      ref: v0.3.0
     components: [tracker_common]
     refresh: 1d
 sky_tracker:

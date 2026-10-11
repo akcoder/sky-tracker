@@ -2319,13 +2319,17 @@ int main() {
   // ---- UI-68 internet updates: Settings > Updates, and the hourly check's offer
   {
     namespace up = sat::upd;
+    up::set_button(nullptr);  // (the YAML gives its own icon first: init makes none)
     up::init(nullptr, &roboto34, &mono16, &mono16);  // as the YAML: setup_title, mono16
+    up::ent = &up::host;
+    auto adv = [&](double s) { sat_host_now += s; up::host_ms = (uint32_t) (uint64_t) (sat_host_now * 1000.0); };
+    up::host_ms = (uint32_t) (uint64_t) (sat_host_now * 1000.0);
     up::host = up::HostUpdate();
-    up::host.current = "4.6.0";
+    up::host.current_version = "4.6.0";
     up::host.state = 1;
     up::check_now();
     CHECK(up::host.checks == 1 && up::ui_.mode == up::M_CHECKING, "check started");
-    sat_host_now += 2;
+    adv(2);
     up::tick();
     CHECK(up::ui_.mode == up::M_LATEST && strstr(lv_label_get_text(up::ui_.l1), "4.6.0 is the latest"), "up to date");
     lv_obj_send_event(up::ui_.btn[0], LV_EVENT_CLICKED, nullptr);
@@ -2352,7 +2356,7 @@ int main() {
     up::tick();
     CHECK(lv_obj_has_flag(ub, LV_OBJ_FLAG_HIDDEN), "no icon while up to date");
     up::host.state = 2;
-    up::host.latest = "4.6.1";
+    up::host.latest_version = "4.6.1";
     up::tick();  // the hourly check found 4.6.1: an icon, no prompt
     CHECK(!up::ui_.root && !lv_obj_has_flag(ub, LV_OBJ_FLAG_HIDDEN), "hourly find: icon only");
     lv_obj_invalidate(page1);
@@ -2383,7 +2387,7 @@ int main() {
     up::tick();
     CHECK(!up::ui_.root, "never opens by itself");
     up::check_now();  // asked again from Settings: offered again
-    sat_host_now += 1;
+    adv(1);
     up::tick();
     CHECK(up::ui_.mode == up::M_AVAILABLE, "settings check offers it");
     lv_obj_send_event(up::ui_.btn[1], LV_EVENT_CLICKED, nullptr);  // Update
@@ -2410,18 +2414,17 @@ int main() {
     lv_obj_delete(ub);
     // an OLDER release is never offered (ESPHome calls any difference "available")
     up::host = up::HostUpdate();
-    up::declined.clear();
-    up::host.current = "4.6.10";
-    up::host.latest = "4.6.9";
+    up::host.current_version = "4.6.10";
+    up::host.latest_version = "4.6.9";
     up::host.state = 2;
     up::tick();
     CHECK(!up::ui_.root && up::host.performs == 0, "older release not offered");
     up::check_now();
-    sat_host_now += 2;
+    adv(2);
     up::tick();
     CHECK(up::ui_.mode == up::M_LATEST, "older release: up to date");
     up::close();
-    up::host.latest = "4.6.11";
+    up::host.latest_version = "4.6.11";
     up::tick();
     up::offer_now();
     CHECK(up::ui_.mode == up::M_AVAILABLE, "newer release offered");

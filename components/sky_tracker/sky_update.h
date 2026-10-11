@@ -1,11 +1,12 @@
 #pragma once
-// UI-68 internet updates. The firmware is built by GitHub Actions on every release and
-// published with a manifest on GitHub Pages; ESPHome's http_request update entity reads the
-// manifest (every hour, and when Settings > Upgrade Check is tapped). This shows the result:
-// "Checking for updates", then "Up to date" / "Update available" (Not now, Update), then the
-// download's progress; ESPHome's http_request OTA installs it and restarts. An update found by
-// the hourly check does not open anything: an update icon appears beside the gear on the map
-// page, and tapping it shows the prompt. The icon stays until the update is installed.
+// UI-68 internet updates. The card itself (checking / up to date / update available with the
+// release notes / installing, the icon beside the gear, ESPHome's update entity) is
+// tracker-common's tracker::upd, shared with f1-tracker; the manifest is published by GitHub
+// Actions on GitHub Pages and read by ESPHome's http_request update entity (every hour, and
+// when Settings > Upgrade Check is tapped). An update found by the hourly check does not open
+// anything: an update icon appears beside the gear on the map page, and tapping it shows the
+// prompt. This file is what is sky-tracker's own: NET-14, the check's and the install's TLS
+// connection waiting until the data task has dropped its memory.
 // Compiled in sky_extra.cpp (SKY_IMPL), as sky_about.h.
 #include <cstdint>
 namespace esphome {
@@ -21,7 +22,7 @@ void init(esphome::update::UpdateEntity *e, const lv_font_t *title, const lv_fon
 void check_now();  // Settings > Upgrade Check
 void check_quiet(const char *why);  // NET-13a: hourly, at boot, the web/HA button (no prompt)
 void set_source(const char *url);   // the manifest URL, for the log
-void set_button(lv_obj_t *b);  // the map page's update icon, beside the gear
+void set_button(lv_obj_t *b);  // the map page's update icon, beside the gear (before init)
 void offer_now();              // that icon tapped
 void idle_close();             // UI-72: after a minute untouched, the screen closes (not while installing)
 // UI-68b the internet install's own callbacks (begin, progress %, end, error): the download
@@ -32,49 +33,14 @@ void ota_end(bool ok);
 }  // namespace upd
 }  // namespace sat
 #else
-#include <algorithm>
-#include <cstdio>
-#include <cstdlib>
-#include <string>
-#include <vector>
-#ifndef SAT_HOST_TEST
-#include "esphome/components/update/update_entity.h"
-#endif
-
+#include "esphome/components/tracker_common/tracker_update.h"
 namespace sat {
 namespace upd {
-
-inline const char *source = "";  // the manifest URL (NET-13a)
-
-enum Mode : uint8_t { M_NONE = 0, M_CHECKING, M_LATEST, M_AVAILABLE, M_INSTALLING, M_FAILED, M_INSTALL_FAILED };
+using namespace tracker::upd;  // (the host tests drive the card through these names)
 
 #ifdef SAT_HOST_TEST
-// host stand-in for ESPHome's entity: the tests set state/info and count calls
-struct HostUpdate {
-  int state = 0;  // 0 unknown, 1 no update, 2 available, 3 installing
-  std::string latest, current, summary;
-  bool has_progress = false;
-  float progress = 0;
-  int checks = 0, performs = 0;
-};
-inline HostUpdate host;
-inline int st() { return host.state; }
-inline std::string latest() { return host.latest; }
-inline std::string current() { return host.current; }
-inline std::string summary() { return host.summary; }
-inline bool has_prog() { return host.has_progress; }
-inline float prog() { return host.progress; }
-inline void do_check() { host.checks++; }
-inline void do_perform() { host.performs++; }
-inline uint32_t now_ms() { return (uint32_t) (uint64_t) (sat_host_now * 1000.0); }  // wraps as on the device (a plain cast saturates on ARM64)
+inline HostUpdate host;  // the update entity the tests set and read
 #else
-inline esphome::update::UpdateEntity *ent = nullptr;
-inline int st() { return ent ? (int) ent->state : 0; }
-inline std::string latest() { return ent ? ent->update_info.latest_version : std::string(); }
-inline std::string current() { return ent ? ent->update_info.current_version : std::string(); }
-inline std::string summary() { return ent ? ent->update_info.summary : std::string(); }  // UI-68c: the release notes
-inline bool has_prog() { return ent && ent->update_info.has_progress; }
-inline float prog() { return ent ? ent->update_info.progress : 0.0f; }
 // NET-14: the check's and the install's TLS connection needs the memory the data task's kept connection and
 // request hold: it is asked to drop them and stay off the network, and the request starts once it has (or
 // after 6 s)
@@ -96,406 +62,31 @@ inline void when_quiet(void (*fn)(), uint32_t hold_ms) {
       },
       250, d);
 }
-inline void do_check() {
-  ESP_LOGD("upd", "firmware: GET %s", source);  // NET-13a: the update check's request
-  if (ent)
-    when_quiet([]() { ent->check(); }, 25000);
-}
-inline void do_perform() {
-  if (ent)
-    when_quiet([]() { ent->perform(); }, 40000);
-}
-inline uint32_t now_ms() { return esphome::millis(); }
 #endif
 
-inline const lv_font_t *f_title = nullptr, *f_body = nullptr, *f_small = nullptr;
-struct Ui {
-  lv_obj_t *root = nullptr, *title = nullptr, *l1 = nullptr, *l2 = nullptr, *bar = nullptr;
-  lv_obj_t *btn[2] = {nullptr, nullptr}, *btn_lbl[2] = {nullptr, nullptr};
-  lv_obj_t *card = nullptr, *notes = nullptr, *notes_lbl = nullptr;  // UI-68c
-  int btn_y = 196, card_w = 400;
-  Mode mode = M_NONE;
-  uint32_t since = 0;      // when CHECKING / INSTALLING began
-  char what[24] = "Downloading";  // the first line while installing: where the firmware comes from
-  bool asked = false;      // the check was started from Settings (show "Up to date" too)
-};
-inline Ui ui_;
-inline std::string declined;  // the version Not now was given to (until restart)
-inline lv_obj_t *icon = nullptr;  // the map page's update icon (YAML upd_btn)
-
-inline void close() {
-  if (ui_.root)
-    lv_obj_delete(ui_.root);
-  const bool asked = ui_.asked;
-  ui_ = Ui();
-  (void) asked;
-}
-inline lv_obj_t *label(lv_obj_t *p, const lv_font_t *f, uint32_t col, int y) {
-  lv_obj_t *l = lv_label_create(p);
-  if (f)
-    lv_obj_set_style_text_font(l, f, 0);
-  lv_obj_set_style_text_color(l, lv_color_hex(col), 0);
-  lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
-  lv_obj_set_width(l, 380);
-  lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
-  lv_label_set_text(l, "");
-  lv_obj_align(l, LV_ALIGN_TOP_MID, 0, y);
-  return l;
-}
-inline void btn_cb(lv_event_t *e);
-inline void open() {
-  if (ui_.root)
-    return;
-  lv_obj_t *dim = lv_obj_create(lv_layer_top());  // as the microSD prompt (UI-66)
-  lv_obj_remove_style_all(dim);
-  lv_obj_set_size(dim, 480, 480);
-  lv_obj_set_style_bg_color(dim, lv_color_hex(0x000000), 0);
-  lv_obj_set_style_bg_opa(dim, LV_OPA_70, 0);
-  lv_obj_add_flag(dim, LV_OBJ_FLAG_CLICKABLE);
-  ui_.root = dim;
-  lv_obj_t *c = lv_obj_create(dim);
-  lv_obj_remove_style_all(c);
-  lv_obj_set_size(c, 400, 260);
-  lv_obj_align(c, LV_ALIGN_CENTER, 0, 0);
-  lv_obj_set_style_bg_color(c, lv_color_hex(0x0E1836), 0);
-  lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(c, 14, 0);
-  lv_obj_set_style_border_color(c, lv_color_hex(0x2A3A66), 0);
-  lv_obj_set_style_border_width(c, 2, 0);
-  lv_obj_remove_flag(c, LV_OBJ_FLAG_SCROLLABLE);
-  ui_.card = c;
-  ui_.title = label(c, f_title, 0xFFFFFF, 16);
-  ui_.l1 = label(c, f_body, 0xDCE4F8, 76);
-  ui_.l2 = label(c, f_body, 0x7E8BB3, 104);
-  ui_.bar = lv_bar_create(c);
-  lv_obj_set_size(ui_.bar, 340, 16);
-  lv_obj_align(ui_.bar, LV_ALIGN_TOP_MID, 0, 180);
-  lv_bar_set_range(ui_.bar, 0, 100);
-  lv_obj_set_style_bg_color(ui_.bar, lv_color_hex(sat::C_BAR_BG), LV_PART_MAIN);
-  lv_obj_set_style_bg_opa(ui_.bar, LV_OPA_COVER, LV_PART_MAIN);
-  lv_obj_set_style_bg_color(ui_.bar, lv_color_hex(sat::C_BAR), LV_PART_INDICATOR);  // UI-71
-  lv_obj_add_flag(ui_.bar, LV_OBJ_FLAG_HIDDEN);
-  for (int i = 0; i < 2; i++) {
-    lv_obj_t *b = lv_button_create(c);
-    lv_obj_set_size(b, 170, 44);
-    lv_obj_set_style_bg_color(b, lv_color_hex(i == 0 ? 0x1A2547 : 0x2D5BD0), 0);
-    lv_obj_set_style_shadow_width(b, 0, 0);
-    lv_obj_set_style_radius(b, 8, 0);
-    lv_obj_t *l = lv_label_create(b);
-    if (f_body)
-      lv_obj_set_style_text_font(l, f_body, 0);
-    lv_obj_set_style_text_color(l, lv_color_hex(0xFFFFFF), 0);
-    lv_obj_center(l);
-    lv_obj_add_event_cb(b, btn_cb, LV_EVENT_CLICKED, (void *) (intptr_t) i);
-    ui_.btn[i] = b;
-    ui_.btn_lbl[i] = l;
-  }
-  // UI-68c: the release notes, in a box that scrolls (shown with "Update available")
-  lv_obj_t *n = lv_obj_create(c);
-  lv_obj_remove_style_all(n);
-  lv_obj_set_size(n, 400, 244);
-  lv_obj_align(n, LV_ALIGN_TOP_MID, 0, 112);
-  lv_obj_set_style_bg_color(n, lv_color_hex(0x0A1128), 0);
-  lv_obj_set_style_bg_opa(n, LV_OPA_COVER, 0);
-  lv_obj_set_style_radius(n, 8, 0);
-  lv_obj_set_style_pad_all(n, 8, 0);
-  lv_obj_set_scroll_dir(n, LV_DIR_VER);
-  lv_obj_add_flag(n, LV_OBJ_FLAG_HIDDEN);
-  ui_.notes = n;
-  ui_.notes_lbl = lv_label_create(n);
-  if (f_body)  // the 16 px font: the 12 px one was blurry
-    lv_obj_set_style_text_font(ui_.notes_lbl, f_body, 0);
-  lv_obj_set_style_text_color(ui_.notes_lbl, lv_color_hex(0xC9D3F2), 0);
-  lv_obj_set_width(ui_.notes_lbl, 384);
-  lv_label_set_long_mode(ui_.notes_lbl, LV_LABEL_LONG_WRAP);
-  lv_label_set_text(ui_.notes_lbl, "");
-}
-// UI-68c the release notes as the screen can show them: Markdown's emphasis, code ticks and
-// heading marks dropped, blank-line runs squeezed, the text folded to the fonts (UI-78), at
-// most ~1.5 KB
-inline std::string notes_text(const std::string &md) {
-  std::string out;
-  out.reserve(std::min<size_t>(md.size(), 1600));
-  bool line_start = true;
-  int blank = 0;
-  for (size_t i = 0; i < md.size() && out.size() < 1500; i++) {
-    const char c = md[i];
-    if (c == '\r')
-      continue;
-    if (c == '*' || c == '`')
-      continue;
-    if (line_start && c == '#') {
-      while (i + 1 < md.size() && (md[i + 1] == '#' || md[i + 1] == ' '))
-        i++;
-      continue;
-    }
-    if (c == '\n') {
-      if (++blank > 2)
-        continue;
-      out += c;
-      line_start = true;
-      continue;
-    }
-    blank = 0;
-    line_start = false;
-    out += c;
-  }
-  while (!out.empty() && (out.back() == '\n' || out.back() == ' '))
-    out.pop_back();
-  std::vector<char> b(out.begin(), out.end());
-  b.push_back(0);
-  net::fold_text(b.data());
-  return std::string(b.data());
-}
-// the card's two layouts: tall with the notes (an update offered), else the short one
-inline void layout(bool tall) {
-  ui_.card_w = tall ? 440 : 400;
-  lv_obj_set_size(ui_.card, ui_.card_w, tall ? 440 : 260);
-  lv_obj_align(ui_.card, LV_ALIGN_CENTER, 0, 0);
-  for (lv_obj_t *l : {ui_.title, ui_.l1, ui_.l2})
-    lv_obj_set_width(l, tall ? 420 : 380);
-  lv_obj_align(ui_.l1, LV_ALIGN_TOP_MID, 0, tall ? 58 : 76);
-  lv_obj_align(ui_.l2, LV_ALIGN_TOP_MID, 0, tall ? 82 : 104);
-  ui_.btn_y = tall ? 374 : 196;
-  if (!tall)
-    lv_obj_add_flag(ui_.notes, LV_OBJ_FLAG_HIDDEN);
-}
-inline void buttons(const char *a, const char *b) {  // nullptr: hidden; b nullptr: a alone, centred
-  for (int i = 0; i < 2; i++) {
-    const char *t = i == 0 ? a : b;
-    if (t == nullptr) {
-      lv_obj_add_flag(ui_.btn[i], LV_OBJ_FLAG_HIDDEN);
-      continue;
-    }
-    lv_obj_remove_flag(ui_.btn[i], LV_OBJ_FLAG_HIDDEN);
-    lv_label_set_text(ui_.btn_lbl[i], t);
-    const int w = ui_.card_w;
-    lv_obj_align(ui_.btn[i], LV_ALIGN_TOP_LEFT, i == 0 ? w / 2 - 186 : w / 2 + 16, ui_.btn_y);
-  }
-  if (a && !b)
-    lv_obj_align(ui_.btn[0], LV_ALIGN_TOP_MID, 0, ui_.btn_y);
-}
-inline void show(Mode m) {
-  open();
-  ui_.mode = m;
-  char b[96];
-  lv_obj_add_flag(ui_.bar, LV_OBJ_FLAG_HIDDEN);
-  lv_obj_set_style_text_color(ui_.l2, lv_color_hex(0x7E8BB3), 0);
-  const std::string cur = current(), lat = latest();
-  std::string notes = m == M_AVAILABLE ? notes_text(summary()) : std::string();
-  layout(!notes.empty());
-  if (!notes.empty()) {
-    lv_label_set_text(ui_.notes_lbl, notes.c_str());
-    lv_obj_remove_flag(ui_.notes, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_scroll_to_y(ui_.notes, 0, LV_ANIM_OFF);
-  }
-  switch (m) {
-    case M_CHECKING:
-      lv_label_set_text(ui_.title, "Checking for updates");
-      lv_label_set_text(ui_.l1, "Asking GitHub for the latest release");
-      snprintf(b, sizeof(b), "Installed: %s", cur.c_str());
-      lv_label_set_text(ui_.l2, b);
-      buttons("Close", nullptr);
-      break;
-    case M_LATEST:
-      lv_label_set_text(ui_.title, "Up to date");
-      snprintf(b, sizeof(b), "%s is the latest version", cur.c_str());
-      lv_label_set_text(ui_.l1, b);
-      lv_label_set_text(ui_.l2, "Checks again every hour");
-      buttons("Close", nullptr);
-      break;
-    case M_AVAILABLE:
-      lv_label_set_text(ui_.title, "Update available");
-      snprintf(b, sizeof(b), "New version: %s", lat.c_str());
-      lv_label_set_text(ui_.l1, b);
-      snprintf(b, sizeof(b), notes.empty() ? "Installed: %s" : "Installed: %s - what's new:", cur.c_str());
-      lv_label_set_text(ui_.l2, b);
-      buttons("Not now", "Update");
-      break;
-    case M_INSTALLING:
-      lv_label_set_text(ui_.title, "Updating firmware");
-      lv_label_set_text(ui_.l1, ui_.what);
-      lv_label_set_text(ui_.l2, "Keep the power on");
-      lv_obj_set_style_text_color(ui_.l2, lv_color_hex(0xFFB547), 0);
-      lv_obj_remove_flag(ui_.bar, LV_OBJ_FLAG_HIDDEN);
-      lv_bar_set_value(ui_.bar, 0, LV_ANIM_OFF);
-      buttons(nullptr, nullptr);
-      break;
-    case M_INSTALL_FAILED:  // UI-12: a failed install, from any source (web page, HA, GitHub)
-      lv_label_set_text(ui_.title, "Update failed");
-      lv_label_set_text(ui_.l1, "The new firmware was not installed");
-      snprintf(b, sizeof(b), "Still running %s", cur.c_str());
-      lv_label_set_text(ui_.l2, b);
-      buttons("Close", nullptr);
-      break;
-    case M_FAILED:
-      lv_label_set_text(ui_.title, "Couldn't check");
-      lv_label_set_text(ui_.l1, "No answer from the update server");
-      lv_label_set_text(ui_.l2, "Check the Wi-Fi and try again later");
-      buttons("Close", nullptr);
-      break;
-    default:
-      break;
-  }
-}
-inline void btn_cb(lv_event_t *e) {
-  const int i = (int) (intptr_t) lv_event_get_user_data(e);
-  if (ui_.mode == M_AVAILABLE && i == 1) {
-    snprintf(ui_.what, sizeof(ui_.what), "Downloading");
-    ui_.since = now_ms();
-    show(M_INSTALLING);
-    do_perform();
-    return;
-  }
-  if (ui_.mode == M_AVAILABLE)
-    declined = latest();
-  close();
-}
-// "4.6.10" > "4.6.9": numbers compared as numbers
-inline int vcmp(const char *a, const char *b) {
-  while (*a && *b) {
-    if (*a >= '0' && *a <= '9' && *b >= '0' && *b <= '9') {
-      unsigned long x = strtoul(a, (char **) &a, 10), y = strtoul(b, (char **) &b, 10);
-      if (x != y)
-        return x < y ? -1 : 1;
-    } else {
-      if (*a != *b)
-        return (unsigned char) *a < (unsigned char) *b ? -1 : 1;
-      a++, b++;
-    }
-  }
-  return *a ? 1 : *b ? -1 : 0;
-}
-// ESPHome calls any difference "update available", an older release included (4.6.5 offered
-// the GitHub 4.6.3 and installed it). Only a newer version counts here.
-inline int state_newer_only() {
-  const int s = st();
-  if (s == 2 && vcmp(latest().c_str(), current().c_str()) <= 0)
-    return 1;
-  return s;
-}
-// NET-13a: log each check's answer once (what the manifest says, against what is installed)
-inline void log_result(int s) {
-  static int last_s = -1;
-  static std::string last_v;
-  const std::string v = latest();
-  if (s == last_s && v == last_v)
-    return;
-  last_s = s;
-  last_v = v;
-  if ((s == 1 || s == 2) && !v.empty())
-    ESP_LOGI("upd", "firmware: manifest has %s, installed %s (%s)", v.c_str(), current().c_str(),
-             s == 2 ? "newer, offered" : "nothing newer");
-}
-// UI-68b ESPHome's http_request OTA downloads and writes in one blocking call on the main
-// loop: no lv_timer runs and nothing redraws until it ends, so the bar sat at 0. Its own
-// callbacks move the bar and force a redraw (every 2%, ~25 ms each).
-void ota_begin(const char *what) {
-  snprintf(ui_.what, sizeof(ui_.what), "%s", what);
-  if (ui_.mode != M_INSTALLING) {  // started from the web page or HA: show the screen too
-    ui_.since = now_ms();
-    show(M_INSTALLING);
-  }
-  lv_refr_now(nullptr);
-}
-// UI-12: the same card for every source (GitHub, the web page, HA, the microSD card); the bar
-// alone shows how far it is, no percentage
-void ota_progress(float pc) {
-  static int last = -10;
-  const int p = (int) pc;
-  if (ui_.mode != M_INSTALLING || (p < last + 2 && p >= last && p < 100))
-    return;
-  last = p;
-  lv_bar_set_value(ui_.bar, p, LV_ANIM_OFF);
-  lv_refr_now(nullptr);
-}
-void ota_end(bool ok) {
-  if (ui_.mode != M_INSTALLING)
-    return;
-  if (!ok) {
-    show(M_INSTALL_FAILED);
-    lv_refr_now(nullptr);
-    return;
-  }
-  lv_label_set_text(ui_.l1, "Installed, restarting");
-  lv_bar_set_value(ui_.bar, 100, LV_ANIM_OFF);
-  lv_refr_now(nullptr);
-}
-void idle_close() {  // UI-72: "Update available" counts as Not now; an install is never closed
-  if (ui_.mode == M_NONE || ui_.mode == M_INSTALLING)
-    return;
-  if (ui_.mode == M_AVAILABLE)
-    declined = latest();
-  close();
-}
-// every 500 ms (lv_timer): follow the entity
-inline void tick() {
-  const int s = state_newer_only();
-  log_result(s);
-  switch (ui_.mode) {
-    case M_CHECKING:
-      if (s == 2)
-        show(M_AVAILABLE);
-      else if (s == 1 && now_ms() - ui_.since > 1500)
-        show(M_LATEST);
-      else if (now_ms() - ui_.since > 25000)
-        show(s == 1 ? M_LATEST : M_FAILED);
-      break;
-    case M_INSTALLING:
-      if (has_prog()) {
-        lv_bar_set_value(ui_.bar, (int) (prog() + 0.5f), LV_ANIM_OFF);
-      }
-      if (s == 2 && now_ms() - ui_.since > 120000)  // back to "available": the install failed
-        show(M_AVAILABLE);
-      break;
-    default:
-      break;
-  }
-  // the icon: a newer version is waiting and nothing is installing
-  if (icon) {
-    const bool want = s == 2 && ui_.mode != M_INSTALLING;
-    if (want == lv_obj_has_flag(icon, LV_OBJ_FLAG_HIDDEN)) {
-      if (want)
-        lv_obj_remove_flag(icon, LV_OBJ_FLAG_HIDDEN);
-      else
-        lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
-    }
-  }
+void init(esphome::update::UpdateEntity *e, const lv_font_t *title, const lv_font_t *body, const lv_font_t *small) {
+#ifdef SAT_HOST_TEST
+  (void) e;
+  tracker::upd::init(&host, title, body, small, nullptr);
+#else
+  tracker::upd::run_hook = when_quiet;
+  tracker::upd::init(e, title, body, small, nullptr);
+#endif
 }
 void set_button(lv_obj_t *b) {
-  icon = b;
-  if (icon)
-    lv_obj_add_flag(icon, LV_OBJ_FLAG_HIDDEN);
+  set_icon(b);
+  set_page_ok(true);  // the icon is a widget of the map page itself, shown wherever that is
+  if (b)
+    lv_obj_add_flag(b, LV_OBJ_FLAG_HIDDEN);
 }
-void offer_now() {
-  if (state_newer_only() != 2)
-    return;
-  close();
-  show(M_AVAILABLE);
-}
-void check_quiet(const char *why) {
-  ESP_LOGD("upd", "firmware check (%s)", why);
-  do_check();
-}
-void set_source(const char *url) { source = url; }
-void check_now() {
-  close();
-  ui_.asked = true;
-  ui_.since = now_ms();
-  show(M_CHECKING);
-  do_check();
-}
-void init(esphome::update::UpdateEntity *e, const lv_font_t *title, const lv_font_t *body, const lv_font_t *small) {
-#ifndef SAT_HOST_TEST
-  ent = e;
-#else
-  (void) e;
-#endif
-  f_title = title;
-  f_body = body;
-  f_small = small;
-  lv_timer_create([](lv_timer_t *) { tick(); }, 500, nullptr);
-}
+void check_now() { tracker::upd::check_now(); }
+void check_quiet(const char *why) { tracker::upd::check_quiet(why); }
+void set_source(const char *url) { tracker::upd::set_source(url); }
+void offer_now() { tracker::upd::offer_now(); }
+void idle_close() { tracker::upd::idle_close(); }
+void ota_begin(const char *what) { tracker::upd::ota_begin(what); }
+void ota_progress(float pc) { tracker::upd::ota_progress(pc); }
+void ota_end(bool ok) { tracker::upd::ota_end(ok); }
 
 }  // namespace upd
 }  // namespace sat
