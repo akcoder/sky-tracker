@@ -2098,7 +2098,12 @@ int main() {
       sat::img_view_open_now(sat::net::IMG_EARTH, -1);
       hold_loading(sat::net::IMG_EARTH, sat::net::STG_DOWNLOAD, 180 * 1024, 460 * 1024);
       sat::img_view_update(sat_host_now);
-      CHECK(strstr(lv_label_get_text(sat::sv.msg), "39%  -  180 of 460 KB") && sat::sv.tab[2] && sat::sv.tab[3], "earth loading + tabs (All-sky the fourth)");
+      printf("earth loading: \"%s\" / \"%s\"\n", lv_label_get_text(sat::sv.cap1), lv_label_get_text(sat::sv.cap2));
+      CHECK(strstr(lv_label_get_text(sat::sv.cap1), "Blue Marble") && strstr(lv_label_get_text(sat::sv.cap1), "39%") &&
+                strstr(lv_label_get_text(sat::sv.cap2), "Apollo 17") && sat::bm_in_px && sat::sv.tab[2] && sat::sv.tab[3],
+            "earth loading: the Blue Marble, the progress in the caption, its credit under it");
+      lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
+      save_ppm(OUT_DIR "/renders/r10_earth_loading.ppm");
       sat::net::img_stage = sat::net::STG_IDLE;
       host_last_url.clear();
       sat::net::do_image(sat::net::IMG_EARTH);
@@ -2112,6 +2117,7 @@ int main() {
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
       printf("earth view: \"%s\" / \"%s\"\n", lv_label_get_text(sat::sv.cap1), lv_label_get_text(sat::sv.cap2));
       CHECK(strstr(lv_label_get_text(sat::sv.cap1), "GOES-18 ") && strstr(lv_label_get_text(sat::sv.cap1), " ago") &&
+            strstr(lv_label_get_text(sat::sv.cap2), "NOAA GOES-18") && !sat::bm_in_px &&
             sat::sv.seg[0] && sat::sv.seg[1] && !strcmp(lv_label_get_text(lv_obj_get_child(sat::sv.seg[1], 0)), "Alaska"), "earth captions + switch");
       {  // UI-62b: the corners fade into the page colour
         const uint16_t cpx = sat::live.img_px[sat::net::IMG_EARTH][0];
@@ -2167,14 +2173,14 @@ int main() {
       sat::sv.drawn_at = 0;
       sat::img_view_update(sat_host_now);
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-      printf("   -> \"%s\" / \"%s\" photo_of %d req_of %d asked %d ok %d err '%s' px %p url %s\n", lv_label_get_text(sat::sv.cap1), lv_label_get_text(sat::sv.credit), sat::planet_px_of,
+      printf("   -> \"%s\" / \"%s\" photo_of %d req_of %d asked %d ok %d err '%s' px %p url %s\n", lv_label_get_text(sat::sv.cap1), lv_label_get_text(sat::sv.cap2), sat::planet_px_of,
              sat::planet_req_of, sat::img_req[sat::net::IMG_PLANET].asked, sat::live.img[sat::net::IMG_PLANET].ok,
              sat::live.img[sat::net::IMG_PLANET].err, (void *) sat::live.img_px[sat::net::IMG_PLANET], host_last_url.c_str()); printf("   seq live %u req %u pend %u fresh %d\n", (unsigned) sat::live.img[4].seq, (unsigned) sat::img_req[4].seq, (unsigned) sat::net::pending.img[4].seq, (int) sat::net::pending.img[4].fresh);
       if (p == sat::planets::MERCURY && !sat::photos::get(p).data)  // no photo to be had: drawn instead
-        CHECK(strstr(lv_label_get_text(sat::sv.credit), "Photo unavailable") && sat::planet_px, "planet drawn fallback");
+        CHECK(strstr(lv_label_get_text(sat::sv.cap2), "Photo unavailable") && sat::planet_px, "planet drawn fallback");
       else
         CHECK(sat::sv.tab[2] && !strcmp(lv_label_get_text(lv_obj_get_child(sat::sv.tab[2], 0)), "Planets") && sat::sv.pf &&
-              lv_label_get_text(sat::sv.credit)[0] && lv_obj_has_flag(sat::sv.cap2, LV_OBJ_FLAG_HIDDEN) &&
+              lv_label_get_text(sat::sv.cap2)[0] && !lv_obj_has_flag(sat::sv.cap2, LV_OBJ_FLAG_HIDDEN) &&
               sat::planet_src_of == p, "planet photo view");
       char fnp[64];
       snprintf(fnp, sizeof(fnp), OUT_DIR "/renders/r10_planet%d.ppm", p);
@@ -2212,7 +2218,7 @@ int main() {
       lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
       CHECK(sat::sv.pf && sat::planet_src_of == p && !lv_obj_has_flag(sat::sv.img, LV_OBJ_FLAG_HIDDEN) &&
                 strstr(lv_label_get_text(sat::sv.cap1), sat::photos::outer(o).name) &&
-                lv_label_get_text(sat::sv.credit)[0] && !sat::sv.phase_mark,
+                lv_label_get_text(sat::sv.cap2)[0] && !sat::sv.phase_mark,
             "outer planet %s: its picture, a caption, a credit, no phase switch", sat::photos::outer(o).name);
       char fnp[64];
       snprintf(fnp, sizeof(fnp), OUT_DIR "/renders/r10_planet%d.ppm", p);
@@ -2233,8 +2239,8 @@ int main() {
       sat::sv.drawn_at = 0;
       sat::img_view_update(sat_host_now);
       if (getenv("VENUS_NOW")) { lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp); save_ppm(OUT_DIR "/venus_now.ppm"); sat_host_now = keep_now; }
-      printf("venus built in: \"%s\" url '%s'\n", lv_label_get_text(sat::sv.credit), host_last_url.c_str());
-      CHECK(sat::planet_src_of == sat::planets::VENUS && host_last_url.empty() && !strcmp(lv_label_get_text(sat::sv.credit), "NASA Mariner 10"),
+      printf("venus built in: \"%s\" url '%s'\n", lv_label_get_text(sat::sv.cap2), host_last_url.c_str());
+      CHECK(sat::planet_src_of == sat::planets::VENUS && host_last_url.empty() && !strcmp(lv_label_get_text(sat::sv.cap2), "NASA Mariner 10"),
             "venus photo built in, no download");
       sat::img_view_close();
     }

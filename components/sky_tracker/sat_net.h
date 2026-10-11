@@ -418,6 +418,7 @@ inline void round_mask(uint16_t *px, int n, float r0, float r1) {
     round_mask_row(px + (size_t) y * n, y, n, r0, r1);
 }
 constexpr int IMG_PX = 360;
+constexpr int EARTH_PX = 300;  // the Earth and region pictures are decoded at this size (the Planets tab shows them 1:1)
 constexpr float SUN_CROP = 0.75f;  // SUVI's field is ~1.6 solar diameters: the middle 3/4 fills the view
 struct ImageInfo {
   double obs = 0;       // UTC seconds of the exposure / the hour rendered (0: unknown)
@@ -2715,7 +2716,8 @@ struct JpgStream {
   uint16_t *work = nullptr, *acc = nullptr;
   bool half = false;     // the Moon (2:1), else the box filter
   float keep = 1.0f;     // decode_fit's keep
-  float r0 = 0, r1 = 0;  // round_mask radii (0: none)
+  float r0 = 0, r1 = 0;  // round_mask radii (0: none), for IMG_PX: scaled by dim / IMG_PX
+  int dim = IMG_PX;      // the picture's size in the buffer (compact, dim x dim)
   bool show = false;     // report rows to the viewer (img_prog_rows)
   volatile size_t have = 0;
   volatile bool eof = false, done = false;
@@ -2726,7 +2728,7 @@ struct JpgStream {
     JpgStream *j = (JpgStream *) ctx;
     for (; j->masked < upto; j->masked++)
       if (j->r1 > 0)
-        round_mask_row(j->work + (size_t) j->masked * IMG_PX, j->masked, IMG_PX, j->r0, j->r1);
+        round_mask_row(j->work + (size_t) j->masked * j->dim, j->masked, j->dim, j->r0 * j->dim / IMG_PX, j->r1 * j->dim / IMG_PX);
     if (j->show)
       img_prog_rows = upto;
 #ifndef SAT_HOST_TEST
@@ -2743,8 +2745,8 @@ struct JpgStream {
     st.rows = rows_cb;
     st.ctx = this;
     masked = 0;
-    err = half ? tracker::jpg::decode_half(jpg, len, work, IMG_PX, IMG_PX, &st, &w, &h, jpg_pool)
-               : tracker::jpg::decode_fit(jpg, len, work, IMG_PX, IMG_PX, acc, &st, &w, &h, keep, 0, false, jpg_pool);
+    err = half ? tracker::jpg::decode_half(jpg, len, work, dim, dim, &st, &w, &h, jpg_pool)
+               : tracker::jpg::decode_fit(jpg, len, work, dim, dim, acc, &st, &w, &h, keep, 0, false, jpg_pool);
     done = true;
   }
 #ifndef SAT_HOST_TEST
@@ -2780,6 +2782,7 @@ struct JpgStream {
     work = acc = nullptr;
     half = false;
     keep = 1.0f;
+    dim = IMG_PX;
     r0 = r1 = 0;
     show = false;
     have = 0;
@@ -3048,6 +3051,7 @@ inline const char *earth_image(ImageInfo &info, uint16_t *work, char *e, size_t 
     js.jpg = jpg;
     js.work = work;
     js.acc = acc;
+    js.dim = EARTH_PX;  // (shown 1:1 on the Planets tab)
     js.keep = rg ? 0.965f : 1.0f;  // the regional frames: NOAA's label strip (the bottom ~3%) cropped off
     if (!rg)
       js.r0 = 176, js.r1 = 180;  // UI-62b: a crisp limb, the corner label gone

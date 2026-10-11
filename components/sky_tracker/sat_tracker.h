@@ -6030,54 +6030,21 @@ struct ImgView {
   double drawn_at = 0;    // planet: last drawing (redrawn each minute: the moons move)
 };
 inline ImgView sv;
-// The planets tab: its picture is shown PV_PX px square (the 360 px one scaled down in software: LVGL's own scaling
-// of an RGB565 picture needs RGB565A8 drawing, which this build leaves out), centred at (240, PV_CY), with the
-// caption, the tab's own controls and a strip of the planets (Earth among them) under it. Other tabs: full size.
-constexpr int PV_PX = 300, PV_CY = 196, PV_CAP_Y = 352, PV_SUB_Y = 374, PV_STRIP_Y = 410;
+// The planets tab: its picture is PV_PX px square (the planet photos, the Blue Marble and the Earth pictures are made at that
+// size: nothing is scaled on the device; LVGL's own scaling of an RGB565 picture needs RGB565A8 drawing, which this
+// build leaves out), centred at y PV_CY, with the caption (the name and the facts), the credit under it, the tab's own
+// controls and a strip of the planets (Earth among them) under that. Other tabs: the full 360 px picture.
+constexpr int PV_PX = 300, PV_CY = 196, PV_CAP_Y = 348, PV_CAP2_Y = 366, PV_SUB_Y = 386, PV_STRIP_Y = 410;
 constexpr int PV_X0 = 240 - PV_PX / 2, PV_Y0 = PV_CY - PV_PX / 2;
-inline int pv_x(int x) { return sv.pf ? PV_X0 + x * PV_PX / net::IMG_PX : (480 - net::IMG_PX) / 2 + x; }
-inline int pv_y(int y) { return sv.pf ? PV_Y0 + y * PV_PX / net::IMG_PX : 48 + y; }
-// IMG_PX -> PV_PX, bilinear, from src into the start of dst (src == dst works: a destination pixel is never past
-// the source pixels it reads)
-inline void pv_scale(const uint16_t *src, uint16_t *dst) {
-  const int N = net::IMG_PX;
-  static int16_t xi[PV_PX];  // the source column, and the weight (0..32) of the one after it, per output column
-  static uint8_t xw[PV_PX];
-  static bool made = false;
-  if (!made) {
-    made = true;
-    for (int x = 0; x < PV_PX; x++) {
-      const int f = (int) (((x * 2 + 1) * N * 128) / PV_PX) - 128;  // (x + 0.5) * N / PV_PX - 0.5, in 1/256
-      xi[x] = (int16_t) std::min(N - 2, std::max(0, f >> 8));
-      xw[x] = (uint8_t) std::max(0, std::min(32, (f - (xi[x] << 8)) >> 3));
-    }
-  }
-  const int64_t t0 = ui_us();
-  constexpr uint32_t M = 0x07E0F81F;  // a 565 pixel spread so that the three channels have room for a 5-bit weight
-  auto spread = [](uint32_t c) { return (c | (c << 16)) & M; };
-  for (int y = 0; y < PV_PX; y++) {
-    const int f = (int) (((y * 2 + 1) * N * 128) / PV_PX) - 128;
-    const int y0 = std::min(N - 2, std::max(0, f >> 8));
-    const uint32_t wy = (uint32_t) std::max(0, std::min(32, (f - (y0 << 8)) >> 3));
-    const uint16_t *r0 = src + y0 * N, *r1 = r0 + N;
-    uint16_t *o = dst + y * PV_PX;
-    for (int x = 0; x < PV_PX; x++) {
-      const int x0 = xi[x];
-      const uint32_t wx = xw[x];
-      const uint32_t top = ((spread(r0[x0]) * (32 - wx) + spread(r0[x0 + 1]) * wx) >> 5) & M;
-      const uint32_t bot = ((spread(r1[x0]) * (32 - wx) + spread(r1[x0 + 1]) * wx) >> 5) & M;
-      const uint32_t v = ((top * (32 - wy) + bot * wy) >> 5) & M;
-      o[x] = (uint16_t) (v | (v >> 16));
-    }
-  }
-  ESP_LOGI(UI_TAG, "planets picture scaled to %d px in %.0f ms", PV_PX, (ui_us() - t0) / 1000.0);
-}
+inline int pv_x(int x) { return sv.pf ? PV_X0 + x : (480 - net::IMG_PX) / 2 + x; }
+inline int pv_y(int y) { return sv.pf ? PV_Y0 + y : 48 + y; }
 inline int planets_last_kind = -1;  // what the Planets tab opens: the last planet (or Earth) looked at
 inline bool earth_regional = false;  // UI-62a: the Earth tab opens on the globe (4.5.31); the region is one tap away
 inline const net::Region *my_region() { return net::region_for(config().lat, config().lon); }
 inline int earth_kind() { return earth_regional && my_region() ? net::IMG_REGION : net::IMG_EARTH; }
 inline bool planet_drawn = false;      // UI-61g: the drawn planet is only a fallback now (no photo)
 inline bool planet_phase = true;       // UI-61g: "Tonight's phase" shading on the photo (kept between opens)
+inline bool bm_in_px = false;  // planet_px holds the Blue Marble (the Earth before its first picture is in)
 inline uint16_t *planet_px = nullptr;  // UI-61: the planet shown (photo with tonight's phase, or drawn)
 inline int planet_px_of = -1;          // UI-61a: which planet's photo live.img_px[IMG_PLANET] holds
 inline int planet_req_of = -1;         // the planet last asked for
@@ -6121,7 +6088,7 @@ inline void img_view_close(bool reopening = false) {
     sv.n_under = 0;
   }
   lv_obj_t *const none[4] = {};
-  sv.root = sv.img = sv.msg = sv.bar = sv.cap1 = sv.cap2 = sv.east = sv.west = sv.credit = nullptr;
+  sv.root = sv.img = sv.msg = sv.bar = sv.cap1 = sv.cap2 = sv.east = sv.west = nullptr;
   sv.seg[0] = sv.seg[1] = nullptr;
   sv.phase_mark = nullptr;
   memcpy(sv.tab, none, sizeof(none));
@@ -6245,6 +6212,7 @@ inline void planet_marks(const pview::Marks &mk) {
 // Uranus, Neptune and Pluto (viewer kinds VIEW_PLANET + 5 .. + 7): a picture each and nothing else
 inline bool outer_view(int p) { return p >= (int) planets::N_PLANETS && p < (int) planets::N_PLANETS + photos::N_OUTER; }
 inline const char *view_name(int p) { return outer_view(p) ? photos::outer(p - planets::N_PLANETS).name : planets::name(p); }
+inline uint8_t ui_jpg_pool[tracker::jpg::POOL_SIZE] __attribute__((aligned(4)));  // the UI's own (not the net task's)
 inline uint16_t *planet_src = nullptr;
 inline int planet_src_of = -1;
 inline bool planet_photo_ready(int p) {
@@ -6255,20 +6223,19 @@ inline bool planet_photo_ready(int p) {
                                                            photos::outer(p - planets::N_PLANETS).w,
                                                            photos::outer(p - planets::N_PLANETS).h}
                                           : photos::get(p);
-  if (ph.data == nullptr || ph.w <= 0 || ph.w > net::IMG_PX || ph.h > net::IMG_PX)
+  if (ph.data == nullptr || ph.w <= 0 || ph.w > PV_PX || ph.h > PV_PX)
     return false;
   if (planet_src == nullptr)
-    planet_src = (uint16_t *) heap_caps_malloc(net::IMG_PX * net::IMG_PX * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    planet_src = (uint16_t *) heap_caps_malloc(PV_PX * PV_PX * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
   if (planet_src == nullptr)
     return false;
   const uint16_t bg = (uint16_t) ((7 >> 3) << 11 | (11 >> 2) << 5 | (24 >> 3));
-  for (int k = 0; k < net::IMG_PX * net::IMG_PX; k++)
+  for (int k = 0; k < PV_PX * PV_PX; k++)
     planet_src[k] = bg;
-  const int ox = (net::IMG_PX - ph.w) / 2, oy = p == planets::JUPITER ? 6 : (net::IMG_PX - ph.h) / 2;
+  const int ox = (PV_PX - ph.w) / 2, oy = p == planets::JUPITER ? 5 : (PV_PX - ph.h) / 2;
   const int64_t t0 = ui_us();
-  static uint8_t pool[tracker::jpg::POOL_SIZE] __attribute__((aligned(4)));  // the UI's own (not the net task's)
-  if (const char *e = tracker::jpg::decode_copy(ph.data, ph.len, planet_src + (size_t) oy * net::IMG_PX + ox,
-                                                net::IMG_PX, ph.w, ph.h, nullptr, pool)) {
+  if (const char *e = tracker::jpg::decode_copy(ph.data, ph.len, planet_src + (size_t) oy * PV_PX + ox, PV_PX, ph.w, ph.h,
+                                                nullptr, ui_jpg_pool)) {
     ESP_LOGW(UI_TAG, "planet %d photo: %s", p, e);
     planet_src_of = -1;
     return false;
@@ -6289,23 +6256,22 @@ inline void planet_view_update(double t) {
   // (redrawn each minute for the phase and the moons; Uranus, Neptune and Pluto are one picture, drawn once)
   if ((photo || drawn) && (t - sv.drawn_at >= (outer ? 1e9 : 60) || sv.drawn_at == 0)) {
     if (planet_px == nullptr)
-      planet_px = (uint16_t *) heap_caps_malloc(net::IMG_PX * net::IMG_PX * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      planet_px = (uint16_t *) heap_caps_malloc(PV_PX * PV_PX * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (planet_px == nullptr)
       return;
     pview::Marks mk;
     if (photo && outer) {
-      memcpy(planet_px, planet_src, net::IMG_PX * net::IMG_PX * 2);
+      memcpy(planet_px, planet_src, PV_PX * PV_PX * 2);
     } else if (photo) {
-      memcpy(planet_px, planet_src, net::IMG_PX * net::IMG_PX * 2);
-      pview::shade_photo(v, planet_px, net::IMG_PX, net::IMG_PX, planet_phase && p <= planets::MARS);  // phase: inner planets, Mars
+      memcpy(planet_px, planet_src, PV_PX * PV_PX * 2);
+      pview::shade_photo(v, planet_px, PV_PX, PV_PX, planet_phase && p <= planets::MARS);  // phase: inner planets, Mars
       if (p == planets::JUPITER)
-        pview::draw_strip(v, planet_px, net::IMG_PX, net::IMG_PX, mk, 0.80f * net::IMG_PX);
+        pview::draw_strip(v, planet_px, PV_PX, PV_PX, mk, 0.80f * PV_PX);
     } else {
-      pview::render(v, planet_px, net::IMG_PX, net::IMG_PX, mk);
+      pview::render(v, planet_px, PV_PX, PV_PX, mk);
     }
     sv.drawn_at = t;
-    pv_scale(planet_px, planet_px);
-    sv.dsc_px = nullptr;  // (the same buffer, now scaled: a fresh source)
+    bm_in_px = false;
     img_show(planet_px, true);
     planet_marks(mk);
   }
@@ -6339,8 +6305,7 @@ inline void planet_view_update(double t) {
     snprintf(cr, sizeof(cr), "%s%s", net::planet_photo(p).credit, p == planets::SATURN ? ", 2004" : "");
   else if (drawn && !planet_drawn)
     snprintf(cr, sizeof(cr), "%s", "Photo unavailable: drawn");
-  if (sv.credit)
-    set_text_if(sv.credit, cr);
+  set_text_if(sv.cap2, cr);
   set_text_if(sv.cap1, c1);
 }
 inline void img_view_update(double t);
@@ -6356,11 +6321,71 @@ inline void img_prog_timer_cb(lv_timer_t *) {  // UI-59f: new rows shown 4 times
   if (sv.root && sv.kind < VIEW_PLANET && img_streaming(sv.kind))
     img_view_update(clock_now());
 }
+// The Earth on the Planets tab: the newest GOES picture, decoded at 300 px so it is shown 1:1. Until the first one is in,
+// the Blue Marble (built in, 300 px) is shown, with the download's progress in the caption where the picture's time goes.
+inline void earth_view_update(int k, double t) {
+  img_request(k, t);
+  const bool loading = img_loading(k);
+  const net::ImageInfo &in = live.img[k];
+  const bool streaming = img_streaming(k);
+  const bool have = live.img_px[k] != nullptr;
+  char prog[48];
+  const int pc = loading ? img_progress(k, prog, sizeof(prog)) : -1;
+  char c1[140] = "", c2[96] = "";
+  if (!have) {  // the Blue Marble
+    const photos::Outer bm = photos::blue_marble();
+    if (planet_px == nullptr)
+      planet_px = (uint16_t *) heap_caps_malloc(PV_PX * PV_PX * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (planet_px != nullptr && (!bm_in_px || sv.dsc_px != planet_px)) {
+      if (!tracker::jpg::decode_copy(bm.data, bm.len, planet_px, PV_PX, bm.w, bm.h, nullptr, ui_jpg_pool)) {
+        bm_in_px = true;
+        img_show(planet_px, true);
+      }
+    }
+    if (loading && pc >= 0)
+      snprintf(c1, sizeof(c1), "Earth: the Blue Marble, getting the latest picture: %d%%", pc);
+    else if (loading)
+      snprintf(c1, sizeof(c1), "Earth: the Blue Marble, getting the latest picture...");
+    else
+      snprintf(c1, sizeof(c1), "Earth: the Blue Marble (%s)", !net::link_up ? "no network" : in.err[0] ? in.err : "waiting to start");
+    snprintf(c2, sizeof(c2), "%s", bm.credit);
+  } else {
+    uint16_t *px = streaming ? net::img_work_buf : live.img_px[k];
+    bm_in_px = false;
+    img_show(px, live.img_new[k] || streaming || sv.dsc_px != px);
+    live.img_new[k] = false;
+    char tail[48] = "", hm[12], ago[16], when[96];
+    if (loading)
+      pc >= 0 ? snprintf(tail, sizeof(tail), " - updating %d%%", pc) : snprintf(tail, sizeof(tail), "%s", " - updating");
+    else if (!in.ok && in.err[0])
+      snprintf(tail, sizeof(tail), "%s", " - update failed");
+    if (in.obs > 0) {
+      local_hm((int64_t) in.obs, hm, sizeof(hm));
+      fmt_dur(t - in.obs, ago, sizeof(ago));
+      snprintf(when, sizeof(when), "%.11s %s, %s ago", in.src[0] ? in.src : "GOES", hm, ago);
+    } else {
+      snprintf(when, sizeof(when), "%s", "The latest picture");
+    }
+    if (k == net::IMG_REGION && my_region())
+      snprintf(c1, sizeof(c1), "Earth, %s: %s%s", my_region()->name, when, tail);
+    else
+      snprintf(c1, sizeof(c1), "Earth: %s%s", when, tail);
+    snprintf(c2, sizeof(c2), "NOAA %.11s GeoColor: day in colour, night lights", in.src[0] ? in.src : "GOES");
+  }
+  set_text_if(sv.msg, "");
+  img_bar(-1);
+  set_text_if(sv.cap1, c1);
+  set_text_if(sv.cap2, c2);
+}
 inline void img_view_update(double t) {
   if (!sv.root)
     return;
   if (sv.kind >= VIEW_PLANET) {
     planet_view_update(t);
+    return;
+  }
+  if (sv.kind == net::IMG_EARTH || sv.kind == net::IMG_REGION) {
+    earth_view_update(sv.kind, t);
     return;
   }
   const int k = sv.kind;
@@ -6370,17 +6395,10 @@ inline void img_view_update(double t) {
   const bool streaming = img_streaming(k);  // UI-59f: the picture as it arrives
   uint16_t *px = streaming ? net::img_work_buf : live.img_px[k];
   const bool have = px != nullptr;  // a picture has been decoded (it stays until a newer one)
-  if (sv.pf && px != nullptr) {  // the planets tab (Earth) shows a scaled copy, in the planet picture's buffer
-    if (planet_px == nullptr)
-      planet_px = (uint16_t *) heap_caps_malloc(net::IMG_PX * net::IMG_PX * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (planet_px != nullptr && (streaming || live.img_new[k] || sv.dsc_px != planet_px))
-      pv_scale(px, planet_px);  // (only when the picture changed)
-    px = planet_px;
-  }
   // PERF-15a: while it streams in, only the band of rows new since the last redraw is redrawn
   static int prog_rows = -2;
   const int rows_now = streaming ? net::img_prog_rows : -2;
-  if (streaming && !sv.pf && sv.dsc_px == px && prog_rows >= 0 && rows_now > prog_rows && sv.img) {
+  if (streaming && sv.dsc_px == px && prog_rows >= 0 && rows_now > prog_rows && sv.img) {
     lv_image_cache_drop(&sv.dsc[sv.cur]);
     lv_area_t a;
     lv_obj_get_coords(sv.img, &a);
@@ -6601,22 +6619,12 @@ inline void img_view_open_now(int kind, int planet) {
     }
   }
   sv.cap1 = finder_label(root, w.label_font, 0xC9D3F2, pf ? PV_CAP_Y : 414);
-  sv.cap2 = finder_label(root, w.label_font, 0x7E8BB3, 442);
-  if (pf)
-    lv_obj_add_flag(sv.cap2, LV_OBJ_FLAG_HIDDEN);  // one caption line; the controls and the strip are below
+  sv.cap2 = finder_label(root, w.label_font, 0x7E8BB3, pf ? PV_CAP2_Y : 442);  // (the planets tab: the picture's source)
   const bool pl = kind >= VIEW_PLANET;
-  if (pl) {  // UI-61b: the photo's credit, top left of the picture
-    sv.credit = lv_label_create(root);
-    if (w.label_font)
-      lv_obj_set_style_text_font(sv.credit, w.label_font, 0);
-    lv_obj_set_style_text_color(sv.credit, lv_color_hex(0x7E8BB3), 0);
-    lv_label_set_text(sv.credit, "");
-    lv_obj_set_pos(sv.credit, pv_x(0) + 4, pv_y(0) + 4);
-  }
   if (pl && kind - VIEW_PLANET <= planets::MARS) {  // UI-61g: "Tonight's phase" switch, lower right
     lv_obj_t *sw = lv_switch_create(root);  // as the settings switches (theme look)
-    lv_obj_set_size(sw, 56, 28);
-    lv_obj_set_pos(sw, 408, PV_SUB_Y);  // right of the controls row
+    lv_obj_set_size(sw, 46, 24);
+    lv_obj_set_pos(sw, 414, PV_SUB_Y);  // right of the controls row
     if (planet_phase)
       lv_obj_add_state(sw, LV_STATE_CHECKED);
     lv_obj_add_event_cb(sw, img_phase_cb, LV_EVENT_VALUE_CHANGED, nullptr);
@@ -6628,15 +6636,13 @@ inline void img_view_open_now(int kind, int planet) {
     lv_label_set_text(l, "Tonight's phase");
     lv_obj_align_to(l, sw, LV_ALIGN_OUT_LEFT_MID, -10, 0);
   }
-  if (pl)
-    lv_obj_add_flag(sv.cap2, LV_OBJ_FLAG_HIDDEN);  // the caption is one line; the credit sits on the photo
   if (!pl && (kind == net::IMG_EARTH || kind == net::IMG_REGION) && my_region()) {  // UI-62a Globe | region
     const char *names[2] = {"Globe", my_region()->name};
     for (int i = 0; i < 2; i++) {
       const int want = i == 0 ? net::IMG_EARTH : net::IMG_REGION;
       lv_obj_t *sb = lv_button_create(root);
       sv.seg[i] = sb;
-      lv_obj_set_size(sb, 128, 32);
+      lv_obj_set_size(sb, 128, 24);
       lv_obj_set_pos(sb, i == 0 ? 108 : 244, PV_SUB_Y);
       const bool on = kind == want;
       lv_obj_set_style_bg_color(sb, lv_color_hex(on ? 0x24356A : 0x121A36), 0);
@@ -6650,7 +6656,6 @@ inline void img_view_open_now(int kind, int planet) {
       lv_obj_center(l);
       lv_obj_add_event_cb(sb, img_seg_cb, LV_EVENT_CLICKED, (void *) (intptr_t) want);
     }
-    lv_obj_add_flag(sv.cap2, LV_OBJ_FLAG_HIDDEN);
   }
   if (pf) {  // the planets, Earth among them: tap one to see it
     struct C {
@@ -6688,11 +6693,11 @@ inline void img_view_open_now(int kind, int planet) {
       } else if (chips[i].p >= 0) {
         im = lv_image_create(c);
         lv_image_set_src(im, planet_card_dsc(chips[i].p));
-      } else if (w.card_icon_big) {  // Earth has no picture of its own: the globe glyph
-        im = lv_label_create(c);
-        lv_obj_set_style_text_font(im, w.card_icon_big, 0);
-        lv_obj_set_style_text_color(im, lv_color_hex(0x4A9BE6), 0);
-        lv_label_set_text(im, "\xF3\xB0\x87\xA7");
+      } else {  // Earth: the Blue Marble's 40 px picture
+        static lv_image_dsc_t earth_dsc;
+        earth_dsc = make_dsc(photos::blue_marble().icon, 40, 40);
+        im = lv_image_create(c);
+        lv_image_set_src(im, &earth_dsc);
       }
       if (im)
         lv_obj_align(im, LV_ALIGN_TOP_MID, 0, 3);

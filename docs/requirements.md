@@ -944,19 +944,22 @@ UI-60  The Moon now: "Moon image" (bottom left of the Moon card; the same button
 UI-59b Picture tabs: Sun (72), Moon (72), Planets (104) and UAF (72, the all-sky camera) along
        the top at y 4, 36 high; the one showing is navy with orange text; Close stays at 376,4.
        A tab switches in place. Planets opens the last planet or Earth looked at (a planet's
-       card opens that planet). On the Planets tab the picture is shown 300 px square (the
-       360 px one scaled down in software, bilinear: LVGL scales an RGB565 picture only with
-       RGB565A8 drawing, which this build leaves out) centred at y 196, and under it: the
-       caption (y 352), the tab's own controls at y 374 (Earth: Globe | region; Mercury,
-       Venus, Mars: Tonight's phase) and a strip of nine chips at y 410 (52x62, one px apart):
-       Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto, each with its
-       picture (40 px, the card's; Earth: the globe glyph) and name; the one showing has an
-       orange rim. Tap one to see it. Uranus, Neptune and Pluto are pictures only
-       (sky_photos_outer.h, made by tools/gen_outer_photos.py from public-domain NASA pictures
-       on Wikimedia Commons: Voyager 2, Voyager 2, New Horizons; 320 px JPEGs, 52 KB): no orbit
-       data, so no map marker, no phase and no position; the caption is just the name. The scaling to
-       300 px takes only as long as the picture changes (it once ran on every update and
-       stalled the screen for 1.7 s).
+       card opens that planet). On the Planets tab the picture is 300 px square, centred at y 196,
+       and NOTHING IS SCALED ON THE DEVICE: the planet photos (sky_photos.h, tools/prescale_photos.py)
+       and the Uranus, Neptune, Pluto and Blue Marble pictures (sky_photos_outer.h,
+       tools/gen_outer_photos.py) are made at that size, and the Earth and region pictures are decoded
+       from NOAA's JPEG straight to 300 px (LVGL's own scaling of an RGB565 picture draws nothing on
+       this build: it needs RGB565A8 drawing). Under the picture: the caption (y 348: the name and its
+       facts) and the picture's source under it (y 366, dim: the photo's credit; for Earth "NOAA
+       GOES-18 GeoColor..."), the tab's own controls at y 386 (24 px high: Earth: Globe | region;
+       Mercury, Venus, Mars: Tonight's phase) and a strip of nine chips at y 410 (52x62, one px
+       apart): Mercury, Venus, Earth, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto, each with its
+       40 px picture and name; the one showing has an orange rim. Tap one to see it. Uranus, Neptune
+       and Pluto are pictures only: no orbit data, so no map marker, no phase and no position; the
+       caption is just the name. Earth shows the built-in Blue Marble (NASA Apollo 17, 1972) until
+       its first GOES picture is in, with "Earth: the Blue Marble, getting the latest picture: 39%"
+       where the picture's time goes later; later opens show the last picture at once, "updating"
+       while the next one comes.
 UI-59c (removed in 4.6.31: the picture before and the < > buttons, with UI-59d's fetching of
        earlier frames; the viewer shows the latest picture only.) Earth/region frames are named
        by scan start (.../GEOCOLOR/YYYYDDDHHMM_GOES18-ABI-ak-GEOCOLOR-500x500.jpg); the newest is

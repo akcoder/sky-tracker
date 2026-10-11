@@ -2,7 +2,7 @@
 """components/sky_tracker/sky_photos_outer.h: Uranus, Neptune and Pluto, picture only (the firmware has no
 orbit data for them, so they are in the picture viewer's Planets strip and nowhere on the map).
 Public-domain NASA pictures from Wikimedia Commons, cropped to the disc, the sky outside it painted in the
-viewer's own colour, 320 px, baseline JPEG; plus a 40 px picture of each for the strip (ARGB8888).
+viewer's own colour, 300 px, baseline JPEG; plus a 40 px picture of each for the strip (ARGB8888).
   tools/gen_outer_photos.py          (needs Pillow and network on the first run; downloads are cached in /tmp)"""
 import io, os, sys, urllib.request
 from PIL import Image, ImageDraw, ImageFilter
@@ -10,13 +10,15 @@ from PIL import Image, ImageDraw, ImageFilter
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "..", "components", "sky_tracker", "sky_photos_outer.h")
 BG = (4, 10, 28)  # the middle of the page colour's RGB565 bucket (0x070B18 is (0, 8, 24) in 565): a JPEG's decode error stays inside it
-SIZE = 320
+SIZE = 300  # the Planets tab's picture size
 UA = "sky-tracker-dev/1.0 (https://github.com/akcoder/sky-tracker)"
 PHOTOS = [  # name, credit, Commons thumbnail
     ("URANUS", "NASA Voyager 2, 1986", "https://upload.wikimedia.org/wikipedia/commons/thumb/3/3d/Uranus2.jpg/960px-Uranus2.jpg"),
     ("NEPTUNE", "NASA Voyager 2, 1989", "https://upload.wikimedia.org/wikipedia/commons/thumb/5/56/Neptune_Full.jpg/960px-Neptune_Full.jpg"),
     ("PLUTO", "NASA New Horizons, 2015", "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ef/Pluto_in_True_Color_-_High-Res.jpg/960px-Pluto_in_True_Color_-_High-Res.jpg"),
 ]
+# Earth's placeholder while the latest GOES picture downloads: the Blue Marble
+BLUE = ("EARTH", "NASA Apollo 17, 1972", "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/The_Earth_seen_from_Apollo_17.jpg/960px-The_Earth_seen_from_Apollo_17.jpg")
 
 
 def fetch(url):
@@ -64,7 +66,7 @@ def main():
            "// to the disc, " + str(SIZE) + " px, baseline JPEG; and a 40 px picture of each (ARGB8888) for the strip.",
            "#include <cstddef>", "#include <cstdint>", "namespace sat {", "namespace photos {", ""]
     names, creds = [], []
-    for name, credit, url in PHOTOS:
+    for name, credit, url in PHOTOS + [BLUE]:
         pic = prepare(fetch(url))
         buf = io.BytesIO()
         pic.save(buf, "JPEG", quality=86, optimize=False, progressive=False, subsampling=0)
@@ -80,15 +82,16 @@ def main():
         out.append("};")
         names.append((name, len(data)))
         creds.append(credit)
-    out.append("constexpr int N_OUTER = 3;  // Uranus, Neptune, Pluto (viewer kinds VIEW_PLANET + 5 .. + 7)")
+    out.append("constexpr int N_OUTER = 3;  // Uranus, Neptune, Pluto (viewer kinds VIEW_PLANET + 5 .. + 7); the Blue Marble is blue_marble()")
     out.append("struct Outer {\n  const uint8_t *data;\n  size_t len;\n  int w, h;\n  const uint32_t *icon;\n  const char *name, *credit;\n};")
     out.append("inline Outer outer(int i) {")
-    out.append("  static const char *const CR[N_OUTER] = {" + ", ".join(f'"{c}"' for c in creds) + "};")
+    out.append("  static const char *const CR[N_OUTER] = {" + ", ".join(f'"{c}"' for c in creds[:3]) + "};")
     out.append("  switch (i) {")
-    for i, (n, ln) in enumerate(names):
+    for i, (n, ln) in enumerate(names[:3]):
         out.append(f'    case {i}: return {{OUTER_{n}, {ln}, {SIZE}, {SIZE}, OUTER_{n}_ICON, "{n.capitalize()}", CR[{i}]}};')
     out.append("    default: return {nullptr, 0, 0, 0, nullptr, \"\", \"\"};")
     out.append("  }\n}")
+    out.append("inline Outer blue_marble() { return {OUTER_EARTH, sizeof(OUTER_EARTH), %d, %d, OUTER_EARTH_ICON, \"Earth\", \"%s\"}; }" % (SIZE, SIZE, creds[3]))
     out.append("}  // namespace photos\n}  // namespace sat")
     open(OUT, "w").write("\n".join(out) + "\n")
     print("wrote", os.path.relpath(OUT), os.path.getsize(OUT) // 1024, "KB")
