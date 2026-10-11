@@ -5932,6 +5932,8 @@ struct ImgView {
   lv_image_dsc_t dsc[2];  // alternated: a new source each update, so LVGL's image cache never shows old pixels
   int cur = 0;
   const void *dsc_px = nullptr;
+  lv_obj_t *under[64] = {};  // the page's top-level objects hidden under the viewer (see img_view_open_now)
+  int n_under = 0;
   bool pf = false;        // the planets tab (Earth, Mercury .. Saturn): the picture is scaled down to make room for the strip
   int32_t bar_val = -2;
   double drawn_at = 0;    // planet: last drawing (redrawn each minute: the moons move)
@@ -6016,9 +6018,17 @@ inline void img_request(int k, double t) {
   q.seq = live.img[k].seq;
   q.asked = true;
 }
-inline void img_view_close() {
+inline void img_view_close(bool reopening = false) {
   if (sv.root)
     lv_obj_delete(sv.root);
+  if (sv.n_under > 0 && !reopening) {  // the map, drawn again
+    for (int i = 0; i < sv.n_under; i++)
+      if (lv_obj_is_valid(sv.under[i])) {
+        lv_obj_remove_flag(sv.under[i], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_invalidate(sv.under[i]);
+      }
+    sv.n_under = 0;
+  }
   lv_obj_t *const none[4] = {};
   sv.root = sv.img = sv.msg = sv.bar = sv.cap1 = sv.cap2 = sv.east = sv.west = sv.credit = nullptr;
   sv.seg[0] = sv.seg[1] = nullptr;
@@ -6403,7 +6413,7 @@ inline void img_tab_cb(lv_event_t *e) {
 inline void img_view_open_now(int kind, int planet) {
   if (planet == -2)
     planet = kind >= VIEW_PLANET ? kind - VIEW_PLANET : -1;
-  img_view_close();
+  img_view_close(true);
   finder_close();
   sv.kind = kind;
   sv.planet = planet;
@@ -6420,6 +6430,20 @@ inline void img_view_open_now(int kind, int planet) {
   lv_obj_set_style_bg_color(root, lv_color_hex(0x070B18), 0);
   lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
   lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);
+  // The viewer covers the whole screen, but it is on the top layer, which LVGL draws OVER the active page: every
+  // redraw of a picture still being downloaded first redrew the sky map underneath (~1.1 s on the unit, the screen
+  // busy all the time and touches lost). Hidden, LVGL skips it; the viewer's opaque root covers the whole area.
+  if (sv.n_under == 0) {  // (the page's own objects, not the page: hiding a screen itself is not safe in LVGL)
+    lv_obj_t *scr = lv_screen_active();
+    const int n = scr ? (int) lv_obj_get_child_count(scr) : 0;
+    for (int i = 0; i < n && sv.n_under < 64; i++) {
+      lv_obj_t *c = lv_obj_get_child(scr, i);
+      if (c != nullptr && !lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) {
+        lv_obj_add_flag(c, LV_OBJ_FLAG_HIDDEN);
+        sv.under[sv.n_under++] = c;
+      }
+    }
+  }
   auto button = [&](int x, int wd, const char *text, bool on) {
     lv_obj_t *b = lv_button_create(root);
     lv_obj_set_size(b, wd, 36);
@@ -6626,7 +6650,6 @@ inline bool card_open() { return ui.sel_kind >= 0; }  // UI-24
 // UI-72: after a minute untouched, what is open over the map closes (the picture viewer, Find,
 // the time scrubber, a details card); the pages are handled in the YAML
 inline void finder_close();
-inline void img_view_close();
 inline bool finder_open();
 inline bool img_view_open();
 inline void scrub_close();
