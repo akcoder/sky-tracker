@@ -1317,6 +1317,19 @@ int main() {
     printf("Geminids peak at %.0f\n", sat::sev.peak[7]);
     CHECK(fabs(sat::sev.peak[7] - 1797256266) < 12 * 3600, "Geminid peak %.0f", sat::sev.peak[7]);
     CHECK(alerts(gem, "Geminids peak"), "Geminid alert");
+    {  // before the clock is set every peak is 0 (January 1970): no "Quadrantids peak today" on the boot screen
+      const double now_save = sat_host_now, pk_save = sat::sev.peak[0];
+      sat_host_now = 120;
+      sat::sev.peak[0] = 0;
+      sat::Alert al2[sat::MAX_ALERTS];
+      const int n2 = sat::collect_alerts(120, al2, sat::MAX_ALERTS);
+      bool shower = false;
+      for (int i = 0; i < n2; i++)
+        shower |= strstr(al2[i].text, "peak") != nullptr;
+      CHECK(!shower, "no meteor shower alert before the clock is set");
+      sat_host_now = now_save;
+      sat::sev.peak[0] = pk_save;
+    }
     const auto st_save = sat::live.status;
     sat::live.status.error[0] = 0;
     sat::live.status.data_time = sat::live.status.loaded = gem - 600;

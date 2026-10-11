@@ -4226,8 +4226,8 @@ inline int collect_alerts(double t, Alert *out, int max) {
     // UI-47 meteor showers: from 3 days before the peak to the end of the peak's day
     for (int i = 0; i < ev::N_SHOWERS && ui.sky_alerts; i++) {
       const double pk = sev.peak[i];
-      if (pk - t > SKY_ALERT_S || t >= local_midnight(pk) + 86400.0)
-        continue;
+      if (!clock_valid() || pk < 1.7e9 || pk - t > SKY_ALERT_S || t >= local_midnight(pk) + 86400.0)
+        continue;  // (before the clock is set the peaks are 0: January 1970, and "Quadrantids peak today")
       if (Alert *a = add(C_METEOR, "\xF3\xB1\x9D\x81", nullptr)) {  // star-shooting
         a->kind = K_SHOWER, a->id = i;
         when_text(t, pk, w, sizeof(w));
