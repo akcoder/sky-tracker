@@ -3,6 +3,7 @@
 #pragma once
 #include <algorithm>
 #include <cmath>
+#include "esphome/components/tracker_common/tracker_sun.h"  // shared with f1-tracker
 
 namespace sat {
 
@@ -88,26 +89,13 @@ inline double wrap360(double d) {
 }
 inline double rad(double d) { return d * M_PI / 180.0; }
 
-// Greenwich mean sidereal time, degrees.
-inline double gmst_deg(double jdv) { return wrap360(280.46061837 + 360.98564736629 * (jdv - 2451545.0)); }
+// Greenwich mean sidereal time, degrees; the Sun's position (the low-precision formulae of the
+// Astronomical Almanac): tracker-common's, shared with f1-tracker.
+inline double gmst_deg(double jdv) { return tracker::sun::gmst_deg(jdv); }
 
-struct Equ {
-  double ra, dec;  // radians
-  double lon_ecl;  // apparent ecliptic longitude, degrees (for the phase)
-};
+using Equ = tracker::sun::Equ;  // ra, dec (radians), lon_ecl (degrees, for the phase)
 
-inline Equ sun(double jdv) {
-  const double n = jdv - 2451545.0;
-  const double L = wrap360(280.460 + 0.9856474 * n);
-  const double g = rad(wrap360(357.528 + 0.9856003 * n));
-  const double lam = rad(L + 1.915 * sin(g) + 0.020 * sin(2 * g));
-  const double eps = rad(23.439 - 0.0000004 * n);
-  Equ e;
-  e.ra = atan2(cos(eps) * sin(lam), cos(lam));
-  e.dec = asin(sin(eps) * sin(lam));
-  e.lon_ecl = lam * 180.0 / M_PI;
-  return e;
-}
+inline Equ sun(double jdv) { return tracker::sun::position(jdv); }
 
 // Geocentric Moon plus its distance in Earth radii.
 inline Equ moon(double jdv, double *dist_er) {

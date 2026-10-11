@@ -12,15 +12,7 @@
 #define SKY_IMPL
 namespace sat { double sat_host_now = 0; }  // the meteor animation reads the host clock
 #define ESP_LOGW(tag, fmt, ...) printf("W [%s] " fmt "\n", tag, ##__VA_ARGS__)
-namespace sat {  // sat_tracker.h's fmt_dur (UI-17a), which sky_about.h's device text calls; that header is too big to pull in
-inline void fmt_dur(double s, char *buf, size_t n) {
-  const int m = (int) (s / 60.0);
-  if (m >= 24 * 60) snprintf(buf, n, "%dd %dh", m / 1440, (m % 1440) / 60);
-  else if (m >= 60) snprintf(buf, n, "%dh %dm", m / 60, m % 60);
-  else if (s >= 60) snprintf(buf, n, "%dm", m);
-  else snprintf(buf, n, "%ds", (int) s);
-}
-}  // namespace sat
+#include "esphome/components/tracker_common/tracker_about.h"  // the About page's device text (shared with f1-tracker)
 #include "sky_about.h"  // the About page's logo and device text
 #include "fonts_gen.inc"
 #include "settings_gen.inc"
@@ -160,7 +152,7 @@ int main(int argc, char **argv) {
   sat::logo_show(about_logo, 112);
   lv_label_set_text(about_built, "ESPHome 2026.9.1, built Oct 10 2026");
   char b[200];
-  sat::about_device_text(b, sizeof(b), "sky-tracker-9cad68", "192.168.1.42", "home-wifi", -51, "34:85:18:9C:AD:68", 3 * 3600 + 12 * 60);
+  tracker::about::device_text(b, sizeof(b), "sky-tracker-9cad68", "192.168.1.42", "home-wifi", -51, "34:85:18:9C:AD:68", 3 * 3600 + 12 * 60);
   lv_label_set_text(about_dev, b);
   ms += 1000;
   lv_timer_handler();

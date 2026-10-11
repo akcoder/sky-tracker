@@ -146,7 +146,7 @@ esphome:
             sat::logo_meteor(id(about_logo));     // UI-67a
             {
               char d[24], b[64];
-              sat::tidy_date(__DATE__, d, sizeof(d));
+              tracker::about::tidy_date(__DATE__, d, sizeof(d));
               snprintf(b, sizeof(b), "ESPHome %s, built %s", ESPHOME_VERSION, d);
               lv_label_set_text(id(about_built), b);
             }
@@ -602,7 +602,7 @@ interval:
           } else if (id(about_page)->is_showing()) {  // UI-67
             static char b[200];
             const std::string ip = id(ip_addr).state, ssid = id(wifi_ssid_info).state;
-            sat::about_device_text(b, sizeof(b), App.get_name().c_str(), ip.c_str(), ssid.c_str(),
+            tracker::about::device_text(b, sizeof(b), App.get_name().c_str(), ip.c_str(), ssid.c_str(),
                                    (int) id(wifi_comp).wifi_rssi(), get_mac_address_pretty().c_str(),
                                    esphome::millis() / 1000.0);
             if (strcmp(lv_label_get_text(id(about_dev)), b) != 0) lv_label_set_text(id(about_dev), b);

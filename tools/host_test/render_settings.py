@@ -169,7 +169,7 @@ def main():
         fo.append(o)
     exe = os.path.join(OUT, "render_settings")
     run(CXX, "-std=gnu++20", "-O2", "-w", "-DLV_CONF_INCLUDE_SIMPLE", "-I" + cdir, "-I" + DEPS, "-I" + os.path.join(DEPS, "lvgl"),
-        "-I" + OUT, "-I" + os.path.join(ROOT, "components", "sky_tracker"), "-I" + os.path.join(HERE, "stubs"),
+        "-I" + OUT, "-I" + os.path.join(ROOT, "components", "sky_tracker"), "-I" + os.path.join(HERE, "stubs"), "-I" + os.path.join(DEPS, "tc_inc"),
         os.path.join(HERE, "render_settings.cpp"), *fo, lib, "-lm", "-lz", "-o", exe)
     run(exe, OUT)
     from PIL import Image

@@ -7,9 +7,6 @@ namespace sat {
 lv_obj_t *logo_show(lv_obj_t *parent, int px);
 void logo_meteor(lv_obj_t *parent);
 void logo_meteor_step();
-void about_device_text(char *b, size_t n, const char *name, const char *ip, const char *ssid, int rssi,
-                       const char *mac, double uptime_s);
-void tidy_date(const char *d, char *out, size_t n);
 }  // namespace sat
 #else
 #include <cstdint>
@@ -317,23 +314,7 @@ void logo_meteor(lv_obj_t *parent) {
 #endif
 }
 
-// UI-67: the About page's device lines, refreshed each second while it shows
-void about_device_text(char *b, size_t n, const char *name, const char *ip, const char *ssid, int rssi,
-                              const char *mac, double uptime_s) {
-  char up[24];
-  fmt_dur(uptime_s, up, sizeof(up));  // UI-17a
-  snprintf(b, n, "%s  %s\nWi-Fi %s  %d dBm\nMAC %s\nUp %s", name, ip && *ip ? ip : "-", ssid && *ssid ? ssid : "-",
-           rssi, mac, up);
-}
-// "Oct  2 2026" (the compiler's __DATE__) -> "Oct 2 2026"
-void tidy_date(const char *d, char *out, size_t n) {
-  char m[4] = "";
-  int day = 0, y = 0;
-  if (sscanf(d, "%3s %d %d", m, &day, &y) == 3)
-    snprintf(out, n, "%s %d %d", m, day, y);
-  else
-    snprintf(out, n, "%s", d);
-}
+// (UI-67: the About page's device lines and the build date are tracker-common's: tracker::about)
 
 }  // namespace sat
 #endif  // SKY_IMPL

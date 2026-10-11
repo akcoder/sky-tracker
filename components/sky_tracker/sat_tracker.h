@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "esphome/components/tracker_common/tracker_about.h"  // shared with f1-tracker
 #include "sat_net.h"
 #include "sky_stars.h"
 #include "sky_flags.h"
@@ -771,19 +772,7 @@ inline void local_hm(int64_t t, char *buf, size_t n) {
 
 // UI-17a: every duration on the device is written this one way: "45s", "12m", "1h 31m",
 // "2d 4h" (a space between units, minutes padded after hours).
-inline void fmt_dur(double s, char *buf, size_t n) {
-  if (s < 0)
-    s = 0;
-  const int m = (int) (s / 60.0);
-  if (m >= 24 * 60)
-    snprintf(buf, n, "%dd %dh", m / 1440, (m % 1440) / 60);
-  else if (m >= 60)
-    snprintf(buf, n, "%dh %dm", m / 60, m % 60);
-  else if (s >= 60)
-    snprintf(buf, n, "%dm", m);
-  else
-    snprintf(buf, n, "%ds", (int) s);
-}
+inline void fmt_dur(double s, char *buf, size_t n) { tracker::about::fmt_dur(s, buf, n); }  // shared (UI-17a)
 
 // ================================================================== setup
 inline void ui_build() {
