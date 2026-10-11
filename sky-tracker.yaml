@@ -15,7 +15,7 @@ substitutions:
   starlink_radius: "80"   # DATA-3/UI-39: default LEO cone (radius from overhead; 80 = above 10° elevation); the LEO Cone entity sets it (15-90)
   map_heading: "0"        # UI-15: compass direction at the top of the map (0 = north)
   ap_name: Sky Tracker    # the open fallback AP (renamed with the MAC suffix at boot)
-  timezone: UTC           # (the board package's default; removed again below: with none set, Home Assistant's zone is used)
+  timezone: UTC           # (the board package's default; removed again below so the picker (UI-70) decides)
   tracker_common_url: https://github.com/akcoder/tracker-common
   tracker_common_ref: v0.4.2   # a tag, so a change in tracker-common cannot break this build
   backlight_min: "0.10"   # HW-6: lowest PWM duty that is still visible; raise if the
@@ -941,7 +941,7 @@ select:
     icon: mdi:earth
     optimistic: true
     restore_value: true
-    initial_option: "Auto (from HA)"
+    initial_option: "Alaska"        # the default zone; "Auto (from HA)" takes Home Assistant's
     options:
       - "Auto (from HA)"
       - "Hawaii"
