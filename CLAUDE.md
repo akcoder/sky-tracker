@@ -28,7 +28,7 @@ Sun maths come from the `tracker_common` component (pinned tag, `tracker_common_
   by `SendMessage`; shared-code changes go through tracker-common, never a private copy. The dinosaur (`sky_dino*.h`) is a
   private copy from f1-tracker by decision: it never goes into tracker-common.
 - **Renders (`docs/renders`): only regenerate and commit the ones whose subject changed.** After `tools/host_test/make_comps.sh`
-  (it redraws everything on live data) `git checkout --` the rest and delete stray new files (`r19_prog_*`). A version bump, a
+  (it redraws everything on live data) `git checkout --` the rest, **only under `docs/renders/`** (a `git status docs` loop once reverted uncommitted edits to `docs/requirements.md`), and delete stray new files (`r19_prog_*`). A version bump, a
   date, live data, or one small element shared by many renders (a strip icon) is not a reason. Check `git diff --name-only
   docs/renders` before every commit. Name the planet in `r10_planet<N>_<name>`.
 - Update `docs/requirements.md` (the requirement and the `4.6.xx (unreleased)` changelog line) with every user-visible change.
