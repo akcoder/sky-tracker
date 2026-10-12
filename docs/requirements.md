@@ -776,6 +776,19 @@ UI-83  A dinosaur on the About page: touching the Sky Tracker logo there makes a
        sky_extra.cpp (BUILD-7). The logo and the Play Dinosaur Animation button (web, HA) start it; it begins already
        walking in, and a touch in its first 2.5 s is ignored (a second tap on the logo was ending it unseen).
        The Play Launch / Undocking / Splashdown / Dinosaur Animation buttons are the web page's Animations group.
+UI-84  Fact cards: touching the picture of a planet (Planets tab), the Sun or the Moon (their tabs) opens its card over
+       the picture (440 x 352 at 20,52: the tabs and the strip stay): the name, Discovered (who and when), Named for
+       (the legend) and Facts, with a dim "Tap to close" at the bottom (as f1-tracker's detail card). Mercury, Venus,
+       Earth, Mars, Jupiter, Saturn, Uranus, Neptune, Pluto, Sun, Moon (sky_facts.h); each text fits the card (a host
+       test checks it). Touching the card puts it away; another tab or planet closes it.
+       The Planets tab: the picture (300 px) and its two caption lines are centred between the tab buttons and the
+       strip; Mars, Jupiter and Saturn are made as large as the others (tools/refine_photos.py); the strip's Mercury,
+       Venus, Mars and Jupiter are photos (sky_photos_icons.h, tools/gen_planet_icons.py) like Earth, Uranus, Neptune
+       and Pluto, and Saturn keeps its drawn icon (a cut-down photo looked bad); the Blue Marble shows its whole disc;
+       Tonight's phase (Mercury, Venus, Mars) is at the lower right above the strip with a 22 px extra hit zone, its
+       label a target too. The ALASKA tab (the old UAF tab) has the same layout with a strip of two 130 px chips, 16 px
+       apart (the gap shrinks as chips are added): Poker Flat's all-sky camera (aurora icon) and NOAA's picture of the
+       region (satellite icon; where a region covers the place), both 300 px.
 UI-41k Solar Alerts (on by default; mdi:weather-sunny, HA "Solar Alerts", web Celestial after
        Lunar): solar eclipses seen from here (UI-51) and solstices and equinoxes (UI-41b).
 UI-41g Comet Alerts (on by default): a comet bright enough to see (UI-63). The Comets map layer
