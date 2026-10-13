@@ -2095,6 +2095,7 @@ constexpr uint32_t C_AURORA = 0x7EE0B0;  // UI-38: soft aurora green
 // went wrong and what the device is doing about it. Returns the colour to use.
 // ha: for Home Assistant, without the times that tick on (an age, a retry): the text then
 // changes only when the state does, not every minute (the ages are the Data Age sensor).
+inline void page_show(lv_obj_t *o, bool show);  // show or hide a map-page object, viewer-aware (defined with the viewer)
 inline uint32_t status_text(double t, char *b, size_t n, bool ha = false) {
   const DataStatus &s = live.status;
   const bool have = s.n_sats > 0 || s.have_iss || s.n_starlink > 0;
@@ -2354,16 +2355,11 @@ inline void draw_hud(double t) {
       if (glyph) {
         lv_label_set_text(ui.aurora_icon, al->glyph);
         lv_obj_set_style_text_color(ui.aurora_icon, lv_color_hex(al->col), 0);
-        lv_obj_remove_flag(ui.aurora_icon, LV_OBJ_FLAG_HIDDEN);
-      } else if (ui.aurora_icon) {
-        lv_obj_add_flag(ui.aurora_icon, LV_OBJ_FLAG_HIDDEN);
       }
-      if (img) {
+      page_show(ui.aurora_icon, glyph);
+      if (img)
         lv_image_set_src(ui.alert_img, al->img);
-        lv_obj_remove_flag(ui.alert_img, LV_OBJ_FLAG_HIDDEN);
-      } else {
-        lv_obj_add_flag(ui.alert_img, LV_OBJ_FLAG_HIDDEN);
-      }
+      page_show(ui.alert_img, img);
       const bool icon = glyph || img;
       lv_obj_set_x(ui.w.status, base_x + (icon ? 24 : 0));  // text clears the icon
       // UI-41: every alert in one font (mono15; mono14 without it), ALERT_DY lower than
@@ -4880,10 +4876,8 @@ inline void deselect() {
   ui.sel_kind = -1;
   if (was_const && ui.w.sky)
     lv_obj_invalidate(ui.w.sky);  // UI-46b: its figure goes back to the others
-  if (ui.card)
-    lv_obj_add_flag(ui.card, LV_OBJ_FLAG_HIDDEN);
-  if (ui.sel_ring)
-    lv_obj_add_flag(ui.sel_ring, LV_OBJ_FLAG_HIDDEN);
+  page_show(ui.card, false);
+  page_show(ui.sel_ring, false);
   arc_update(clock_now());
 }
 
@@ -6112,6 +6106,30 @@ inline void img_request(int k, double t) {
   q.at = t;
   q.seq = live.img[k].seq;
   q.asked = true;
+}
+// While the viewer holds the page's objects hidden (sv.under), a change of what the page shows goes into that list
+// instead of the object: Close then restores what the page wants shown NOW, not what it showed when the viewer opened
+// (the alert icon rotating from glyph to picture under a long view came back doubled; a scrub timing out under the
+// viewer had its panel back with scrubbing off).
+inline void page_show(lv_obj_t *o, bool show) {
+  if (o == nullptr)
+    return;
+  int at = -1;
+  for (int i = 0; i < sv.n_under; i++)
+    if (sv.under[i] == o)
+      at = i;
+  if (sv.n_under > 0) {  // the viewer is open: the object stays hidden either way
+    if (show && at < 0 && sv.n_under < 64)
+      sv.under[sv.n_under++] = o;
+    else if (!show && at >= 0)
+      sv.under[at] = sv.under[--sv.n_under];
+    lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  if (show)
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+  else
+    lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
 }
 inline void img_view_close(bool reopening = false) {
   if (sv.root)
@@ -7541,8 +7559,7 @@ inline void scrub_close() {
     return;
   ui.scrub_on = false;
   ui.scrub_s = 0;
-  if (ui.scrub_panel)
-    lv_obj_add_flag(ui.scrub_panel, LV_OBJ_FLAG_HIDDEN);
+  page_show(ui.scrub_panel, false);
   deselect();
   scrub_view_changed();
   redraw_all(clock_now());
