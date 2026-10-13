@@ -46,21 +46,32 @@ inline HostUpdate host;  // the update entity the tests set and read
 // after 6 s)
 struct Deferred {
   void (*fn)();
-  uint32_t t0;
+  uint32_t t0, hold_ms;
 };
+inline Deferred *deferred = nullptr;  // the one request waiting (a second one would run its own blocking fetch beside it)
 inline void when_quiet(void (*fn)(), uint32_t hold_ms) {
+  if (deferred) {  // the request with the longer hold (the install's) wins; the other was a check, soon repeated
+    if (hold_ms > deferred->hold_ms) {
+      deferred->fn = fn;
+      deferred->hold_ms = hold_ms;
+      net_hold(hold_ms);
+    }
+    return;
+  }
   net_hold(hold_ms);
-  auto *d = new Deferred{fn, esphome::millis()};
+  deferred = new Deferred{fn, esphome::millis(), hold_ms};
   lv_timer_create(
       [](lv_timer_t *t) {
-        auto *d = (Deferred *) lv_timer_get_user_data(t);
+        Deferred *d = deferred;
         if (net_quiet() || esphome::millis() - d->t0 > 6000) {
-          d->fn();
+          void (*fn)() = d->fn;
           delete d;
+          deferred = nullptr;  // (before the call: the fetch blocks the loop, and its own hooks may call back)
           lv_timer_delete(t);
+          fn();
         }
       },
-      250, d);
+      250, nullptr);
 }
 #endif
 

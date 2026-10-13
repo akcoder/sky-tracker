@@ -17,7 +17,7 @@ substitutions:
   ap_name: Sky Tracker    # the open fallback AP (renamed with the MAC suffix at boot)
   timezone: America/Anchorage  # UI-70: the zone built in, used until Home Assistant sends its own (Auto) or a choice is made
   tracker_common_url: https://github.com/akcoder/tracker-common
-  tracker_common_ref: v0.4.4   # a tag, so a change in tracker-common cannot break this build
+  tracker_common_ref: v0.4.5   # a tag, so a change in tracker-common cannot break this build (keep ../tracker-common on it: the host tests use that checkout)
   backlight_min: "0.10"   # HW-6: lowest PWM duty that is still visible; raise if the
                           # panel goes dark at the bottom of the brightness slider
   # HW-8/HW-9: optional GPS and compass (see the wiring diagram)

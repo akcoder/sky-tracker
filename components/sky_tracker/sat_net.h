@@ -94,6 +94,23 @@ template<class T> struct PsramAlloc {
   template<class U> bool operator!=(const PsramAlloc<U> &) const { return false; }
 };
 template<class T> using pvector = std::vector<T, PsramAlloc<T>>;
+// A set of catalogue numbers, sorted, in PSRAM, reserved once (FAIL-12). The unordered_maps it replaces were built in
+// internal RAM on every satellite pass (up to ~20 KB during the GEO download, with ~20 KB free: FAIL-13).
+struct IdSet {
+  pvector<int32_t> v;
+  void reset(size_t cap) {
+    if (v.capacity() < cap)
+      v.reserve(cap);
+    v.clear();
+  }
+  bool has(int32_t id) const { return std::binary_search(v.begin(), v.end(), id); }
+  void add(int32_t id) {  // (past the capacity it is not grown: the id is simply not remembered)
+    auto it = std::lower_bound(v.begin(), v.end(), id);
+    if ((it != v.end() && *it == id) || v.size() >= v.capacity())
+      return;
+    v.insert(it, id);
+  }
+};
 // FAIL-12: PsramAlloc aborts when PSRAM has no block big enough, and a vector that grows needs
 // its new block while it still holds the old one. The four element lists (satellites, GNSS,
 // GEO, Starlink) are therefore reserved at their caps when the data task starts, while PSRAM
@@ -638,6 +655,11 @@ inline HttpResult http_stream(const char *url, const char *what, const std::func
       sink_us += net_us() - s0;
       if (stop && *stop)
         break;
+      if (hold_active() || paused) {  // NET-14/BUILD-6: the firmware check or install wants the network now
+        ESP_LOGW(TAG, "%s: stopped after %ld bytes for the firmware %s", what, res.bytes, paused ? "install" : "check");
+        failed = true;
+        break;
+      }
     }
     if (stop && *stop && !failed) {
       res.ok = true;  // read what was wanted; the rest is not needed (nor the connection)
@@ -3416,17 +3438,18 @@ inline void do_elements() {
     mem_skip = false;
     pvector<SgpSat> &staging = dst;
     staging.clear();
-    std::unordered_map<int32_t, bool> ids;
+    static IdSet ids;
+    ids.reset(std::max(MEO_CAP, GEO_CAP));
     for (int g = 0; g < ng; g++) {
       char url[128];
       snprintf(url, sizeof(url), "%s/NORAD/elements/gp.php?GROUP=%s&FORMAT=csv", celestrak_base.c_str(), groups[g]);
       if (!download(url, what, [&](const Omm &o) {
-            if (ids.count(o.id) || now - o.epoch > MAX_ELEM_AGE_S || !one_more(staging, cap, 64, what))
+            if (ids.has(o.id) || now - o.epoch > MAX_ELEM_AGE_S || !one_more(staging, cap, 64, what))
               return;
             breathe((uint32_t) staging.size(), 32);
             staging.emplace_back();
             if (make_sgp(o, staging.back()))
-              ids[o.id] = true;
+              ids.add(o.id);
             else
               staging.pop_back();
           }, now)) {
@@ -3623,11 +3646,12 @@ inline void do_above() {
     push_room(staging, r, SAT_CAP + MEO_CAP, "satellite positions");
     total += el >= 0;
   };
-  std::unordered_map<int32_t, bool> seen;
+  static IdSet seen;
+  seen.reset(SAT_CAP);
   uint32_t n = 0;
   for (auto &s : sats) {
     breathe(n++, 64);
-    seen[s.id] = true;
+    seen.add(s.id);
     // UI-35: debris is its own layer, independent of the LEO/MEO switches (GEO debris
     // goes with the GEO list below)
     if (s.cls != C_CLS_GEO && (s.debris ? jc.debris_on : wanted(s.cls)))
@@ -3636,7 +3660,7 @@ inline void do_above() {
   if (jc.meo_on)
     for (auto &s : meo_sats) {
       breathe(n++, 64);
-      if (!seen.count(s.id) && s.cls != C_CLS_GEO && s.cls != C_CLS_LEO)
+      if (!seen.has(s.id) && s.cls != C_CLS_GEO && s.cls != C_CLS_LEO)
         take(s);
     }
   // GEO: its own list plus any geosynchronous object in the visual list
@@ -3661,15 +3685,16 @@ inline void do_above() {
       push_room(geo, r, GEO_CAP, "GEO positions");
       geo_total++;
     };
-    std::unordered_map<int32_t, bool> gseen;
+    static IdSet gseen;
+    gseen.reset(SAT_CAP);
     for (auto &s : sats)
       if (s.cls == C_CLS_GEO) {
-        gseen[s.id] = true;
+        gseen.add(s.id);
         take_geo(s);
       }
     for (auto &s : geo_sats) {
       breathe(n++, 32);
-      if (!gseen.count(s.id) && s.cls == C_CLS_GEO)
+      if (!gseen.has(s.id) && s.cls == C_CLS_GEO)
         take_geo(s);
     }
   } else if (!jc.geo_on && geo_next != 0) {
@@ -4048,8 +4073,10 @@ inline void net_set_starlink_radius(int r) {  // UI-39
 // BUILD-6
 inline void net_pause(bool on) {
   net::paused = on;
-  if (on && net::queue)
+  if (on && net::queue) {
     xQueueReset(net::queue);
+    net::queued.store(0);  // (the dropped jobs' ARCH-4 bits: left set, no job of those kinds could be queued again)
+  }
 }
 
 // Loop-owned copies (ARCH-9: sensors read these).

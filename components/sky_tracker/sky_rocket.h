@@ -1022,10 +1022,11 @@ inline void banner_text(const char *name, char *b, size_t n) {
   b[k] = 0;
 }
 
-inline void play_scene(bool undock, const char *name, bool boot = false, bool splash = false) {
+// false when nothing plays (the pictures are not drawn yet, UI-69n): the caller may ask again
+inline bool play_scene(bool undock, const char *name, bool boot = false, bool splash = false) {
   stop();
   if (!pics_ready || !st.img_buf[0] || (undock && !st.capsule_buf) || (splash && (!st.sea_buf || !st.cap2_buf || !st.chute_buf)))
-    return;
+    return false;
   st.undock = undock && !splash;
   st.splash = splash;
   st.splashed = false;
@@ -1172,8 +1173,9 @@ inline void play_scene(bool undock, const char *name, bool boot = false, bool sp
       40, nullptr);
   frame();
   ESP_LOGI("rocket", "%s animation: %s", splash ? "splashdown" : undock ? "undocking" : st.boot ? "boot" : "launch", b);
+  return true;
 }
-inline void play(const char *name) { play_scene(false, name); }
+inline bool play(const char *name) { return play_scene(false, name); }
 
 // UI-76: the launch countdown: from T-10 min a full-screen card over everything with the
 // mission, rocket and pad, the T-minus clock, Launch Library's status (GO / HOLD / TBC) and a
@@ -1373,8 +1375,8 @@ inline void check() {
     const uint32_t k = key_of(l.name, l.net);
     if (k == st.played_key)
       continue;
-    st.played_key = k;
-    play(l.name);
+    if (play(l.name))  // (marked played only once it plays: in the first seconds after boot the pictures are not ready)
+      st.played_key = k;
     return;
   }
   for (const auto &e : live.events) {  // UI-69f
@@ -1383,8 +1385,8 @@ inline void check() {
     const uint32_t k = key_of(e.name, e.t);
     if (k == st.undock_key)
       continue;
-    st.undock_key = k;
-    play_scene(true, e.name);
+    if (play_scene(true, e.name))
+      st.undock_key = k;
     return;
   }
   for (const auto &e : live.events) {  // UI-69m: a capsule coming home
@@ -1393,8 +1395,8 @@ inline void check() {
     const uint32_t k = key_of(e.name, e.t);
     if (k == st.splash_key)
       continue;
-    st.splash_key = k;
-    play_scene(false, e.name, false, true);
+    if (play_scene(false, e.name, false, true))
+      st.splash_key = k;
     return;
   }
 }

@@ -116,9 +116,7 @@ inline void read_version(const char *path, char *ver, size_t n) {
   }
   static const char KEY[] = "Project akcoder.sky_tracker version ";
   constexpr size_t BLOCK = 4096, KL = sizeof(KEY) - 1, LIMIT = 256 * 1024;
-  static uint8_t *buf = nullptr;
-  if (buf == nullptr)
-    buf = (uint8_t *) malloc(BLOCK + 128);
+  uint8_t *buf = (uint8_t *) malloc(BLOCK + 128);  // (freed below: kept static, it cost 4 KB of internal RAM all boot)
   if (buf != nullptr) {
     size_t have = 0, total = 0;  // the tail of the last block is kept, a match may straddle two
     while (total < LIMIT) {
@@ -134,6 +132,7 @@ inline void read_version(const char *path, char *ver, size_t n) {
             ver[k++] = (char) buf[j];
           if (k > 0 && j < len) {  // (cut short by the end of the block: found again with the next one)
             ver[k] = 0;
+            free(buf);
             fclose(f);
             return;
           }
@@ -141,6 +140,7 @@ inline void read_version(const char *path, char *ver, size_t n) {
       have = std::min<size_t>(len, KL + 40);  // keeps room for the version after a match at the very end
       memmove(buf, buf + len - have, have);
     }
+    free(buf);
   }
   fclose(f);
 }

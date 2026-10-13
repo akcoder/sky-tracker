@@ -1485,6 +1485,11 @@ inline void render_moon(lv_obj_t *cv, float k, float ux, float uy) {
 
 inline void draw_sun_moon(double t, double tv) {
   const Config &c = config();
+  if (!clock_valid()) {  // (the 1970 clock put them at that day's places; ui.sm stays zero: Sun on the horizon)
+    set_shown(ui.sun, ui.sun_shown, false);
+    set_shown(ui.moon, ui.moon_shown, false);
+    return;
+  }
   ui.sm = astro::compute(t, c.lat, c.lon, c.alt_m);
   // UI-53: the map shows them at the scrubbed time; everything else uses now (ui.sm)
   const astro::SunMoon v = tv == t ? ui.sm : astro::compute(tv, c.lat, c.lon, c.alt_m);
@@ -2295,7 +2300,7 @@ inline void draw_hud(double t) {
   // (or empty) status line, one at a time, each for ALERT_ROTATE_S
   aurora_update(t);
   Alert alerts[MAX_ALERTS];
-  const int n_alerts = (col == C_OK && !(notice_text[0] && t < notice_until)) ? collect_alerts(t, alerts, MAX_ALERTS) : 0;
+  const int n_alerts = (clock_valid() && col == C_OK && !(notice_text[0] && t < notice_until)) ? collect_alerts(t, alerts, MAX_ALERTS) : 0;
   const Alert *al = n_alerts ? &alerts[(int64_t) (t / ALERT_ROTATE_S) % n_alerts] : nullptr;
   if (alert_override)
     al = alert_override, col = C_OK;
@@ -2739,12 +2744,19 @@ inline void draw_list(double t) {
     emit(n, RK_CONST, "\xF3\xB0\xAB\xA2", "CON", K_CONST);  // star-four-points
   }
   static pvector<Row> sl_rows, sat_rows, geo_rows;  // (FAIL-13: kept, see rows_for)
+  // (a layer that is off clears its rows: they point into a list that is cleared or swapped away)
   if (ui.starlink_on)
     rows_for(live.starlink, t, sl_rows, starlink_min_el());  // UI-4: the cone only
+  else
+    sl_rows.clear();
   if (ui.sats_on || ui.meo_on || ui.debris_on)  // UI-35: debris is its own layer
     rows_for(live.sats, t, sat_rows, 0.0f);
+  else
+    sat_rows.clear();
   if (ui.geo_on)
     rows_for(live.geo, t, geo_rows, 0.0f);
+  else
+    geo_rows.clear();
   // UI-10: every object gets a row and the page scrolls; LIST_ROWS only guards memory
   const int room = LIST_ROWS - (int) rows.size();
   const int sat_n = (int) sat_rows.size(), geo_n = (int) geo_rows.size(), sl_n = (int) sl_rows.size();
@@ -3171,6 +3183,8 @@ constexpr double REPLAY_WINDOW_S = 15 * 60.0;
 inline void play(const net::DecayRec &d) {
   start(d);
 #ifndef SAT_HOST_TEST
+  if (s.timer)  // (a fireball already playing: its timer would have run on, orphaned, every 40 ms)
+    lv_timer_delete(s.timer);
   s.timer = lv_timer_create([](lv_timer_t *) { step(); }, 40, nullptr);
 #endif
   step();
@@ -7335,7 +7349,9 @@ inline void schedule(double t) {
     if (next <= t)
       next = t + period;  // fell behind (e.g. after an upload): don't burst
   };
-  if (net::link_up)
+  // (JOB_ELEMENTS waits for the clock too: do_elements stamps every "loaded" time with clock_now(), and a 1970 stamp
+  // made everything due again 5 min later, a second download of every CelesTrak group inside its 2 h window, 403, hold)
+  if (net::link_up && clock_valid())
     due(ui.next_elem, ELEM_PERIOD, JOB_ELEMENTS);
   if (!clock_valid())
     return;  // positions need the time
@@ -7704,11 +7720,15 @@ inline void run(const char *cmd) {
     ESP_LOGI(UI_TAG, "dbg: image button pressed; viewer %s, picture %s, text \"%s\"", sv.root ? "open" : "NOT open",
              sv.img && !lv_obj_has_flag(sv.img, LV_OBJ_FLAG_HIDDEN) ? "shown" : "hidden", sv.msg ? lv_label_get_text(sv.msg) : "");
   } else if (!strcmp(cmd, "reentry")) {  // the fireball now (the map must be showing: close, page sky)
-    net::DecayRec d;
-    d.id = (int32_t) lv_tick_get();
-    reentry_fx::s.on = false;
-    reentry_fx::play(d);
-    ESP_LOGI(UI_TAG, "dbg: re-entry fireball started");
+    if (!ui.ready || !ui.w.sky || ui.radius == 0) {
+      ESP_LOGW(UI_TAG, "dbg: no map yet, no fireball");
+    } else {
+      net::DecayRec d;
+      d.id = (int32_t) lv_tick_get();
+      reentry_fx::s.on = false;
+      reentry_fx::play(d);
+      ESP_LOGI(UI_TAG, "dbg: re-entry fireball started");
+    }
   } else if (!strcmp(cmd, "list")) {  // what the List page holds, by class (column 3)
     int n = 0, str = 0, pl = 0, con = 0, rows = ui.w.list ? (int) lv_table_get_row_count(ui.w.list) : 0;
     for (int r = 0; r < rows; r++) {
