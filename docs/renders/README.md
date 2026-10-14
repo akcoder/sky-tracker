@@ -10,7 +10,8 @@ Each is a GIF with a four-frame strip beside it (`make_anims.py`).
 |---|---|
 | ![launch](launch.gif)<br>**launch** ([strip](launch_strip.png))<br>A rocket flies across the sky view at lift-off, with the mission name. | ![splashdown](splashdown.gif)<br>**splashdown** ([strip](splashdown_strip.png))<br>A capsule comes down on parachutes into the sea at the bottom of the map. |
 | ![undocking](undocking.gif)<br>**undocking** ([strip](undocking_strip.png))<br>A spacecraft backs away from the ISS in a close-up of the station. | ![boot_launch](boot_launch.gif)<br>**boot_launch** ([strip](boot_launch_strip.png))<br>A launch over the boot screen while the device starts. |
-| ![reentry](reentry.gif)<br>**reentry** ([strip](reentry_strip.png))<br>A re-entering object streaks across the sky view as its estimated time passes. | ![about_meteor](about_meteor.gif)<br>**about_meteor** ([strip](about_meteor_strip.png))<br>A shooting star crosses the logo on the About page. |
+| ![docking](docking.gif)<br>**docking** ([strip](docking_strip.png))<br>A spacecraft comes in from above, braking, and docks at the ISS's forward port. | ![reentry](reentry.gif)<br>**reentry** ([strip](reentry_strip.png))<br>A re-entering object streaks across the sky view as its estimated time passes. |
+| ![about_meteor](about_meteor.gif)<br>**about_meteor** ([strip](about_meteor_strip.png))<br>A shooting star crosses the logo on the About page. | |
 
 ## Screens
 
@@ -27,7 +28,7 @@ Each is a GIF with a four-frame strip beside it (`make_anims.py`).
 | <img src="r14_rocket0.png" width="240"><br>**r14_rocket0**<br>The launch animation: a rocket lifts off at the bottom of the screen. | <img src="r14_rocket1.png" width="240"><br>**r14_rocket1**<br>The rocket climbing, with its exhaust trail. |
 | <img src="r14_rocket2.png" width="240"><br>**r14_rocket2**<br>The rocket higher up the sky view. | <img src="r14_rocket3.png" width="240"><br>**r14_rocket3**<br>The rocket leaving the screen at the top. |
 | <img src="r15_update_icon.png" width="240"><br>**r15_update_icon**<br>The download icon on the map when a newer firmware is waiting. | <img src="r16_event_alert.png" width="240"><br>**r16_event_alert**<br>An ISS undocking in the alert line. |
-| <img src="r16_event_details.png" width="240"><br>**r16_event_details**<br>The card for that undocking. | <img src="r16_launch_details.png" width="240"><br>**r16_launch_details**<br>The card for a coming launch: rocket, site, status and distance. |
+| <img src="r16_event_details.png" width="240"><br>**r16_event_details**<br>The card for that undocking, with the QR code to its webcast. | <img src="r16_launch_details.png" width="240"><br>**r16_launch_details**<br>The card for a coming launch: rocket, site, status and distance. |
 | <img src="r20_allsky.png" width="240"><br>**r20_allsky**<br>The Poker Flat all-sky camera, to see whether the aurora is up. | <img src="r21_countdown.png" width="240"><br>**r21_countdown**<br>The launch countdown with GO for launch and a QR code to the webcast. |
 | <img src="r21_countdown_hold.png" width="240"><br>**r21_countdown_hold**<br>The countdown when the launch is on HOLD. | <img src="r22_swx_alert.png" width="240"><br>**r22_swx_alert**<br>A NOAA storm watch in the alert line. |
 | <img src="r22_swx_card.png" width="240"><br>**r22_swx_card**<br>The space weather card with a Sky cam button. | <img src="r23_reentry_alert.png" width="240"><br>**r23_reentry_alert**<br>An object about to re-enter, in the alert line. |
