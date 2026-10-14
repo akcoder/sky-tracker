@@ -1519,8 +1519,15 @@ int main() {
           printf("event details: %s\n%s\n", lv_label_get_text(sat::ui.card_title), lv_label_get_text(sat::ui.card_body));
           CHECK(sat::ui.sel_kind == sat::K_INFO && strstr(lv_label_get_text(sat::ui.card_body), "SpaceX Crew-12 Crew Dragon Undocking") &&
                 strstr(lv_label_get_text(sat::ui.card_body), "International Space Station"), "event alert tap: details card");
-          CHECK(strstr(lv_label_get_text(sat::ui.card_body), "Scan to watch") && !lv_obj_has_flag(sat::ui.card_qr, LV_OBJ_FLAG_HIDDEN),
-                "event card: the webcast QR code (UI-80b)");
+          {  // UI-80b: the QR code, centred under the text
+            lv_obj_update_layout(sat::ui.card);
+            lv_area_t qa, ca;
+            lv_obj_get_coords(sat::ui.card_qr, &qa);
+            lv_obj_get_coords(sat::ui.card, &ca);
+            const int off = (qa.x1 + qa.x2) / 2 - (ca.x1 + ca.x2) / 2;
+            CHECK(!lv_obj_has_flag(sat::ui.card_qr, LV_OBJ_FLAG_HIDDEN) && std::abs(off) <= 2,
+                  "event card: the webcast QR code, centred (off by %d)", off);
+          }
           lv_obj_invalidate(lv_screen_active());
           lv_refr_now(disp);
           save_ppm(OUT_DIR "/renders/r16_event_details.ppm");

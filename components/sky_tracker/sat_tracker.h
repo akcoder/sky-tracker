@@ -5010,10 +5010,8 @@ inline void info_card_update(double t) {
           if (lv_qrcode_update(ui.card_qr, ui.card_qr_text, (uint32_t) strlen(ui.card_qr_text)) != LV_RESULT_OK)
             ui.card_qr_text[0] = 0;
         }
-        if (ui.card_qr_text[0]) {
-          snprintf(body + strlen(body), sizeof(body) - strlen(body), "\nScan to watch");
+        if (ui.card_qr_text[0])
           lv_obj_remove_flag(ui.card_qr, LV_OBJ_FLAG_HIDDEN);
-        }
       }
       break;
     }
@@ -7273,6 +7271,8 @@ inline void card_build() {
   lv_obj_set_style_pad_all(ui.card, 10, 0);
   lv_obj_set_style_pad_row(ui.card, 6, 0);
   lv_obj_set_flex_flow(ui.card, LV_FLEX_FLOW_COLUMN);
+  // (cross axis centred: the title and body are full width, so only the QR code (UI-80b) moves; the rest floats)
+  lv_obj_set_flex_align(ui.card, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
   lv_obj_remove_flag(ui.card, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_add_flag(ui.card, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN));
   lv_obj_add_event_cb(ui.card, card_click_cb, LV_EVENT_CLICKED, nullptr);
