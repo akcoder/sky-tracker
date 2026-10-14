@@ -1484,7 +1484,8 @@ int main() {
       char ej[1600], te1[32], te2[32], te3[32];
       iso(sat_host_now + 2 * 86400 + 3600, te1); iso(sat_host_now + 5 * 86400, te2); iso(sat_host_now + 26 * 3600, te3);
       snprintf(ej, sizeof(ej), "{\"count\":3,\"results\":["
-        "{\"name\":\"SpaceX Crew-12 Crew Dragon Undocking\",\"date\":\"%s\",\"type\":{\"id\":8,\"name\":\"Spacecraft Undocking\"},\"date_precision\":{\"abbrev\":\"MIN\"},\"location\":\"International Space Station\"},"
+        "{\"name\":\"SpaceX Crew-12 Crew Dragon Undocking\",\"date\":\"%s\",\"type\":{\"id\":8,\"name\":\"Spacecraft Undocking\"},\"date_precision\":{\"abbrev\":\"MIN\"},\"location\":\"International Space Station\","
+        "\"vid_urls\":[{\"priority\":11,\"url\":\"https://plus.nasa.gov/scheduled-video/crew-12-undocking/\"},{\"priority\":10,\"url\":\"https://www.youtube.com/watch?v=-jPQmjMWy9I\"}]},"
         "{\"name\":\"Far Away Docking\",\"date\":\"%s\",\"type\":{\"id\":2,\"name\":\"Docking\"},\"date_precision\":{\"abbrev\":\"MIN\"}},"
         "{\"name\":\"Vague Month Event\",\"date\":\"%s\",\"type\":{\"id\":16,\"name\":\"Orbital Insertion\"},\"date_precision\":{\"abbrev\":\"M\"}}]}",
         te1, te2, te3);
@@ -1493,6 +1494,8 @@ int main() {
       sat::net::do_events(sat_host_now);
       sat::tick();
       CHECK(sat::live.events.size() == 3, "events parsed (%zu)", sat::live.events.size());
+      CHECK(!strcmp(sat::live.events[1].watch, "https://www.youtube.com/watch?v=-jPQmjMWy9I"),  // (sorted by time: the undocking is second)
+            "event webcast: the best-ranked link (UI-80b): '%s'", sat::live.events[1].watch);
       const int n2 = sat::collect_alerts(sat_host_now, al, sat::MAX_ALERTS);
       bool und = false, far = false, vague = false;
       for (int i = 0; i < n2; i++) {
@@ -1516,6 +1519,8 @@ int main() {
           printf("event details: %s\n%s\n", lv_label_get_text(sat::ui.card_title), lv_label_get_text(sat::ui.card_body));
           CHECK(sat::ui.sel_kind == sat::K_INFO && strstr(lv_label_get_text(sat::ui.card_body), "SpaceX Crew-12 Crew Dragon Undocking") &&
                 strstr(lv_label_get_text(sat::ui.card_body), "International Space Station"), "event alert tap: details card");
+          CHECK(strstr(lv_label_get_text(sat::ui.card_body), "Scan to watch") && !lv_obj_has_flag(sat::ui.card_qr, LV_OBJ_FLAG_HIDDEN),
+                "event card: the webcast QR code (UI-80b)");
           lv_obj_invalidate(lv_screen_active());
           lv_refr_now(disp);
           save_ppm(OUT_DIR "/renders/r16_event_details.ppm");
@@ -2854,6 +2859,57 @@ int main() {
       CHECK(!rk::playing(), "undocking once");
       rk::play_undock_now();
       CHECK(rk::playing() && rk::st.undock, "undocking button");
+      rk::stop();
+      sat::live.events.clear();
+    }
+    {  // UI-69p docking at the ISS at its time
+      sat::live.events.clear();
+      sat::net::EventRec e;
+      snprintf(e.name, sizeof(e.name), "SpaceX CRS-35 Dragon Docking");
+      snprintf(e.type, sizeof(e.type), "Docking");
+      e.exact = true;
+      e.iss = true;
+      e.t = sat::clock_now() - 3;
+      sat::live.events.push_back(e);
+      rk::check();
+      CHECK(rk::playing() && rk::st.dock && rk::st.undock && !strcmp(lv_label_get_text(rk::st.label), "SpaceX CRS-35 Dragon Docking"),
+            "docking plays at its time");
+      const bool gif = getenv("DOCK_GIF") != nullptr;
+      if (gif) {
+        system("rm -rf " OUT_DIR "/dgif && mkdir -p " OUT_DIR "/dgif");
+        static sat::Alert da = {};
+        snprintf(da.text, sizeof(da.text), "SpaceX CRS-35 Dragon Docking now");
+        da.col = sat::C_EVENT;
+        da.glyph = "\xF3\xB1\x8E\x83";
+        da.kind = -1;
+        sat::alert_override = &da;
+        sat::draw_hud(sat_host_now);
+        rk::play_scene(false, e.name, false, false, true);
+      }
+      int frames = 0;
+      float x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+      rk::dock_capsule_at(0, x0, y0);
+      rk::dock_capsule_at(rk::DOCK_GO, x1, y1);
+      CHECK(y0 + rk::CAP_H < 0 && (int) y1 == rk::PORT_Y - rk::CAP_H && (int) x1 == rk::PORT_X - rk::CAP_W / 2,
+            "docking path: in from off the top, nose at the port at contact (%.0f,%.0f -> %.0f,%.0f)", x0, y0, x1, y1);
+      for (int f = 0; rk::playing() && f < 400; f++) {
+        sat_host_now += 0.033;
+        lv_refr_now(disp);
+        if (!rk::playing())
+          break;
+        frames++;
+        if (gif) {
+          char fn[80];
+          snprintf(fn, sizeof(fn), OUT_DIR "/dgif/f%03d.ppm", f);
+          save_ppm(fn);
+        }
+      }
+      sat::alert_override = nullptr;
+      CHECK(!rk::playing() && lv_obj_get_child_count(lv_layer_top()) == 0 && frames > 150, "docking ends and cleans up (%d frames)", frames);
+      rk::check();
+      CHECK(!rk::playing(), "docking once");
+      rk::play_dock_now();
+      CHECK(rk::playing() && rk::st.dock, "docking button");
       rk::stop();
       sat::live.events.clear();
     }

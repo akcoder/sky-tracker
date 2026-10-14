@@ -23,6 +23,7 @@ void init(const lv_font_t *banner);
 void set_enabled(bool on);
 void play_now();  // the button: the next launch's name (or a generic one)
 void play_undock_now();  // UI-69f button: the next ISS undocking's name (or a generic one)
+void play_dock_now();    // UI-69p button: the next ISS docking's name (or a generic one)
 bool active();    // playing now (sat::tick pauses, UI-69b)
 void set_last_fps(float fps);  // the dinosaur's walk (sky_dino.h) reports its rate here too
 float last_fps();  // PERF-17: the frame rate of the last animation played (NaN before the first)
@@ -105,6 +106,9 @@ constexpr int CAP_W = 26, CAP_H = 40;       // capsule image; its nose (bottom) 
 constexpr int PORT_X = 240, PORT_Y = 176;   // the forward port, top of the module stack
 constexpr float UNDOCK_S = 6.0f;            // the scene's length
 constexpr float UNDOCK_GO = 1.0f;           // docked until then, then the hooks let go
+// UI-69p docking: the undocking run backwards: the capsule comes in from the top, slowing, braking puffs at its nose,
+// contact at DOCK_GO (a burst as the hooks close), then it sits docked to the end
+constexpr float DOCK_S = 7.5f, DOCK_GO = 5.0f;
 // UI-69m splashdown: a capsule on four parachutes comes down over a band of ocean (drawn once,
 // clipped to the sky disc), splashes, lets the chutes go and bobs
 constexpr float SPLASH_S = 7.0f, SPLASH_HIT = 4.2f;  // the scene's length; when it meets the water
@@ -163,7 +167,9 @@ struct St {
   } prof;
   uint32_t played_key = 0;  // the last launch shown (name + T-0)
   // UI-69f
-  bool undock = false;      // the scene playing: false launch, true undocking
+  bool undock = false;      // the scene playing: false launch, true undocking (or docking: the same station and capsule)
+  bool dock = false;        // UI-69p: the docking
+  uint32_t dock_key = 0;    // the last docking shown
   bool boot = false;        // UI-69k on the boot screen (black page, no banner)
   lv_draw_buf_t *capsule_buf = nullptr;
   lv_obj_t *iss[ISS_PARTS] = {};
@@ -696,6 +702,12 @@ inline void capsule_at(float ts, float &x, float &y) {
   x = PORT_X - CAP_W / 2 + 3.0f * u * u;            // drifts a little to the side
   y = PORT_Y - CAP_H - (4.0f * u + 9.0f * u * u);   // backs away, gathering speed
 }
+// a thruster puff (undocking and docking): an opaque disc fading toward the sky colour
+inline void puff_emit(float ts, float px, float py) {
+  const int i = st.puff_next++ % PUFFS;
+  st.puff_x[i] = px, st.puff_y[i] = py, st.puff_t[i] = ts, st.puff_step[i] = -1;
+}
+inline void puffs_step(float ts);
 inline void frame_undock() {
   const float ts = (now_ms() - st.t0) / 1000.0f;
   if (ts > UNDOCK_S) {
@@ -706,10 +718,7 @@ inline void frame_undock() {
   capsule_at(ts, x, y);
   lv_obj_set_pos(st.img, (int32_t) std::lround(x), (int32_t) std::lround(y));
   // thruster puffs: a burst of four at separation, then a pair every half second for 2 s
-  auto emit = [&](float px, float py) {
-    const int i = st.puff_next++ % PUFFS;
-    st.puff_x[i] = px, st.puff_y[i] = py, st.puff_t[i] = ts, st.puff_step[i] = -1;
-  };
+  auto emit = [&](float px, float py) { puff_emit(ts, px, py); };
   const int due = ts < UNDOCK_GO ? 0 : 1 + std::min(4, (int) ((ts - UNDOCK_GO) / 0.5f));
   while (st.last_emit < due) {  // last_emit counts bursts here
     st.last_emit += 1;
@@ -718,6 +727,41 @@ inline void frame_undock() {
     if (st.last_emit == 1)
       emit(x + 4, y + CAP_H), emit(x + CAP_W - 4, y + CAP_H);
   }
+  puffs_step(ts);
+}
+// UI-69p: the capsule's top-left at ts seconds into the docking: the undocking path run backwards, so it slows as it
+// nears the port (4 + 18u px/s, u the seconds to contact) and is off the top of the screen 5 s out
+inline void dock_capsule_at(float ts, float &x, float &y) {
+  const float u = std::max(0.0f, DOCK_GO - ts);
+  x = PORT_X - CAP_W / 2 + 3.0f * u * u;
+  y = PORT_Y - CAP_H - (4.0f * u + 9.0f * u * u);
+}
+inline void frame_dock() {
+  const float ts = (now_ms() - st.t0) / 1000.0f;
+  if (ts > DOCK_S) {
+    stop();
+    return;
+  }
+  float x, y;
+  dock_capsule_at(ts, x, y);
+  lv_obj_set_pos(st.img, (int32_t) std::lround(x), (int32_t) std::lround(y));
+  // braking puffs at the nose every 0.6 s on the way in; at contact a burst of four as the hooks close
+  auto emit = [&](float px, float py) { puff_emit(ts, px, py); };
+  const int in_due = 1 + (int) (std::min(ts, DOCK_GO) / 0.6f);
+  const int due = ts < DOCK_GO ? in_due : in_due + 1;
+  while (st.last_emit < due) {
+    st.last_emit += 1;
+    const float ny = y + CAP_H;  // the nose
+    if (st.last_emit < due || ts < DOCK_GO) {
+      emit(x + 4, ny + 3), emit(x + CAP_W - 4, ny + 3);
+    } else {
+      emit(x - 2, ny - 8), emit(x + CAP_W + 2, ny - 8);
+      emit(x + 4, ny), emit(x + CAP_W - 4, ny);
+    }
+  }
+  puffs_step(ts);
+}
+inline void puffs_step(float ts) {
   for (int i = 0; i < PUFFS && i < st.puff_next; i++) {
     const int step = (int) ((ts - st.puff_t[i]) / 0.06f);
     if (step == st.puff_step[i])
@@ -947,6 +991,8 @@ inline void frame() {
   st.last_frame = now_ms();
   if (st.splash)
     frame_splash();
+  else if (st.dock)
+    frame_dock();
   else if (st.undock)
     frame_undock();
   else
@@ -1023,11 +1069,13 @@ inline void banner_text(const char *name, char *b, size_t n) {
 }
 
 // false when nothing plays (the pictures are not drawn yet, UI-69n): the caller may ask again
-inline bool play_scene(bool undock, const char *name, bool boot = false, bool splash = false) {
+inline bool play_scene(bool undock, const char *name, bool boot = false, bool splash = false, bool dock = false) {
   stop();
-  if (!pics_ready || !st.img_buf[0] || (undock && !st.capsule_buf) || (splash && (!st.sea_buf || !st.cap2_buf || !st.chute_buf)))
+  if (!pics_ready || !st.img_buf[0] || ((undock || dock) && !st.capsule_buf) ||
+      (splash && (!st.sea_buf || !st.cap2_buf || !st.chute_buf)))
     return false;
-  st.undock = undock && !splash;
+  st.dock = dock && !splash;
+  st.undock = (undock || dock) && !splash;  // (the docking is the undocking's station and capsule)
   st.splash = splash;
   st.splashed = false;
   undock = st.undock;
@@ -1126,7 +1174,7 @@ inline bool play_scene(bool undock, const char *name, bool boot = false, bool sp
     lv_obj_set_width(st.label, 336);
     lv_label_set_long_mode(st.label, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_style_text_align(st.label, LV_TEXT_ALIGN_CENTER, 0);
-    banner_text(name && *name ? name : splash ? "Splashdown" : undock ? "Undocking from the ISS" : "Rocket launch", b, sizeof(b));
+    banner_text(name && *name ? name : splash ? "Splashdown" : st.dock ? "Docking at the ISS" : undock ? "Undocking from the ISS" : "Rocket launch", b, sizeof(b));
     lv_label_set_text(st.label, b);
     // A long name wraps to two lines (no more: dots after that); the banner grows upward to hold
     // them, its bottom staying put (a fixed 46 px banner let the second line spill over the
@@ -1172,7 +1220,7 @@ inline bool play_scene(bool undock, const char *name, bool boot = false, bool sp
       },
       40, nullptr);
   frame();
-  ESP_LOGI("rocket", "%s animation: %s", splash ? "splashdown" : undock ? "undocking" : st.boot ? "boot" : "launch", b);
+  ESP_LOGI("rocket", "%s animation: %s", splash ? "splashdown" : st.dock ? "docking" : undock ? "undocking" : st.boot ? "boot" : "launch", b);
   return true;
 }
 inline bool play(const char *name) { return play_scene(false, name); }
@@ -1370,7 +1418,8 @@ inline void check() {
     return;
   const double t = clock_now();
   for (const auto &l : live.launches) {
-    if (!launch_pending(l) || l.net > t || t - l.net > LATE_S)
+    // (not on a hold or an unconfirmed time: the T-0 then is not a liftoff)
+    if (!launch_pending(l) || !strcmp(l.status, "Hold") || !strcmp(l.status, "TBD") || l.net > t || t - l.net > LATE_S)
       continue;
     const uint32_t k = key_of(l.name, l.net);
     if (k == st.played_key)
@@ -1387,6 +1436,16 @@ inline void check() {
       continue;
     if (play_scene(true, e.name))
       st.undock_key = k;
+    return;
+  }
+  for (const auto &e : live.events) {  // UI-69p: a capsule arriving
+    if (!net::event_docking(e) || e.t > t || t - e.t > LATE_S)
+      continue;
+    const uint32_t k = key_of(e.name, e.t);
+    if (k == st.dock_key)
+      continue;
+    if (play_scene(false, e.name, false, false, true))
+      st.dock_key = k;
     return;
   }
   for (const auto &e : live.events) {  // UI-69m: a capsule coming home
@@ -1520,6 +1579,15 @@ void play_undock_now() {
       return;
     }
   play_scene(true, "Undocking from the ISS");
+}
+void play_dock_now() {  // UI-69p
+  const double t = clock_valid() ? clock_now() : 0;
+  for (const auto &e : live.events)
+    if (net::event_docking(e) && e.t > t - LATE_S) {
+      play_scene(false, e.name, false, false, true);
+      return;
+    }
+  play_scene(false, "Docking at the ISS", false, false, true);
 }
 void play_now() {
   const double t = clock_valid() ? clock_now() : 0;

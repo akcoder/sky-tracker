@@ -392,6 +392,8 @@ struct Ui {
   lv_obj_t *card_flag = nullptr;  // UI-34: owner flag after the country code
   lv_obj_t *card_img_btn = nullptr, *card_img_lbl = nullptr;  // UI-59/60: "Sun image" / "Moon image", bottom left
   lv_obj_t *card_moon = nullptr;  // UI-36: phase picture on the Moon card (UI-46a: or a constellation figure)
+  lv_obj_t *card_qr = nullptr;    // UI-80b: a space event's webcast link, under the text of its card
+  char card_qr_text[100] = "";    // what it encodes
   float moon_drawn_k = -1;         // phase last drawn into card_moon (-1: something else is there)
   int fig_drawn = -1;              // UI-46a: constellation figure last drawn into card_moon
   float decl = 0, maglat = 0;     // HW-9a declination, UI-37 geomagnetic latitude (degrees)
@@ -2903,6 +2905,7 @@ inline void draw_trail(lv_layer_t *layer, const lv_area_t &clip, int ox, int oy,
 // empty sky closes the card; with no card open it flips the page as before (UI-2).
 constexpr int TAP_R = 22;          // px: how near a tap must land
 constexpr double CARD_TIMEOUT_S = 90;
+constexpr int CARD_QR_PX = 120;  // UI-80b: the event card's QR code (3 px a module for a YouTube link, as UI-80)
 
 // UI-28: project the GEO list to dots (on fresh GEO data and when the view changes).
 inline void geo_project(double t) {
@@ -5001,6 +5004,17 @@ inline void info_card_update(double t) {
       snprintf(body, sizeof(body), "%s\n%s %s%s%s%s", e.name, d0, h0, e.t > t ? " (in " : " (now", e.t > t ? cd : "", ")");
       if (e.iss)
         snprintf(body + strlen(body), sizeof(body) - strlen(body), "\nAt the International Space Station");
+      if (e.watch[0] && ui.card_qr) {  // UI-80b: its webcast (a press event, a docking...), to open on a phone
+        if (strcmp(ui.card_qr_text, e.watch) != 0) {
+          net::copy_cstr(ui.card_qr_text, sizeof(ui.card_qr_text), e.watch);
+          if (lv_qrcode_update(ui.card_qr, ui.card_qr_text, (uint32_t) strlen(ui.card_qr_text)) != LV_RESULT_OK)
+            ui.card_qr_text[0] = 0;
+        }
+        if (ui.card_qr_text[0]) {
+          snprintf(body + strlen(body), sizeof(body) - strlen(body), "\nScan to watch");
+          lv_obj_remove_flag(ui.card_qr, LV_OBJ_FLAG_HIDDEN);
+        }
+      }
       break;
     }
     case AI_AURORA:
@@ -6927,6 +6941,8 @@ inline void select_object(int kind, int32_t id) {
   lv_obj_set_style_text_color(ui.card_title, lv_color_hex(col), 0);
   if (ui.card_icon)
     lv_obj_set_style_text_color(ui.card_icon, lv_color_hex(col), 0);
+  if (ui.card_qr)  // UI-80b: only an event's card shows one (info_card_update)
+    lv_obj_add_flag(ui.card_qr, LV_OBJ_FLAG_HIDDEN);
   lv_obj_remove_flag(ui.card, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(ui.card);
   card_update(ui.sel_since);
@@ -7292,6 +7308,13 @@ inline void card_build() {
   lv_obj_set_style_text_line_space(ui.card_body, 3, 0);
   lv_obj_set_width(ui.card_body, lv_pct(100));  // UI-40a: the planet story wraps
   lv_label_set_long_mode(ui.card_body, LV_LABEL_LONG_WRAP);
+  // UI-80b: the next row of the column, a QR code to a space event's webcast (as the countdown's, UI-80)
+  ui.card_qr = lv_qrcode_create(ui.card);
+  lv_qrcode_set_size(ui.card_qr, CARD_QR_PX);
+  lv_qrcode_set_dark_color(ui.card_qr, lv_color_hex(0x000000));
+  lv_qrcode_set_light_color(ui.card_qr, lv_color_hex(0xFFFFFF));
+  lv_obj_remove_flag(ui.card_qr, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+  lv_obj_add_flag(ui.card_qr, LV_OBJ_FLAG_HIDDEN);
   // UI-57: "Find" at the bottom right of every card
   lv_obj_set_style_pad_bottom(ui.card, 52, 0);
   lv_obj_t *fb = lv_button_create(ui.card);

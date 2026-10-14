@@ -38,7 +38,7 @@ pictures you ask for.
   with RocketLaunch.Live as a backup. Ten minutes out, a full-screen countdown
   shows the mission, GO or HOLD, and whether the webcast is live. At lift-off a
   cartoon rocket flies across the screen with the mission name (tap to skip, or
-  turn it off with the Launch Animation switch); ISS undockings and splashdowns
+  turn it off with the Launch Animation switch); ISS dockings, undockings and splashdowns
   get their own animations:
 
   ![Launch animation](docs/renders/launch.gif)

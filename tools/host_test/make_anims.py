@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # docs/renders: every device animation as a GIF and a four-frame strip, from the frames ./t4 writes
-# when run with the animation flags (ROCKET_GIF SPLASH_GIF UNDOCK_GIF BOOT_GIF ABOUT_GIF REENTRY_GIF):
-#   ROCKET_GIF=1 SPLASH_GIF=1 UNDOCK_GIF=1 BOOT_GIF=1 ABOUT_GIF=1 REENTRY_GIF=1 ./t4 && ./make_anims.py
+# when run with the animation flags (ROCKET_GIF SPLASH_GIF UNDOCK_GIF DOCK_GIF BOOT_GIF ABOUT_GIF REENTRY_GIF):
+#   ROCKET_GIF=1 SPLASH_GIF=1 UNDOCK_GIF=1 DOCK_GIF=1 BOOT_GIF=1 ABOUT_GIF=1 REENTRY_GIF=1 ./t4 && ./make_anims.py
 import glob, os
 from PIL import Image, ImageChops
 
@@ -20,6 +20,7 @@ ANIMS = [
     ("launch", "rgif", 2, 60, 96, (0.15, 0.35, 0.55, 0.8), None, FULL),          # UI-69: lift-off over the map
     ("splashdown", "sgif", 2, 60, 128, (0.2, 0.5, 0.62, 0.85), None, FULL),      # UI-69m
     ("undocking", "ugif", 3, 60, 128, (0.15, 0.4, 0.65, 0.9), (990, 790), FULL),  # UI-69f
+    ("docking", "dgif", 3, 60, 128, (0.1, 0.35, 0.6, 0.85), (600, 990), FULL),     # UI-69p
     ("boot_launch", "bgif", 2, 66, 128, (0.1, 0.35, 0.6, 0.85), None, FULL),     # UI-69k: a launch over the boot screen
     ("about_meteor", "agif", 3, 100, 96, "active", None, (0, 40, 270, 170)),      # UI-67a: the shooting star over the logo
     ("reentry", "fgif", 1, 40, 128, (0.15, 0.4, 0.6, 0.85), None, FULL),          # UI-79: the re-entry fireball

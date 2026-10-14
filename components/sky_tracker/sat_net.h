@@ -301,7 +301,12 @@ struct EventRec {
   bool exact = false;     // time known to the hour or better
   bool iss = false;       // UI-69f: at the International Space Station (its "location")
   char cc[4] = "";        // UI-54d: the spacecraft's country, from its name (Dragon -> USA...)
+  char watch[100] = "";   // UI-80b: where to watch it (the best-ranked of its video links), for the card's QR code
 };
+// UI-69p: an exact-time docking at the ISS (not an undocking: "Docking" is not in "Undocking")
+inline bool event_docking(const EventRec &e) {
+  return e.iss && e.exact && strstr(e.type, "Docking") != nullptr && strstr(e.type, "Undocking") == nullptr;
+}
 // UI-73: NOAA SWPC space weather (products/alerts.json): the newest notice of each kind that
 // is still current
 enum SwxKind : uint8_t { SWX_WATCH = 0, SWX_STORM = 1, SWX_WARN = 2, SWX_FLARE = 3, SWX_PROTON = 4, SWX_KINDS = 5 };
@@ -1970,14 +1975,15 @@ inline void launches_publish(pvector<LaunchRec> &out, double now, const char *sr
   }
   std::sort(out.begin(), out.end(), [](const LaunchRec &a, const LaunchRec &b) { return a.net < b.net; });
   launch_next = now + LAUNCH_EVERY_S;
-  // UI-76: in the last 90 min before a launch (and just after it) every 15 min, the last 20 min
-  // every 10, so the countdown follows holds and scrubs (Launch Library allows 15 calls an hour)
+  // UI-76: in the last 90 min before a launch every 15 min, from 30 min before to 10 min after every 5, so the
+  // countdown and the T-0 scene follow holds, scrubs and a T-0 moved inside the window (SpaceX picks a Starlink
+  // T-0 minutes before: a 22 min move was missed at 10-min polling). 12 calls an hour of Launch Library's 15.
   for (const LaunchRec &l : out) {  // (not when it was refused and the backup filled in)
     if (strcmp(src, "Launch Library") != 0)
       break;
     const double dt = l.net - now;
     if (dt > -20 * 60.0 && dt < 90 * 60.0)
-      launch_next = std::min(launch_next, now + (dt > 0 && dt < 20 * 60.0 ? 600.0 : 900.0));
+      launch_next = std::min(launch_next, now + (dt > -10 * 60.0 && dt < 30 * 60.0 ? 300.0 : 900.0));
   }
   ESP_LOGI(TAG, "launches: %u upcoming (%s)", (unsigned) out.size(), src);
   launch_cache_save(out, now);
@@ -2221,6 +2227,8 @@ inline void do_events(double now) {
   f["type"]["name"] = true;
   f["date_precision"]["abbrev"] = true;
   f["location"] = true;  // a plain string in list mode: "International Space Station"
+  f["vid_urls"][0]["url"] = true;  // UI-80b
+  f["vid_urls"][0]["priority"] = true;
   JsonDocument doc(&psram_alloc);
   if (const DeserializationError de = deserializeJson(doc, buf, (size_t) len, DeserializationOption::Filter(filter),
                                                      DeserializationOption::NestingLimit(24))) {
@@ -2238,10 +2246,26 @@ inline void do_events(double now) {
       continue;
     const char *pr = r["date_precision"]["abbrev"] | "";
     e.exact = !strcmp(pr, "SEC") || !strcmp(pr, "MIN") || !strcmp(pr, "HR") || !*pr;
+    int best = INT_MAX;  // UI-80b: as the launches (UI-80), the lowest priority number first
+    for (JsonObject v : r["vid_urls"].as<JsonArray>()) {
+      const char *u = v["url"] | "";
+      const int pr_ = v["priority"] | 1000;
+      if (strncmp(u, "https://", 8) == 0 && strlen(u) < sizeof(e.watch) && pr_ < best) {
+        best = pr_;
+        copy_cstr(e.watch, sizeof(e.watch), u);
+      }
+    }
     out.push_back(e);
   }
   std::sort(out.begin(), out.end(), [](const EventRec &a, const EventRec &b) { return a.t < b.t; });
   event_next = now + EVENT_EVERY_S;
+  // UI-69p: a docking or undocking slips by minutes on the day: in the hour before one (and 20 min after) the list is
+  // fetched every 20 min, so the scene plays at the time last given (3 calls an hour of Launch Library's 15)
+  for (const EventRec &e : out) {
+    const double dt = e.t - now;
+    if (e.iss && e.exact && strstr(e.type, "ocking") && dt > -20 * 60.0 && dt < 60 * 60.0)
+      event_next = std::min(event_next, now + 20 * 60.0);
+  }
   ESP_LOGI(TAG, "events: %u upcoming", (unsigned) out.size());
   event_cache_save(out, now);
   events_publish(out);

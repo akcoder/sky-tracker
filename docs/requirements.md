@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.43 (unreleased): docking animation: at the time of a Launch Library docking at the ISS the capsule comes in from the top, slowing, braking puffs at its nose, and docks at the forward port with a burst as the hooks close (UI-69p; Play Docking Animation button in the web Animations group and HA); a docking or undocking within the hour has its list fetched every 20 min, so the scene plays at the time last given; a launch's list is fetched every 5 min from 30 min before to 10 min after T-0 (a Starlink T-0 moved 22 min inside its window was missed at 10-min polling; UI-76), and the T-0 scene does not play on a Hold or an unconfirmed (TBD) time; a space event's details card (a press conference, a docking...) carries a QR code to its webcast, "Scan to watch" (UI-80b).
 - 4.6.42 (released): the built-in time zone is Alaska on every build (with none set, ESPHome baked in the build machine's zone: UTC on GitHub's builds, Alaska on a local one, so "Auto (from HA)" differed between the two before Home Assistant's first sync; UI-70); the GPS edge counter of HW-8a runs (its interrupt was never installed: the debug page showed "?" edges/s and the baud auto-detect saw only UART bytes); the element downloads wait for the clock (a 1970 "loaded" stamp made every CelesTrak group due again 5 min later, inside its 2 h window: 403 and a 2 h hold, again at the next boot); a failed internet install no longer leaves the data task deaf to the jobs that were queued at the time (their ARCH-4 bits stayed set: satellite and ISS positions stopped updating until a reboot); the satellite pass keeps its seen-id sets in PSRAM, reserved once (three hash maps in internal RAM, up to ~20 KB during the GEO download, with ~20 KB free); the List drops the rows of a layer that is switched off (they stayed, frozen, pointing into a cleared list); no Sun or Moon on the map, and no alerts, before the clock is set (they sat at their 1970-01-01 places); the firmware check or install stops a download in progress and only one request waits at a time (NET-14: an Install tapped during a Starlink download opened a second TLS session and failed); a launch, undocking or splashdown at T-0 in the first seconds after boot plays once the pictures are drawn (it was marked played and skipped); a `reentry` debug command before the map exists is refused, and a second fireball no longer leaves the first one's 40 ms timer running; the update card's version search frees its 4 KB buffer; tools/mkbl.py refuses to write when the git source block is not found; tracker-common v0.4.5 (the checkout the host tests use); closing the picture viewer shows what the map wants shown now, not what it showed when the viewer opened (the alert icon came back doubled after a long view spanning a glyph-to-picture change; a scrub that timed out under the viewer had its panel back with scrubbing off).
 - 4.6.41 (released): touch a planet's, the Sun's or the Moon's picture for its fact card: when it was found and by whom, what it is named for, and some facts, for all nine planets, the Sun and the Moon (UI-84); the Planets tab's picture and captions sit centred between the buttons and the strip, Mars, Jupiter and Saturn are larger, the Blue Marble shows its whole disc as large as the GOES picture, and the strip has photos of Mercury, Venus, Mars and Jupiter (Saturn keeps its drawn icon); Tonight's phase has a larger hit zone (its label too); the viewer's UAF tab is named Alaska and has a strip of two chips with a gap, Poker Flat's all-sky camera and NOAA's picture of the region (the Globe | region buttons on the Earth tab, hard to hit, are gone); the card's Image and Find buttons have a larger hit zone; the List page has its STR, PL and CON rows on first load (it is rebuilt when it opens, when the stars first show and when a planet rises or sets); no "Quadrantids peak today" alert while the clock is not set yet; a re-entry's fireball plays for up to 15 minutes after its estimate (it was 2), and not under the picture viewer, with a debug command to play one (reentry); the dinosaur button has an icon and sets Last Animation FPS; every top-row Cancel, Save and Close button starts at y=10 on all screens.
 - 4.6.40 (released): every button in a screen's top row starts at y=10 (their tops sat on the panel's edge); the Moon picture shows again (NASA now names it with an http:// address, which was refused as "NASA sent no picture"; the same address over https is used); the web page has an Animations section with the Play ... Animation buttons, now including the dinosaur; touching the logo on the About page makes a dinosaur walk across the screen (UI-83); the Earth tab shows its picture as it arrives, over the Blue Marble; the picture viewer's tab row is 4 px lower; the loading screen appears sooner (the boot log is 45 lines, not 600: PERF-23); the launch smoke trail has no gap where a slow frame crossed (the map's first draw); the Earth tab shows the Blue Marble until its first picture is in, its progress in the caption, and every picture of the Planets tab is made at its size (nothing scaled on the device); the screen no longer freezes for ~1 s every 10 s at night with an aurora forecast, and the picture viewer redraws in ~10 ms instead of ~1 s (the aurora glow is a picture; the map is hidden under the viewer; PERF-21/22), with screen-drawing numbers and debug commands over the network (PERF-19/20); no meteor radiant (the Quadrantids) on the first map before the clock is set; Uranus, Neptune and Pluto are in the Planets strip, as pictures only (UI-59b); the web page's logo tooltip shows "Sky Tracker <version>" instead of the web UI's own 3.0.0 (tracker-common v0.4.4); the picture viewer's tabs are Sun, Moon, Planets and UAF; Planets shows Earth, Mercury, Venus, Mars, Jupiter and Saturn with a strip to switch between them (UI-59b); the console log runs at 230400 baud (a log line at 115200 held the calling task ~9 ms: screens stalled while they logged); the Auto Brightness switch is tracker-common's (v0.4.3, identical); the splashdown's canopies settle as rounded heaps, not flat sheets (UI-69m); no fixed time zone in the firmware (the board package's UTC had overridden Home Assistant's), and the time zone picker defaults to Alaska (UI-70); the board setup (panel, touch, backlight at 30 kHz, Wi-Fi, time, safe mode, the three install paths on one card, the Backlight number) is tracker-common's v0.4.2 package, with our own memory and network settings kept and no BLE; the console log is on UART0; page and section titles are in sentence case ("About", "This device", "Display", "List", "Sky Tracker", "Launch countdown"), not all capitals; re-entry uncertainty is written with the plus-minus sign instead of "+/-" (UI-74); the update card is tracker-common's (v0.3.0), shared with f1-tracker; the web page patch (tab icon, header badge, logo link) is tracker-common's and runs when the page is served, not at build time; the panel soft reset (HW-7) and the Wi-Fi status page logic (NET-2b; also fixes the offline timer for even clock ticks) are tracker-common's; the Sun maths and the About text are tracker-common's too; the JPEG and PNG decoders are tracker-common's (shared with f1-tracker), with one shared work buffer (8 KB less internal RAM); the picture viewer's All-sky tab is named UAF; each re-entry on its card shows the launch year (UI-74); the update prompt's release notes use the 16 px font (they were blurry at 12 px).
@@ -743,9 +744,12 @@ UI-76  Launch countdown (sky_rocket.h): from T-10 min to liftoff a full-screen c
        (0xFFC46B), Launch Library's status (GO for launch / HOLD / Time to be confirmed), the local
        liftoff time and a red "WEBCAST LIVE" pill (LL2 webcast_live). Updated 5 times a second;
        closes at T-0 (the launch animation, UI-69, then plays), on a slip past the window or a
-       scrub; a tap puts it away for that launch. Not for "TBD" times. In the last 90 min (and 20
-       min after) the launch list is fetched every 15 min, the last 20 min every 10 (Launch
-       Library only). Switch Launch Countdown (on). Comp: docs/comps/launch_countdown.png.
+       scrub; a tap puts it away for that launch. Not for "TBD" times. In the last 90 min the
+       launch list is fetched every 15 min, from 30 min before to 10 min after T-0 every 5 (Launch
+       Library only; 12 of its 15 calls an hour), so a T-0 moved inside the window is followed (a
+       Starlink T-0 moved 22 min at 10-min polling was missed, 4.6.42). The T-0 scene (UI-69) does
+       not play while the status is Hold or TBD. Switch Launch Countdown (on). Comp:
+       docs/comps/launch_countdown.png.
 UI-77  On this day (sky_history.h, 108 built-in events, in sky_extra.cpp): the event for the local
        date, shown in the alert rotation for 10 minutes in every 30 ("This day in 1957: Sputnik 1,
        the first artificial satellite, is launched"), mdi:calendar-star in 0xC5B3F0; its card
@@ -771,6 +775,10 @@ UI-80  Webcast QR code: while the countdown (UI-76) shows "WEBCAST LIVE", a QR c
        none: no code). LVGL's QR code (lv_qrcode, CONFIG_LV_USE_QRCODE; error correction M,
        the version picked to fit the link), black on white with its quiet zone, 130 px square.
        Checked against a QR decoder.
+UI-80b Event webcast: a space event's details card (UI-54c: a press conference, a docking, an
+       EVA...) ends with "Scan to watch" and a 120 px QR code (the same lv_qrcode, black on
+       white) to the best-ranked https link of the event's vid_urls, as the next row of the
+       card's column under the text; none: no code. Only an event's card shows one.
 UI-83  A dinosaur on the About page: touching the Sky Tracker logo there makes a green dinosaur walk
        across the screen, stop, and roar a word in a speech bubble (2-3 s), then walk on and leave; a touch
        ends it. The art, walk and drawing code are copied from f1-tracker (its own random walk is f1's);
@@ -892,7 +900,9 @@ UI-54b Backup source: when Launch Library fails (HTTP 429, or no answer), Rocket
        Spaceport/Kodiak, Mahia, Baikonur, Jiuquan, ...) for the nearby alert and bearing.
        Credited on the About page and in the README.
 UI-54c Space events: Launch Library 2 events/upcoming (limit 10, list mode) every 6 h, kept in
-       flash (skydata sector 0x0F2000, as UI-54a): name, type, date, date precision. Alerts
+       flash (skydata sector 0x0F2000, as UI-54a): name, type, date, date precision, the best
+       video link (UI-80b). Within the hour before an ISS docking or undocking, and 20 min after,
+       every 20 min instead (UI-69p; 3 of Launch Library's 15 calls an hour). Alerts
        (Sky event switch, space-station icon, 0x8FD3FF) for events with a time known to the
        hour or better within 3 days, up to two: "SpaceX Crew-12 Crew Dragon Undocking in
        2d 1h", "... now" for 10 min after.
@@ -1189,6 +1199,17 @@ UI-69f Undocking animation: at the time of a Launch Library event whose type con
        the screen; 6 s in all. Same banner, tap to skip, Launch Animation switch and frame log.
        Play Undocking Animation button (web Animations group, weight 8, and HA): the next ISS
        undocking's name, or "Undocking from the ISS".
+UI-69p Docking animation: at the time of a Launch Library event whose type is "Docking" (not
+       "Undocking") at the International Space Station (exact times only, within 2 min after),
+       once per event: the same station and capsule as UI-69f, run the other way. The capsule
+       comes in from off the top of the screen along the undocking's path reversed (x = port -
+       13 + 3u^2, y = port - 40 - (4u + 9u^2), u the seconds to contact, so 4 + 18u px/s: fast
+       far out, 4 px/s at the port), a pair of braking puffs at its nose every 0.6 s on the way
+       in; contact at 5 s with a burst of four as the hooks close; it sits docked to 7.5 s. Banner
+       "Docking at the ISS" (or the event's name), tap to skip, Launch Animation switch, frame
+       log. Play Docking Animation button (web Animations group, weight 9, and HA; Splashdown 10,
+       Dinosaur 11). Accuracy: a docking or undocking slips by minutes on the day, so within the
+       hour before one (and 20 min after) the events list is fetched every 20 min (UI-54c).
 UI-69g Frame profile, logged at INFO after each animation: per refresh, average and maximum of
        the refresh itself (LV_EVENT_REFR_START to REFR_READY) and its flush part (FLUSH_START to
        FLUSH_FINISH, with the number of flushed chunks), the main-loop time between refreshes,
