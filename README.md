@@ -58,7 +58,7 @@ pictures you ask for.
 - Optional GPS (ATGM336H or anything that speaks 9600-baud NMEA): GPS TX to
   GPIO42 (module pin 35), plus 3.3 V and ground.
 - Optional compass (GY-271 with a QMC5883L, QMC5883P or HMC5883L): SDA to GPIO1,
-  SCL to GPIO2 (the relay 3 and relay 2 pads).
+  SCL to GPIO2 (the relay 3 and relay 2 pads): [wiring diagram](docs/wiring_compass.svg).
 - Optional microSD card in the TF slot, for installing firmware without a
   network.
 

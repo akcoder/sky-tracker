@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="540" viewBox="0 0 1000 540" font-family="Helvetica, Arial, sans-serif" font-size="14">
+  <rect width="1000" height="540" fill="#fafafa"/>
+  <text x="500" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#222">Sky Tracker: compass module wiring (HW-9)</text>
+
+  <!-- board -->
+  <rect x="40" y="70" width="380" height="300" rx="10" fill="#e8f0e8" stroke="#3a6" stroke-width="2"/>
+  <text x="230" y="98" text-anchor="middle" font-weight="bold" fill="#222">Guition ESP32-4848S040</text>
+  <text x="230" y="118" text-anchor="middle" fill="#444">version without relays</text>
+  <text x="230" y="136" text-anchor="middle" fill="#444">the unused relay pads</text>
+
+  <!-- board pads -->
+  <g font-family="Menlo, Consolas, monospace" font-size="14">
+    <circle cx="400" cy="180" r="6" fill="#c33"/>
+    <text x="386" y="185" text-anchor="end" fill="#222">3.3 V</text>
+    <circle cx="400" cy="220" r="6" fill="#333"/>
+    <text x="386" y="225" text-anchor="end" fill="#222">GND</text>
+    <circle cx="400" cy="260" r="6" fill="#27c"/>
+    <text x="386" y="265" text-anchor="end" fill="#222">GPIO2  (relay 2 pad)</text>
+    <circle cx="400" cy="300" r="6" fill="#2a8"/>
+    <text x="386" y="305" text-anchor="end" fill="#222">GPIO1  (relay 3 pad)</text>
+  </g>
+
+  <!-- module -->
+  <rect x="640" y="120" width="320" height="250" rx="10" fill="#e8ecf6" stroke="#36a" stroke-width="2"/>
+  <text x="800" y="148" text-anchor="middle" font-weight="bold" fill="#222">GY-271 compass board</text>
+  <text x="800" y="166" text-anchor="middle" fill="#444">QMC5883L, QMC5883P or HMC5883L</text>
+
+  <g font-family="Menlo, Consolas, monospace" font-size="14">
+    <circle cx="650" cy="180" r="6" fill="#c33"/>
+    <text x="666" y="185" fill="#222">VCC   (3 - 5 V)</text>
+    <circle cx="650" cy="220" r="6" fill="#333"/>
+    <text x="666" y="225" fill="#222">GND</text>
+    <circle cx="650" cy="260" r="6" fill="#27c"/>
+    <text x="666" y="265" fill="#222">SCL</text>
+    <circle cx="650" cy="300" r="6" fill="#2a8"/>
+    <text x="666" y="305" fill="#222">SDA</text>
+    <circle cx="650" cy="340" r="6" fill="#bbb"/>
+    <text x="666" y="345" fill="#777">DRDY  (not connected)</text>
+  </g>
+
+  <!-- wires -->
+  <g stroke-width="4" fill="none" stroke-linecap="round">
+    <line x1="406" y1="180" x2="644" y2="180" stroke="#c33"/>
+    <line x1="406" y1="220" x2="644" y2="220" stroke="#333"/>
+    <line x1="406" y1="260" x2="644" y2="260" stroke="#27c"/>
+    <line x1="406" y1="300" x2="644" y2="300" stroke="#2a8"/>
+  </g>
+  <g font-size="12" fill="#555" text-anchor="middle">
+    <text x="525" y="172">power</text>
+    <text x="525" y="252">I2C clock</text>
+    <text x="525" y="292">I2C data</text>
+  </g>
+
+  <!-- notes -->
+  <g fill="#333">
+    <text x="40" y="410" font-weight="bold">Notes</text>
+    <text x="40" y="432">- Its own I2C bus (bus_b, 100 kHz). The GY-271 has pull-up resistors on board: none to add.</text>
+    <text x="40" y="452">- GPIO2 and GPIO1 drive relays 2 and 3 on the relay version of the board: compass only without relays.</text>
+    <text x="40" y="472">- Found at boot and every 30 s: QMC5883L at 0x0D, QMC5883P at 0x2C, HMC5883L at 0x1E.</text>
+    <text x="40" y="492">- Mount level, chip up, the X arrow toward where the map top should face, away from board, speaker and steel.</text>
+    <text x="40" y="512">- Then Settings &gt; Location &gt; Compass (or Calibrate Compass in HA) and turn the display slowly through a full circle.</text>
+  </g>
+</svg>
