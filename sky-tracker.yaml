@@ -702,12 +702,14 @@ interval:
           if (link != tracker::boot::CONNECTED) {
             char b[128];
             if (link == tracker::boot::CONNECTING) {  // NET-2c: the network it is trying (saved in flash or built in)
-              const auto ssid = id(wifi_comp).get_sta().get_ssid();
+              const auto sta_entry = id(wifi_comp).get_sta();  // a WiFiAP by value: its SSID is a StringRef into it,
+              const auto ssid = sta_entry.get_ssid();          // so the copy must outlive the use (it dangled, 2026.9)
               char sta[40];
               snprintf(sta, sizeof(sta), "%.*s", (int) ssid.size(), ssid.c_str());
               tracker::boot::body_for(link, sta[0] ? sta : "${wifi_name}", "", b, sizeof(b));
             } else {
-              const auto ap = id(wifi_comp).get_ap().get_ssid();
+              const auto ap_entry = id(wifi_comp).get_ap();
+              const auto ap = ap_entry.get_ssid();
               tracker::boot::body_for(link, "", ap.c_str(), b, sizeof(b));
             }
             if (st.link_changed)
