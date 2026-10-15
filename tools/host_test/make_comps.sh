@@ -9,8 +9,8 @@ python3 gen_fixtures.py >/dev/null
 ./build.sh >/dev/null
 ./fetch_celestrak.py >/dev/null || true   # the real orbital lists (fake data where CelesTrak refuses)
 ./t4 > out/t4.log 2>&1 || { tail -20 out/t4.log; exit 1; }   # the checks, on the test data
-rm -rf out/renders/* out/rgif out/bgif out/sgif out/ugif out/dgif out/agif out/fgif
-RENDER_REAL=1 ROCKET_GIF=1 BOOT_GIF=1 SPLASH_GIF=1 UNDOCK_GIF=1 DOCK_GIF=1 ABOUT_GIF=1 REENTRY_GIF=1 ./t4 > out/t4_real.log 2>&1 || true   # the renders, on the cached CelesTrak lists
+rm -rf out/renders/* out/rgif out/bgif out/sgif out/ugif out/dgif out/ogif out/agif out/fgif
+RENDER_REAL=1 ROCKET_GIF=1 BOOT_GIF=1 SPLASH_GIF=1 UNDOCK_GIF=1 DOCK_GIF=1 OCTO_GIF=1 ABOUT_GIF=1 REENTRY_GIF=1 ./t4 > out/t4_real.log 2>&1 || true   # the renders, on the cached CelesTrak lists
 ./make_anims.py   # every animation: docs/renders/<name>.gif and <name>_strip.png
 ./render_settings.py   # the settings tabs, from the firmware's own widget code (docs/comps/settings_*.png)
 python3 - <<'PY'

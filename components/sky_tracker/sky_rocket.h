@@ -44,6 +44,14 @@ void countdown_show(int launch);  // host tests / comps: that launch now (index 
 #include <cstring>
 
 namespace sat {
+namespace octo {  // sky_octopus.h: it shares this scene's backdrop and its "an animation is playing"
+bool playing();
+void stop();
+void check();
+}  // namespace octo
+}  // namespace sat
+
+namespace sat {
 namespace rocket {
 
 constexpr float DUR_S = 4.5f;        // pad to off screen
@@ -490,7 +498,7 @@ inline void stop() {
   st.sea_img = nullptr;  // (deleted with st.sea, its clip)
 }
 inline bool playing() { return st.anim != nullptr; }
-bool active() { return playing(); }
+bool active() { return playing() || octo::playing(); }
 float last_fps() { return st.last_fps; }
 void set_last_fps(float fps) { st.last_fps = fps; }
 
@@ -1070,6 +1078,7 @@ inline void banner_text(const char *name, char *b, size_t n) {
 
 // false when nothing plays (the pictures are not drawn yet, UI-69n): the caller may ask again
 inline bool play_scene(bool undock, const char *name, bool boot = false, bool splash = false, bool dock = false) {
+  octo::stop();  // UI-85: a launch, docking or splashdown ends the octopus's visit
   stop();
   if (!pics_ready || !st.img_buf[0] || ((undock || dock) && !st.capsule_buf) ||
       (splash && (!st.sea_buf || !st.cap2_buf || !st.chute_buf)))
@@ -1412,7 +1421,7 @@ void countdown_show(int launch) {
 
 // every second: a launch at T-0 that has not been shown
 inline void check() {
-  if (!st.enabled || playing() || !clock_valid())
+  if (!st.enabled || playing() || octo::playing() || !clock_valid())
     return;
   if (lv_obj_get_child_count(lv_layer_top()) > 0)  // a prompt is open (UI-66/68): wait
     return;
@@ -1545,6 +1554,7 @@ void init(const lv_font_t *banner) {
   lv_timer_create([](lv_timer_t *) {
     countdown_check();  // UI-76 (first: at T-0 it has closed, and check() then plays the launch)
     check();
+    octo::check();  // UI-85
   }, 1000, nullptr);
 }
 void set_enabled(bool on) {

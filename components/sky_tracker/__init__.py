@@ -24,7 +24,7 @@ HEADERS = [
     "sky_planets.h", "sky_pview.h", "sky_picons.h", "sky_diag.h", "sky_lore.h",
     "sky_cfig.h", "sky_events.h", "sky_comets.h", "sky_mw.h", "sky_photos.h",
     "sky_logo.h", "sky_about.h", "sky_sdfw.h", "sky_update.h", "sky_rocket.h", "sky_tz.h",
-    "sky_dino.h",
+    "sky_dino.h", "sky_octopus.h",
 ]
 
 

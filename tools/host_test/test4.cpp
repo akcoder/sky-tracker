@@ -30,6 +30,7 @@ std::string host_last_url;
 #include "sky_sdfw.h"
 #include "sky_update.h"
 #include "sky_rocket.h"
+#include "sky_octopus.h"
 #include "sky_tz.h"
 #include "sky_history.h"
 extern "C" const lv_font_t mono16, mono18, mono24, roboto34, pm14, pm16;  // pm14/pm16: just the plus-minus sign, Roboto Mono  // roboto34: setup_title (Roboto 300, 34 px)
@@ -2938,6 +2939,84 @@ int main() {
       CHECK(rk::playing() && rk::st.dock, "docking button");
       rk::stop();
       sat::live.events.clear();
+    }
+    {  // UI-85 the octopus
+      namespace oc = sat::octo;
+      sat::live.events.clear();
+      sat::live.launches.clear();
+      rk::set_enabled(true);
+      oc::set_enabled(true);
+      // the timeline: in from the edge, on screen while it talks, out to the left
+      float x, y;
+      oc::pos(0, x, y);
+      CHECK(x > 380 && x < 480, "octopus enters at the right edge (%.0f)", x);
+      bool inside = true;
+      for (int kind = 0; kind < 2; kind++) {
+        oc::st.kind = kind;
+        for (float t = 2.0f; t <= 9.3f; t += 0.25f) {
+          oc::Model m;
+          oc::build(t, m);
+          inside &= m.x0 > 0 && m.x1 < 480 && m.y0 > 0 && m.y1 < 480;
+        }
+      }
+      CHECK(inside, "the octopus stays on the screen while it talks (lionfish and sea snake)");
+      oc::Model mo;
+      oc::build(10.99f, mo);
+      CHECK(mo.x1 < 0, "it has left the screen by the end (%.0f)", mo.x1);
+      // a visit plays over a frozen map, is the "animation playing" the tick waits for, ends and cleans up
+      const bool gif = getenv("OCTO_GIF") != nullptr;
+      if (gif)
+        system("rm -rf " OUT_DIR "/ogif && mkdir -p " OUT_DIR "/ogif");
+      sat::alert_override = nullptr;
+      sat::draw_hud(sat_host_now);  // (no alert left over from the tests before)
+      CHECK(oc::play_now() && oc::playing() && rk::active(), "the Play Octopus button plays");
+      CHECK(oc::st.say[0] && oc::st.say[1] && oc::st.say[2] && oc::st.say[3], "each beat has its line");
+      int frames = 0;
+      for (int f = 0; oc::playing() && f < 500; f++) {
+        sat_host_now += 0.033;
+        lv_refr_now(disp);
+        if (!oc::playing())
+          break;
+        frames++;
+        if (gif) {
+          char fn[80];
+          snprintf(fn, sizeof(fn), OUT_DIR "/ogif/f%03d.ppm", f);
+          save_ppm(fn);
+        }
+      }
+      CHECK(!oc::playing() && !rk::active() && lv_obj_get_child_count(lv_layer_top()) == 0 && rk::st.snap == nullptr && frames > 150,
+            "the visit ends and cleans up (%d frames)", frames);
+      // the schedule: the first visit 8-15 min after the first check, then 15-35 min apart; it waits for a quiet map
+      oc::st.next_ms = 0;
+      oc::check();
+      const uint32_t first = oc::st.next_ms - rk::now_ms();
+      CHECK(first >= 8 * 60 * 1000u && first <= 15 * 60 * 1000u + 1000, "the first visit is 8-15 min away (%u s)", first / 1000);
+      oc::min_idle_ms = 0;
+      oc::st.next_ms = rk::now_ms() - 1;
+      lv_obj_t *card = lv_obj_create(lv_layer_top());  // something open on the top layer: it waits
+      oc::check();
+      CHECK(!oc::playing(), "it waits while the top layer is occupied");
+      lv_obj_delete(card);
+      sat::net::EventRec e;
+      snprintf(e.name, sizeof(e.name), "SpaceX CRS-35 Dragon Docking");
+      snprintf(e.type, sizeof(e.type), "Docking");
+      e.exact = true;
+      e.iss = true;
+      e.t = sat::clock_now() + 300;
+      sat::live.events.push_back(e);
+      oc::check();
+      CHECK(!oc::playing(), "it waits while an ISS docking is near");
+      sat::live.events.clear();
+      oc::check();
+      CHECK(oc::playing(), "it plays when due and the map is quiet");
+      const uint32_t gap = oc::st.next_ms - rk::now_ms();
+      CHECK(gap >= 15 * 60 * 1000u && gap <= 35 * 60 * 1000u + 1000, "the next one is 15-35 min later (%u s)", gap / 1000);
+      rk::play_scene(false, "Rocket launch");  // a launch takes over from it
+      CHECK(!oc::playing() && rk::playing(), "a launch ends the octopus's visit");
+      rk::stop();
+      oc::set_enabled(false);
+      oc::min_idle_ms = 20000;
+      rk::set_enabled(false);
     }
     rk::set_enabled(false);
     sat::live.launches[0].net = sat::clock_now() - 5;
