@@ -36,7 +36,7 @@ namespace octo {
 constexpr float DUR_S = 11.0f;
 constexpr int N = 12;  // segments an arm is drawn in
 constexpr uint32_t MIN_GAP_S = 15 * 60, MAX_GAP_S = 35 * 60, FIRST_MIN_S = 8 * 60, FIRST_MAX_S = 15 * 60;
-constexpr uint32_t MODEL_MS = 60;  // the model moves at ~16 fps: the octopus is slow, and each redraw is the whole octopus
+constexpr uint32_t MODEL_MS = 90;  // the model moves at ~11 fps: the octopus is slow, and each step paints it all again
 constexpr uint32_t C_BODY = 0x80583C, C_BAND = 0xEEE0C0, C_DARK = 0x3C2820, C_ISS_BODY = 0x3E5CA0, C_ISS_BAND = 0xDECC82,
                    C_LION = 0xA04E34, C_SNAKE = 0x2C2630, C_SNAKE_BAND = 0xF4F0E8;
 
@@ -108,7 +108,8 @@ struct St {
   uint32_t t0 = 0, last_model = 0, last_frame = 0, frames = 0, max_gap = 0, next_ms = 0, rng = 0x9E3779B9u;
   int kind = 0;  // 0 lionfish, 1 sea snake
   const char *say[N_BEATS] = {};
-  lv_obj_t *catcher = nullptr, *draw = nullptr;
+  lv_obj_t *catcher = nullptr, *cv = nullptr;  // the tap catcher; the (hidden) canvas the octopus is painted on
+  lv_draw_buf_t *clean = nullptr, *comp = nullptr;  // the screen as it was; that, with the octopus painted on it
   lv_timer_t *timer = nullptr;
   Model m;
   lv_area_t last_box = {0, 0, -1, -1};
@@ -116,6 +117,7 @@ struct St {
   // the ink: a fixed set of blobs (velocity, size, strength), the same every visit
   float ivx[26], ivy[26], ir[26], ia[26];
   float bx = 0, by = 0, bw = 0, bh = 0;  // the bubble now (bw 0: none)
+  uint32_t paint_us = 0, paint_max = 0, px = 0;  // what painting cost (the visit's log)
 };
 inline St st;
 inline uint32_t min_idle_ms = 20000;  // no touch for this long before a visit starts
@@ -227,10 +229,8 @@ inline void rect(lv_layer_t *l, float x0, float y0, float x1, float y1, uint32_t
   lv_draw_rect(l, &d, &a);
 }
 
-inline void draw_cb(lv_event_t *e) {
-  if (!st.running)
-    return;
-  lv_layer_t *layer = lv_event_get_layer(e);
+// Paint the octopus, the ink and the bubble onto the composite (a canvas layer, whose clip is the box being redone)
+inline void paint(lv_layer_t *layer) {
   const lv_area_t &clip = layer->_clip_area;
   const Model &m = st.m;
   if (m.x1 + 30 < clip.x1 || m.x0 - 30 > clip.x2 || m.y1 + 30 < clip.y1 || m.y0 - 30 > clip.y2) {
@@ -346,21 +346,26 @@ inline void end_visit() {
   const uint32_t ms = rocket::now_ms() - st.t0;
   if (st.frames > 1 && ms) {
     rocket::set_last_fps(st.frames * 1000.0f / ms);
-    ESP_LOGI("octo", "visit: %u frames in %u ms (%.1f fps), longest gap %u ms", (unsigned) st.frames, (unsigned) ms,
-             st.frames * 1000.0f / ms, (unsigned) st.max_gap);
+    ESP_LOGI("octo", "visit: %u frames in %u ms (%.1f fps), longest gap %u ms; painting %.1f ms a frame (longest %.1f ms), %u px a frame",
+             (unsigned) st.frames, (unsigned) ms, st.frames * 1000.0f / ms, (unsigned) st.max_gap, st.paint_us / 1000.0f / st.frames,
+             st.paint_max / 1000.0f, (unsigned) (st.px / st.frames));
   }
-  for (lv_obj_t **o : {&st.draw, &st.catcher})
+  for (lv_obj_t **o : {&st.cv, &st.catcher})
     if (*o) {
       lv_obj_delete(*o);
       *o = nullptr;
     }
+  rocket::st.snap = st.clean;  // the backdrop shows the composite meanwhile; rocket::stop() frees the clean one
+  if (st.comp)
+    lv_draw_buf_destroy(st.comp);
+  st.comp = st.clean = nullptr;
   rocket::stop();  // the backdrop (and its snapshot)
   st.running = false;
 }
 
 inline void inval(const lv_area_t &a) {
-  if (st.draw && a.x2 >= a.x1 && a.y2 >= a.y1)
-    lv_obj_invalidate_area(st.draw, &a);
+  if (rocket::st.back && a.x2 >= a.x1 && a.y2 >= a.y1)
+    lv_obj_invalidate_area(rocket::st.back, &a);
 }
 
 inline void frame() {
@@ -395,8 +400,28 @@ inline void frame() {
     bx1 = std::min<int32_t>(bx1, 160), bx2 = 479, by1 = std::min<int32_t>(by1, 120), by2 = std::max<int32_t>(by2, 440);
   }
   lv_area_t box = {std::max<int32_t>(0, bx1), std::max<int32_t>(0, by1), std::min<int32_t>(479, bx2), std::min<int32_t>(479, by2)};
-  inval(box);
-  inval(st.last_box);  // what it covered before
+  // What is drawn on the screen is one RGB565 image (the composite), blitted over the dirty box in a few
+  // milliseconds: painting the arms strip by strip straight into the one framebuffer being scanned out took
+  // ~200 ms a frame and tore badly. The paint happens here, off the scan, into the composite.
+  lv_area_t reg = box;
+  if (st.last_box.x2 >= st.last_box.x1) {
+    reg.x1 = std::min(reg.x1, st.last_box.x1), reg.y1 = std::min(reg.y1, st.last_box.y1);
+    reg.x2 = std::max(reg.x2, st.last_box.x2), reg.y2 = std::max(reg.y2, st.last_box.y2);
+  }
+  const uint32_t t_paint = rocket::now_us();
+  for (int32_t y = reg.y1; y <= reg.y2; y++)  // the screen as it was, under the box
+    memcpy((uint8_t *) st.comp->data + (size_t) y * st.comp->header.stride + (size_t) reg.x1 * 2,
+           (const uint8_t *) st.clean->data + (size_t) y * st.clean->header.stride + (size_t) reg.x1 * 2, (size_t) (reg.x2 - reg.x1 + 1) * 2);
+  lv_layer_t layer;
+  lv_canvas_init_layer(st.cv, &layer);
+  layer._clip_area = reg;
+  paint(&layer);
+  lv_canvas_finish_layer(st.cv, &layer);
+  const uint32_t us = rocket::now_us() - t_paint;
+  st.paint_us += us;
+  st.paint_max = std::max(st.paint_max, us);
+  st.px += (uint32_t) ((reg.x2 - reg.x1 + 1) * (reg.y2 - reg.y1 + 1));
+  inval(reg);
   st.last_box = box;
 }
 inline void on_refr(lv_event_t *) { frame(); }
@@ -412,6 +437,18 @@ inline bool begin(uint32_t seed) {
     rocket::stop();
     return false;
   }
+  // the composite: a copy of the screen the visit paints on; the backdrop (rocket::back_draw) shows it
+  st.clean = rocket::st.snap;
+  st.comp = lv_draw_buf_create(480, 480, LV_COLOR_FORMAT_RGB565, 0);
+  if (st.comp == nullptr) {
+    ESP_LOGW("octo", "no memory for the composite: no visit");
+    st.clean = nullptr;
+    rocket::stop();
+    return false;
+  }
+  for (int32_t y = 0; y < 480; y++)
+    memcpy((uint8_t *) st.comp->data + (size_t) y * st.comp->header.stride, (const uint8_t *) st.clean->data + (size_t) y * st.clean->header.stride, 480 * 2);
+  rocket::st.snap = st.comp;
   st.kind = (int) (rnd() % 2);
   st.say[0] = SAY_ARRIVE[rnd() % (sizeof(SAY_ARRIVE) / sizeof(*SAY_ARRIVE))];
   st.say[1] = st.kind == 0 ? SAY_LION[rnd() % (sizeof(SAY_LION) / sizeof(*SAY_LION))]
@@ -433,12 +470,11 @@ inline bool begin(uint32_t seed) {
   lv_obj_set_size(st.catcher, 480, 480);
   lv_obj_add_flag(st.catcher, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_event_cb(st.catcher, [](lv_event_t *) { end_visit(); }, LV_EVENT_CLICKED, nullptr);
-  st.draw = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(st.draw);
-  lv_obj_set_size(st.draw, 480, 480);
-  lv_obj_remove_flag(st.draw, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-  lv_obj_add_event_cb(st.draw, draw_cb, LV_EVENT_DRAW_MAIN, nullptr);
+  st.cv = lv_canvas_create(lv_layer_top());  // holds the composite; never shown itself
+  lv_obj_add_flag(st.cv, LV_OBJ_FLAG_HIDDEN);
+  lv_canvas_set_draw_buf(st.cv, st.comp);
   st.frames = st.max_gap = st.last_frame = 0;
+  st.paint_us = st.paint_max = st.px = 0;
   st.last_box = {0, 0, -1, -1};
   st.bw = 0;
   st.t = 0;

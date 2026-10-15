@@ -5,7 +5,7 @@
 #ifndef SKY_IMPL
 namespace sat {
 lv_obj_t *logo_show(lv_obj_t *parent, int px);
-void logo_meteor(lv_obj_t *parent);
+void logo_meteor(lv_obj_t *parent, int which = 0);  // 0 About page, 1 boot page
 void logo_meteor_step();
 }  // namespace sat
 #else
@@ -188,7 +188,7 @@ struct State {
   float bend = 0;                         // sideways bow at mid-path (px), each one its own
   bool on = false;
 };
-inline State m;
+inline State ms[2];  // 0: the About page's logo, 1: the boot page's (UI-67a)
 constexpr float TAIL = 0.85f;  // tail length, as a part of the travel
 inline uint32_t now_ms() {
 #ifdef SAT_HOST_TEST
@@ -197,7 +197,7 @@ inline uint32_t now_ms() {
   return lv_tick_get();
 #endif
 }
-inline void start(uint32_t t) {
+inline void start(State &m, uint32_t t) {
   // in the open sky above the satellite (the logo's satellite and its dotted track run from
   // lower left to upper right through the middle; the Sun sits lower right): starts near the
   // top, falls down and to the left, and burns out before reaching the track or the rim
@@ -215,6 +215,7 @@ inline void start(uint32_t t) {
   m.on = true;
 }
 inline void draw_cb(lv_event_t *e) {
+  State &m = ms[(intptr_t) lv_event_get_user_data(e)];
   if (!m.on)
     return;
   lv_layer_t *layer = lv_event_get_layer(e);
@@ -280,37 +281,45 @@ inline void draw_cb(lv_event_t *e) {
 // one animation step (the timer's; host tests call it per frame)
 void logo_meteor_step() {
   using namespace meteor;
-  if (m.obj == nullptr)
-    return;
-  if (lv_obj_get_screen(m.obj) != lv_screen_active()) {  // not showing: start over when it does
-    m.on = false;
-    m.next = 0;
-    return;
-  }
-  const uint32_t t = now_ms();
-  if (m.next == 0)
-    m.next = t + 1200;  // the first one soon after the page opens
-  if (!m.on && (int32_t) (t - m.next) >= 0)
-    start(t);
-  if (m.on) {
-    lv_obj_invalidate(m.obj);
-    if (t - m.t0 >= m.dur) {
+  for (State &m : ms) {
+    if (m.obj == nullptr)
+      continue;
+    if (lv_obj_get_screen(m.obj) != lv_screen_active()) {  // not showing: start over when it does
       m.on = false;
-      m.next = t + 3000 + lv_rand(0, 4000);
+      m.next = 0;
+      continue;
+    }
+    const uint32_t t = now_ms();
+    if (m.next == 0)
+      m.next = t + 1200;  // the first one soon after the page opens
+    if (!m.on && (int32_t) (t - m.next) >= 0)
+      start(m, t);
+    if (m.on) {
+      lv_obj_invalidate(m.obj);
+      if (t - m.t0 >= m.dur) {
+        m.on = false;
+        m.next = t + 3000 + lv_rand(0, 4000);
+      }
     }
   }
 }
-void logo_meteor(lv_obj_t *parent) {
+// which: 0 the About page's logo, 1 the boot page's
+void logo_meteor(lv_obj_t *parent, int which = 0) {
   using namespace meteor;
-  if (parent == nullptr || m.obj)
+  if (parent == nullptr || which < 0 || which > 1 || ms[which].obj)
     return;
+  State &m = ms[which];
   m.obj = lv_obj_create(parent);
   lv_obj_remove_style_all(m.obj);
   lv_obj_set_size(m.obj, lv_pct(100), lv_pct(100));
   lv_obj_remove_flag(m.obj, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
-  lv_obj_add_event_cb(m.obj, draw_cb, LV_EVENT_DRAW_MAIN, nullptr);
+  lv_obj_add_event_cb(m.obj, draw_cb, LV_EVENT_DRAW_MAIN, (void *) (intptr_t) which);
 #ifndef SAT_HOST_TEST
-  lv_timer_create([](lv_timer_t *) { logo_meteor_step(); }, 30, nullptr);
+  static bool timer = false;
+  if (!timer) {  // one timer steps both
+    timer = true;
+    lv_timer_create([](lv_timer_t *) { logo_meteor_step(); }, 30, nullptr);
+  }
 #endif
 }
 

@@ -1740,15 +1740,24 @@ int main() {
     {  // UI-16c: the Settings heading field follows the compass while it owns the heading
       lv_obj_t *ta = lv_textarea_create(lv_screen_active());
       lv_textarea_set_text(ta, "7");
-      sat::settings_bind(ta, nullptr, nullptr, nullptr, nullptr);
+      lv_obj_t *stl = lv_label_create(lv_screen_active());
+      sat::settings_bind(ta, nullptr, nullptr, nullptr, stl);
       const float h0 = sat::ui.heading;
       sat::set_heading(123);  // unlocked: the user's field is left alone
       CHECK(!strcmp(lv_textarea_get_text(ta), "7"), "UI-16c: an unlocked heading field keeps its text (%s)", lv_textarea_get_text(ta));
       sat::set_locks(false, true);
       sat::set_heading(301.4f);
       CHECK(!strcmp(lv_textarea_get_text(ta), "301"), "UI-16c: the locked heading field follows the compass (%s)", lv_textarea_get_text(ta));
+      sat::settings_tab_now = 1;
+      sat::settings_note_refresh();
+      CHECK(!strcmp(lv_label_get_text(stl), "Heading from compass"), "UI-16c: the lock note shows on the Location tab (%s)", lv_label_get_text(stl));
+      sat::settings_tab_now = 0;
+      sat::settings_note_refresh();
+      CHECK(lv_label_get_text(stl)[0] == 0, "UI-16c: ...and not on the other tabs (%s)", lv_label_get_text(stl));
       sat::set_locks(false, false);
+      sat::settings_tab_now = 0;
       sat::settings_bind(nullptr, nullptr, nullptr, nullptr, nullptr);
+      lv_obj_delete(stl);
       lv_obj_delete(ta);
       sat::set_heading(h0);
     }

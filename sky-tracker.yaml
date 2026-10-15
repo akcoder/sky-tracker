@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.43"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.44"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -78,6 +78,7 @@ esphome:
             // LVGL draws nothing until setup ends, so one frame is forced now; the light writes its
             // restored level only from loop(), after setup, so the backlight is set here too
             sat::logo_show(id(boot_logo), 200);   // UI-65
+            sat::logo_meteor(id(boot_logo), 1);   // UI-67a: the shooting star on the boot logo too
             lv_refr_now(nullptr);
             {
               float b = 0.0f;

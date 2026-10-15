@@ -8052,12 +8052,16 @@ inline void cone_label(lv_obj_t *lbl, int v) {
 constexpr uint32_t C_TAB_ON = 0x2D5BD0, C_TAB_OFF = 0x1A2547;
 inline lv_obj_t *settings_title = nullptr;  // the settings header (YAML settings_title)
 // UI-16a: five icon-only tabs (Display, Location, Celestial, Satellites, Alerts), each a panel; one shown
+inline int settings_tab_now = 0;  // the open Settings tab (the lock note belongs to the Location tab, UI-16c)
+inline void settings_note_refresh();
 inline void settings_tab(int which, lv_obj_t *p0, lv_obj_t *p1, lv_obj_t *p2, lv_obj_t *p3, lv_obj_t *p4, lv_obj_t *t0,
                          lv_obj_t *t1, lv_obj_t *t2, lv_obj_t *t3, lv_obj_t *t4) {
   lv_obj_t *const P[5] = {p0, p1, p2, p3, p4}, *const T[5] = {t0, t1, t2, t3, t4};
   static const char *const NAME[5] = {"Display", "Location", "Celestial", "Satellites", "Alerts"};
   if (settings_title && which >= 0 && which < 5)
     lv_label_set_text(settings_title, NAME[which]);  // the header names the open tab
+  settings_tab_now = which;
+  settings_note_refresh();
   for (int k = 0; k < 5; k++) {
     if (k == which)
       lv_obj_remove_flag(P[k], LV_OBJ_FLAG_HIDDEN);
@@ -8305,6 +8309,16 @@ inline void settings_lock_note(char *b, size_t n) {
     snprintf(b, n, "Heading from compass");
 }
 
+// "Heading from compass" / "Location from GPS": on the Location tab only (it is about that tab's fields); a Save error
+// (settings_parse) stays until another tab is opened
+inline void settings_note_refresh() {
+  if (form.status == nullptr)
+    return;
+  char note[64];
+  settings_lock_note(note, sizeof(note));
+  lv_label_set_text(form.status, settings_tab_now == 1 ? note : "");
+}
+
 inline void settings_bind(lv_obj_t *heading, lv_obj_t *lat, lv_obj_t *lon, lv_obj_t *h24, lv_obj_t *status) {
   form.heading = heading;
   form.lat = lat;
@@ -8489,9 +8503,7 @@ inline void settings_fill() {
     lv_obj_remove_state(form.h24, LV_STATE_CHECKED);
   for (lv_obj_t *ta : {form.heading, form.lat, form.lon})
     mark_field(ta, false);
-  char note[64];
-  settings_lock_note(note, sizeof(note));
-  lv_label_set_text(form.status, note);
+  settings_note_refresh();
   settings_apply_locks();
 }
 
