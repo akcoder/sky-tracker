@@ -3212,6 +3212,15 @@ int main() {
             "countdown: T-05:00, GO, webcast live");
       CHECK(!lv_obj_has_flag(rk::cd.qr, LV_OBJ_FLAG_HIDDEN) && rk::cd.qr_ok, "countdown: the webcast's QR code (%d)",
             (int) rk::cd.qr_ok);
+      {  // UI-80: centred, between the liftoff line and "Tap to close"
+        lv_obj_update_layout(rk::cd.root);
+        lv_area_t qa, wa;
+        lv_obj_get_coords(rk::cd.qr, &qa);
+        lv_obj_get_coords(rk::cd.when, &wa);
+        const int mid = (qa.x1 + qa.x2) / 2;
+        CHECK(std::abs(mid - 240) <= 2 && qa.y1 > wa.y2 && qa.y2 < 446,
+              "countdown: the QR code is centred (%d) under the liftoff line (%d < %d) and over Tap to close (%d)", mid, wa.y2, qa.y1, qa.y2);
+      }
       shoot("r21_countdown");
       snprintf(sat::live.launches[0].status, sizeof(l.status), "Hold");
       sat::live.launches[0].webcast = false;

@@ -1240,12 +1240,12 @@ inline bool play(const char *name) { return play_scene(false, name); }
 // animation (check(), which waits for the top layer to be clear) takes over; a slip of more than
 // the window, a scrub or a flown status closes it too.
 constexpr double CD_WINDOW_S = 600;
-constexpr int QR_PX = 130;  // UI-80: the webcast QR code's side
+constexpr int QR_PX = 118;  // UI-80: the webcast QR code's side (centred between the liftoff line and "Tap to close")
 struct Cd {
   bool on = true;
   const lv_font_t *digits = nullptr, *title = nullptr, *body = nullptr, *small = nullptr;
   lv_obj_t *root = nullptr, *mission = nullptr, *sub = nullptr, *clock = nullptr, *status = nullptr, *when = nullptr,
-           *badge = nullptr, *qr = nullptr, *qr_hint = nullptr;
+           *badge = nullptr, *qr = nullptr;
   char watch[100] = "";       // UI-80: what the webcast's QR code encodes
   bool qr_ok = false;         // ...and that it fitted
   lv_timer_t *timer = nullptr;
@@ -1267,7 +1267,7 @@ void countdown_close() {
   }
   if (cd.root)
     lv_obj_delete(cd.root);
-  cd.root = cd.mission = cd.sub = cd.clock = cd.status = cd.when = cd.badge = cd.qr = cd.qr_hint = nullptr;
+  cd.root = cd.mission = cd.sub = cd.clock = cd.status = cd.when = cd.badge = cd.qr = nullptr;
   cd.watch[0] = 0;
   cd.shown_s = -1;
 }
@@ -1309,12 +1309,10 @@ inline void cd_update() {
   }
   const bool has_qr = show_qr && cd.qr_ok;
   if (has_qr != !lv_obj_has_flag(cd.qr, LV_OBJ_FLAG_HIDDEN)) {
-    for (lv_obj_t *o : {cd.qr, cd.qr_hint}) {
-      if (has_qr)
-        lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
-      else
-        lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
-    }
+    if (has_qr)
+      lv_obj_remove_flag(cd.qr, LV_OBJ_FLAG_HIDDEN);
+    else
+      lv_obj_add_flag(cd.qr, LV_OBJ_FLAG_HIDDEN);
   }
 }
 inline lv_obj_t *cd_label(lv_obj_t *p, const lv_font_t *f, uint32_t col, int y, const char *text) {
@@ -1354,13 +1352,13 @@ inline void cd_open(const net::LaunchRec &l) {
   cd.mission = cd_label(r, cd.title, 0xFFFFFF, 64, mission);
   cd.sub = cd_label(r, cd.body, 0x9AA6C8, 124, sub);
   cd.clock = cd_label(r, cd.digits ? cd.digits : cd.title, 0xFFC46B, 168, "T-10:00");
-  cd.status = cd_label(r, cd.title, 0x7EE0B0, 280, "");
-  cd.when = cd_label(r, cd.body, 0x9AA6C8, 314, "");
+  cd.status = cd_label(r, cd.title, 0x7EE0B0, 266, "");
+  cd.when = cd_label(r, cd.body, 0x9AA6C8, 298, "");
   cd.badge = lv_obj_create(r);  // UI-76: the webcast is live
   lv_obj_remove_style_all(cd.badge);
-  lv_obj_set_size(cd.badge, 200, 34);
-  lv_obj_align(cd.badge, LV_ALIGN_TOP_MID, 0, 360);
-  lv_obj_set_style_radius(cd.badge, 17, 0);
+  lv_obj_set_size(cd.badge, 72, 30);  // a small red pill in the top right corner, beside the title
+  lv_obj_align(cd.badge, LV_ALIGN_TOP_RIGHT, -14, 14);
+  lv_obj_set_style_radius(cd.badge, 15, 0);
   lv_obj_set_style_bg_color(cd.badge, lv_color_hex(0xC62828), 0);
   lv_obj_set_style_bg_opa(cd.badge, LV_OPA_COVER, 0);
   lv_obj_remove_flag(cd.badge, LV_OBJ_FLAG_CLICKABLE);
@@ -1368,15 +1366,13 @@ inline void cd_open(const net::LaunchRec &l) {
   if (cd.body)
     lv_obj_set_style_text_font(bl, cd.body, 0);
   lv_obj_set_style_text_color(bl, lv_color_hex(0xFFFFFF), 0);
-  lv_label_set_text(bl, "WEBCAST LIVE");
+  lv_label_set_text(bl, "LIVE");
   lv_obj_center(bl);
-  cd.qr_hint = cd_label(r, cd.small, 0x9AA6C8, 404, "Scan to watch");  // UI-80
-  lv_obj_add_flag(cd.qr_hint, LV_OBJ_FLAG_HIDDEN);
   cd.qr = lv_qrcode_create(r);  // black on white, with its quiet zone; 130 px: 3 px a module for a YouTube link
   lv_qrcode_set_size(cd.qr, QR_PX);
   lv_qrcode_set_dark_color(cd.qr, lv_color_hex(0x000000));
   lv_qrcode_set_light_color(cd.qr, lv_color_hex(0xFFFFFF));
-  lv_obj_align(cd.qr, LV_ALIGN_TOP_RIGHT, -8, 440 - QR_PX);
+  lv_obj_align(cd.qr, LV_ALIGN_TOP_MID, 0, 440 - QR_PX);  // centred, its bottom just above "Tap to close"
   lv_obj_remove_flag(cd.qr, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
   lv_obj_add_flag(cd.qr, LV_OBJ_FLAG_HIDDEN);
   cd.qr_ok = false;
