@@ -734,6 +734,7 @@ inline void cal_ring_draw_cb(lv_event_t *e) {
 inline void cal_screen_close() {
   if (cs.root) {
     lv_obj_delete(cs.root);
+    sat::page_restore_under();
     cs = CalScreen();
   }
 }
@@ -757,6 +758,7 @@ inline void cal_screen_open(uint32_t now_ms) {
   if (!compass_present() || cs.root)
     return;
   calibrate_start(now_ms, CAL_MAX_S);
+  sat::page_hide_under();  // PERF-22: the ring redraws at 5 Hz; the page under it is not redrawn each time
   lv_obj_t *root = lv_obj_create(lv_layer_top());
   cs.root = root;
   lv_obj_remove_style_all(root);
@@ -777,6 +779,8 @@ inline void cal_screen_open(uint32_t now_ms) {
   if (w.card_title_font)
     lv_obj_set_style_text_font(cs.pct, w.card_title_font, 0);
   lv_obj_set_style_text_color(cs.pct, lv_color_hex(0xEEF2FF), 0);
+  lv_obj_set_style_text_align(cs.pct, LV_TEXT_ALIGN_CENTER, 0);
+  lv_obj_set_width(cs.pct, 200);  // fixed: a label sized to its text keeps its left edge as "0%" grows to "100%"
   lv_label_set_text(cs.pct, "0%");
   lv_obj_align_to(cs.pct, cs.ring, LV_ALIGN_CENTER, 0, 0);
   cs.pace = cal_label(root, w.title_font, 0xC9D3F2, 372, "Start turning");

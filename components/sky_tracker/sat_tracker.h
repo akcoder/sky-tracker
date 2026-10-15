@@ -2098,6 +2098,8 @@ constexpr uint32_t C_AURORA = 0x7EE0B0;  // UI-38: soft aurora green
 // ha: for Home Assistant, without the times that tick on (an age, a retry): the text then
 // changes only when the state does, not every minute (the ages are the Data Age sensor).
 inline void page_show(lv_obj_t *o, bool show);  // show or hide a map-page object, viewer-aware (defined with the viewer)
+inline void page_hide_under();     // PERF-22: a full-screen overlay opened on the top layer: hide the page's objects
+inline void page_restore_under();  // ... and closed: show them again once no overlay is left
 inline uint32_t status_text(double t, char *b, size_t n, bool ha = false) {
   const DataStatus &s = live.status;
   const bool have = s.n_sats > 0 || s.have_iss || s.n_starlink > 0;
@@ -5938,8 +5940,10 @@ inline void finder_arrow_cb(lv_event_t *e) {
   lv_draw_line(layer, &sh);
 }
 inline void finder_close() {
-  if (fnd.root)
+  if (fnd.root) {
     lv_obj_delete(fnd.root);
+    page_restore_under();  // PERF-22
+  }
   fnd = Finder();
 }
 inline void finder_close_cb(lv_event_t *) { finder_close(); }
@@ -5995,6 +5999,7 @@ inline void finder_open_for(int kind, int32_t id, const char *name) {
   finder_close();
   fnd.kind = kind;
   fnd.id = id;
+  page_hide_under();  // PERF-22: the arrow turns at 5 Hz; the sky map under it is not redrawn each time
   lv_obj_t *root = lv_obj_create(lv_layer_top());
   fnd.root = root;
   lv_obj_remove_style_all(root);
@@ -6065,8 +6070,9 @@ struct ImgView {
   lv_image_dsc_t dsc[2];  // alternated: a new source each update, so LVGL's image cache never shows old pixels
   int cur = 0;
   const void *dsc_px = nullptr;
-  lv_obj_t *under[64] = {};  // the page's top-level objects hidden under the viewer (see img_view_open_now)
+  lv_obj_t *under[64] = {};  // the page's top-level objects hidden under a full-screen overlay (see page_hide_under)
   int n_under = 0;
+  int holds = 0;  // overlays open on the top layer (viewer, finder, compass calibration): the page is shown again at 0
   bool pf = false;        // the planets tab (Earth, Mercury .. Saturn): the picture is scaled down to make room for the strip
   int32_t bar_val = -2;
   double drawn_at = 0;    // planet: last drawing (redrawn each minute: the moons move)
@@ -6143,16 +6149,42 @@ inline void page_show(lv_obj_t *o, bool show) {
   else
     lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
 }
-inline void img_view_close(bool reopening = false) {
-  if (sv.root)
-    lv_obj_delete(sv.root);
-  if (sv.n_under > 0 && !reopening) {  // the map, drawn again
-    for (int i = 0; i < sv.n_under; i++)
-      if (lv_obj_is_valid(sv.under[i])) {
-        lv_obj_remove_flag(sv.under[i], LV_OBJ_FLAG_HIDDEN);
-        lv_obj_invalidate(sv.under[i]);
+// A full-screen overlay on the top layer (the viewer, the finder, the compass calibration) is drawn OVER the active
+// page: every redraw of a part of it (a picture still downloading, the finder's arrow and the calibration ring at
+// 5 Hz) first redrew the page underneath (~1.1 s for the whole sky map on the unit, the screen busy and touches lost).
+// Hidden, LVGL skips the page; the overlay's opaque root covers the whole area. The page's own objects are hidden, not
+// the page: hiding a screen itself is not safe in LVGL. Overlays nest (the finder under the viewer): the page comes
+// back when the last one closes.
+inline void page_hide_under() {
+  if (sv.holds++ > 0)
+    return;
+  if (sv.n_under == 0) {
+    lv_obj_t *scr = lv_screen_active();
+    const int n = scr ? (int) lv_obj_get_child_count(scr) : 0;
+    for (int i = 0; i < n && sv.n_under < 64; i++) {
+      lv_obj_t *c = lv_obj_get_child(scr, i);
+      if (c != nullptr && !lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) {
+        lv_obj_add_flag(c, LV_OBJ_FLAG_HIDDEN);
+        sv.under[sv.n_under++] = c;
       }
-    sv.n_under = 0;
+    }
+  }
+}
+inline void page_restore_under() {
+  if (sv.holds == 0 || --sv.holds > 0)
+    return;
+  for (int i = 0; i < sv.n_under; i++)  // the page, drawn again
+    if (lv_obj_is_valid(sv.under[i])) {
+      lv_obj_remove_flag(sv.under[i], LV_OBJ_FLAG_HIDDEN);
+      lv_obj_invalidate(sv.under[i]);
+    }
+  sv.n_under = 0;
+}
+inline void img_view_close(bool reopening = false) {
+  if (sv.root) {
+    lv_obj_delete(sv.root);
+    if (!reopening)
+      page_restore_under();
   }
   lv_obj_t *const none[4] = {};
   sv.root = sv.img = sv.msg = sv.bar = sv.cap1 = sv.cap2 = sv.east = sv.west = nullptr;
@@ -6679,8 +6711,11 @@ inline void img_tab_cb(lv_event_t *e) {
 inline void img_view_open_now(int kind, int planet) {
   if (planet == -2)
     planet = kind >= VIEW_PLANET ? kind - VIEW_PLANET : -1;
+  const bool reopening = sv.root != nullptr;  // its hold on the page carries over
   img_view_close(true);
   finder_close();
+  if (!reopening)
+    page_hide_under();
   sv.kind = kind;
   sv.planet = planet;
   sv.drawn_at = 0;
@@ -6696,21 +6731,7 @@ inline void img_view_open_now(int kind, int planet) {
   lv_obj_set_size(root, 480, 480);
   lv_obj_set_style_bg_color(root, lv_color_hex(0x070B18), 0);
   lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
-  lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);
-  // The viewer covers the whole screen, but it is on the top layer, which LVGL draws OVER the active page: every
-  // redraw of a picture still being downloaded first redrew the sky map underneath (~1.1 s on the unit, the screen
-  // busy all the time and touches lost). Hidden, LVGL skips it; the viewer's opaque root covers the whole area.
-  if (sv.n_under == 0) {  // (the page's own objects, not the page: hiding a screen itself is not safe in LVGL)
-    lv_obj_t *scr = lv_screen_active();
-    const int n = scr ? (int) lv_obj_get_child_count(scr) : 0;
-    for (int i = 0; i < n && sv.n_under < 64; i++) {
-      lv_obj_t *c = lv_obj_get_child(scr, i);
-      if (c != nullptr && !lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) {
-        lv_obj_add_flag(c, LV_OBJ_FLAG_HIDDEN);
-        sv.under[sv.n_under++] = c;
-      }
-    }
-  }
+  lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);  // (the page under it is hidden: page_hide_under, PERF-22)
   auto button = [&](int x, int wd, const char *text, bool on) {
     lv_obj_t *b = lv_button_create(root);
     lv_obj_set_size(b, wd, 36);

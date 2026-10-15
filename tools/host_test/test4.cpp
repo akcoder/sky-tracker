@@ -1720,6 +1720,8 @@ int main() {
     // UI-57 finder for Jupiter: heading pointing at it -> straight ahead
     sat::deselect();
     sat::finder_open_for(sat::K_PLANET, 3, "Jupiter");
+    CHECK(sat::sv.holds == 1 && sat::sv.n_under > 0 && !lv_obj_is_visible(sat::ui.w.sky),
+          "PERF-22: the finder hides the map under it (holds %d, %d objects)", sat::sv.holds, sat::sv.n_under);
     float az, el;
     CHECK(sat::finder_target(sat_host_now, az, el), "finder target");
     sat::finder_update(az - 60);  // display pointing 60 deg left of it
@@ -1732,6 +1734,8 @@ int main() {
     lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
     save_ppm(OUT_DIR "/renders/r7_finder_ahead.ppm");
     sat::finder_close();
+    CHECK(sat::sv.holds == 0 && sat::sv.n_under == 0 && lv_obj_is_visible(sat::ui.w.sky),
+          "PERF-22: the map is back after the finder closes (holds %d, %d objects)", sat::sv.holds, sat::sv.n_under);
     sat::live.launches.clear();
     sat::live.wind = sat::net::SolarWind();
   }
