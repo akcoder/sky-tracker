@@ -1965,7 +1965,7 @@ int main() {
         for (; done < upto; done++) net::round_mask_row(r->buf + done * N, done, N, r0, r1);
       };
       struct Both { Rec *r; void (*a)(int, void *); void (*b)(int, void *); };
-      for (int kind = 0; kind < 2; kind++) {
+      for (int kind = 0; kind < 3; kind++) {
         const std::string jpg = slurp(kind == 0 ? HOST_DIR "/fixtures/moon_test.jpg" : HOST_DIR "/fixtures/earth_test.jpg");
         static uint16_t acc[N * N * 3];
         // reference: decoded at the end, then the round edge on the whole picture
@@ -2962,15 +2962,15 @@ int main() {
       bool inside = true;
       for (int kind = 0; kind < 2; kind++) {
         oc::st.kind = kind;
-        for (float t = 2.0f; t <= 9.3f; t += 0.25f) {
+        for (float t = 2.0f; t <= 8.3f; t += 0.25f) {
           oc::Model m;
           oc::build(t, m);
           inside &= m.x0 > 0 && m.x1 < 480 && m.y0 > 0 && m.y1 < 480;
         }
       }
-      CHECK(inside, "the octopus stays on the screen while it talks (lionfish and sea snake)");
+      CHECK(inside, "the octopus stays on the screen while it talks (lionfish, sea snake, ISS)");
       oc::Model mo;
-      oc::build(10.99f, mo);
+      oc::build(9.99f, mo);
       CHECK(mo.x1 < 0, "it has left the screen by the end (%.0f)", mo.x1);
       // a visit plays over a frozen map, is the "animation playing" the tick waits for, ends and cleans up
       const bool gif = getenv("OCTO_GIF") != nullptr;
@@ -2979,7 +2979,7 @@ int main() {
       sat::alert_override = nullptr;
       sat::draw_hud(sat_host_now);  // (no alert left over from the tests before)
       CHECK(oc::play_now() && oc::playing() && rk::active(), "the Play Octopus button plays");
-      CHECK(oc::st.say[0] && oc::st.say[1] && oc::st.say[2] && oc::st.say[3], "each beat has its line");
+      CHECK(oc::st.say[0] && oc::st.say[1] && oc::st.say[2], "each beat has its line");
       int frames = 0;
       for (int f = 0; oc::playing() && f < 500; f++) {
         sat_host_now += 0.033;

@@ -1,13 +1,18 @@
 #pragma once
-// UI-85 the octopus: a mimic octopus visits the map two or three times an hour, about 11 s. It jets in from
-// the right, says something, imitates a lionfish or a banded sea snake, then the ISS (arms out like the
-// station's solar arrays), squirts ink and jets off to the left. The words are drawn at random from a pool
-// for each beat. A tap ends it. Off with the Octopus switch; the Play Octopus button shows it on demand.
+// UI-85 the octopus: a mimic octopus visits the map two or three times an hour, about 10 s. It jets in from
+// the right, says something, morphs into ONE thing picked at random for the visit (a lionfish, a banded sea
+// snake or the ISS, with a line to match), squirts ink and jets off to the left. The words are drawn at random
+// from a pool for each beat. A tap ends it. Off with the Octopus Visits switch; the Play Octopus Animation
+// button shows it on demand.
 //
-// How it stays fast (what sky_rocket.h learned, UI-69o): the screen as it is, snapshotted, is the opaque
-// backdrop (rocket::back_take), so a dirty box costs one image blit; one full-screen object on the top layer
-// draws the octopus (lines with round ends for the arms, rounded rectangles, arcs: nothing scaled), the ink and
-// the speech bubble in a single draw callback. The octopus is a few dozen primitives a frame, no sprite data.
+// How it stays fast and does not tear (the panel has one framebuffer that is scanned out while LVGL writes it):
+//  * the screen as it is, snapshotted, is the backdrop (rocket::back_take, UI-69o); a second RGB565 buffer, the
+//    composite, starts as a copy of it and is what the backdrop blits. Each step (~11 fps) restores the box
+//    the octopus covers from the snapshot, paints the octopus onto the composite, and invalidates the box:
+//    the screen then gets one opaque image blit of the box (a few ms), never the arms drawn strip by strip.
+//  * the octopus is painted by a small rasteriser of its own (discs and spans into the RGB565 buffer): the
+//    first version drew it with lv_draw_line / arc / rect and painting cost 192 ms a frame on the unit. Only
+//    the speech bubble goes through LVGL (a canvas layer, only while a line is up).
 // It waits for a quiet map: the sky page showing, the top layer empty, no touch for 20 s, no launch or ISS
 // docking within 15 minutes, and no other animation playing.
 // Compiled in sky_extra.cpp (SKY_IMPL), as sky_rocket.h.
@@ -33,24 +38,26 @@ void check();  // every second (sky_rocket.h's timer): a visit that is due
 namespace sat {
 namespace octo {
 
-constexpr float DUR_S = 11.0f;
-constexpr int N = 12;  // segments an arm is drawn in
+constexpr float DUR_S = 10.0f;
+constexpr int N = 12;  // segments an arm is kept in
 constexpr uint32_t MIN_GAP_S = 15 * 60, MAX_GAP_S = 35 * 60, FIRST_MIN_S = 8 * 60, FIRST_MAX_S = 15 * 60;
-constexpr uint32_t MODEL_MS = 90;  // the model moves at ~11 fps: the octopus is slow, and each step paints it all again
+constexpr uint32_t MODEL_MS = 90;  // the model steps at ~11 fps: the octopus is slow
 constexpr uint32_t C_BODY = 0x80583C, C_BAND = 0xEEE0C0, C_DARK = 0x3C2820, C_ISS_BODY = 0x3E5CA0, C_ISS_BAND = 0xDECC82,
                    C_LION = 0xA04E34, C_SNAKE = 0x2C2630, C_SNAKE_BAND = 0xF4F0E8;
 
 // ---- the words: one line a beat, drawn at random per visit
+enum Kind { K_LION = 0, K_SNAKE = 1, K_ISS = 2 };
 inline const char *const SAY_ARRIVE[] = {"Mimic octopus.\nIt's a lifestyle.", "Three hearts.\nNine brains.", "Blue blood.\nVery fancy.",
-                                         "I can be a\nsea snake.", "Just passing\nthrough."};
+                                         "I can be anything.\nWatch.", "Just passing\nthrough."};
 inline const char *const SAY_LION[] = {"Lionfish.\nBe afraid.", "I'm a lionfish.\nVenomous.", "Lionfish.\nDon't touch."};
 inline const char *const SAY_SNAKE[] = {"Sea snake.\nSsss.", "Banded sea snake.\nVery toxic.", "Sea snake.\nRespect."};
 inline const char *const SAY_ISS[] = {"ISS.\nObviously.", "Space station\nmode.", "Look up! The\nISS!", "Orbiting.\nPlease hold."};
 inline const char *const SAY_INK[] = {"Ink!", "Oops.", "Bye!", "Poof."};
-constexpr int N_BEATS = 4;
-constexpr float BEAT_A[N_BEATS] = {2.5f, 5.7f, 7.8f, 9.4f}, BEAT_B[N_BEATS] = {4.9f, 7.1f, 9.3f, 10.4f};
+constexpr int N_BEATS = 3;  // arrival, the morph, the ink
+constexpr float BEAT_A[N_BEATS] = {2.2f, 5.5f, 8.4f}, BEAT_B[N_BEATS] = {4.5f, 7.4f, 9.4f};
+constexpr float EXIT_T = 8.4f;  // the ink, then off to the left
 
-// ---- the timeline (pure: the host test checks it, the draw callback and the box use it)
+// ---- the timeline (pure: the host test checks it, the painter and the box use it)
 inline float ease(float x) {
   x = std::min(1.0f, std::max(0.0f, x));
   return x * x * (3 - 2 * x);
@@ -61,11 +68,11 @@ inline void pos(float t, float &x, float &y) {
     const float k = seg(t, 0, 1.8f);
     x = 430 - 170 * k;
     y = 262 + 6 * std::sin(t * 5);
-  } else if (t < 9.4f) {  // hovers
+  } else if (t < EXIT_T) {  // hovers
     x = 260 + 10 * std::sin((t - 2.2f) * 0.9f);
     y = 262 + 9 * std::sin((t - 2.2f) * 1.7f);
   } else {  // jets off to the left
-    const float k = seg(t, 9.4f, 10.9f);
+    const float k = seg(t, EXIT_T, EXIT_T + 1.5f);
     x = 260 - 480 * std::pow(k, 1.3f);
     y = 262 - 40 * k;
   }
@@ -79,12 +86,11 @@ inline float vel(float t) {
 inline float jet(float t) {
   if (t < 1.8f)
     return std::pow(std::max(0.0f, std::sin(2 * (float) M_PI * 1.5f * t)), 2.0f);
-  if (t > 9.4f)
-    return std::pow(std::max(0.0f, std::sin(2 * (float) M_PI * 2.6f * (t - 9.4f))), 2.0f);
+  if (t > EXIT_T)
+    return std::pow(std::max(0.0f, std::sin(2 * (float) M_PI * 2.6f * (t - EXIT_T))), 2.0f);
   return 0.25f * (0.5f + 0.5f * std::sin(t * 2.2f));
 }
-inline float w_imp(float t) { return seg(t, 5.4f, 5.9f) * (1 - seg(t, 7.0f, 7.4f)); }
-inline float w_iss(float t) { return seg(t, 7.5f, 8.0f) * (1 - seg(t, 9.0f, 9.35f)); }
+inline float w_morph(float t) { return seg(t, 4.8f, 5.3f) * (1 - seg(t, 7.6f, 8.1f)); }  // 0 octopus .. 1 the thing
 inline int beat_at(float t) {
   for (int i = 0; i < N_BEATS; i++)
     if (t >= BEAT_A[i] && t <= BEAT_B[i])
@@ -100,23 +106,22 @@ struct Model {
   float cx = 0, cy = 0, my = 0, rx = 0, ry = 0, p = 0, wl = 0, wi = 0, ws = 0, blink = 1, look = 0;
   uint32_t body = C_BODY, band = C_BAND;
   float ax[8][N + 1], ay[8][N + 1];
-  float x0 = 0, y0 = 0, x1 = 0, y1 = 0;  // everything it covers (the box to redraw)
+  float x0 = 0, y0 = 0, x1 = 0, y1 = 0;  // everything it covers (the box to redo)
 };
 
 struct St {
   bool enabled = true, running = false;
   uint32_t t0 = 0, last_model = 0, last_frame = 0, frames = 0, max_gap = 0, next_ms = 0, rng = 0x9E3779B9u;
-  int kind = 0;  // 0 lionfish, 1 sea snake
+  int kind = K_LION;  // what it morphs into this visit
   const char *say[N_BEATS] = {};
-  lv_obj_t *catcher = nullptr, *cv = nullptr;  // the tap catcher; the (hidden) canvas the octopus is painted on
-  lv_draw_buf_t *clean = nullptr, *comp = nullptr;  // the screen as it was; that, with the octopus painted on it
+  lv_obj_t *catcher = nullptr, *cv = nullptr;  // the tap catcher; the (hidden) canvas the bubble is drawn through
   lv_timer_t *timer = nullptr;
+  lv_draw_buf_t *clean = nullptr, *comp = nullptr;  // the screen as it was; that, with the octopus painted on it
   Model m;
   lv_area_t last_box = {0, 0, -1, -1};
   float t = 0;
-  // the ink: a fixed set of blobs (velocity, size, strength), the same every visit
-  float ivx[26], ivy[26], ir[26], ia[26];
-  float bx = 0, by = 0, bw = 0, bh = 0;  // the bubble now (bw 0: none)
+  float ivx[26], ivy[26], ir[26], ia[26];  // the ink: velocity, size, strength per blob
+  float bx = 0, by = 0, bw = 0, bh = 0;    // the bubble now (bw 0: none)
   uint32_t paint_us = 0, paint_max = 0, px = 0;  // what painting cost (the visit's log)
 };
 inline St st;
@@ -132,9 +137,10 @@ inline void build(float t, Model &m) {
   pos(t, m.cx, m.cy);
   m.my = m.cy - 46;
   m.p = jet(t);
-  m.wl = st.kind == 0 ? w_imp(t) : 0;
-  m.ws = st.kind == 1 ? w_imp(t) : 0;
-  m.wi = w_iss(t);
+  const float w = w_morph(t);
+  m.wl = st.kind == K_LION ? w : 0;
+  m.ws = st.kind == K_SNAKE ? w : 0;
+  m.wi = st.kind == K_ISS ? w : 0;
   const float wn = 1 - m.wl - m.wi - m.ws;
   m.body = mix3(mix3(mix3(C_BODY, C_LION, m.wl), C_ISS_BODY, m.wi), C_SNAKE, m.ws);
   m.band = mix3(mix3(C_BAND, C_ISS_BAND, m.wi), C_SNAKE_BAND, m.ws);
@@ -176,11 +182,11 @@ inline void build(float t, Model &m) {
     }
   }
   m.blink = 1;
-  for (float bt : {3.4f, 6.2f, 8.4f, 10.1f})
+  for (float bt : {3.0f, 6.2f, 8.9f})
     if (std::fabs(t - bt) < 0.09f)
       m.blink = 0.12f;
   m.look = t < 2.3f ? -4.0f : 3 * std::sin(t * 1.3f);
-  // the box: every arm point, the mantle, a margin for the line widths
+  // the box: every arm point, the mantle, a margin for the arm widths
   float x0 = m.cx - m.rx - 6, x1 = m.cx + m.rx + 6, y0 = m.my - m.ry - 6, y1 = m.cy + 20;
   for (int k = 0; k < 8; k++)
     for (int i = 0; i <= N; i++) {
@@ -194,7 +200,144 @@ inline float arm_r(const Model &m, int k, float u) {
   return (12.5f * std::pow(1 - u, 0.85f) + 2.6f) * (1 - 0.25f * m.wi) * ((k == 3 || k == 4) ? 1 + 0.35f * m.ws : 1.0f);
 }
 
-// the speech bubble now: its box (the same maths for the draw callback and the redraw box)
+// ---- a small rasteriser: discs, ellipses and spans straight into an RGB565 buffer, with an anti-aliased edge
+struct Rz {
+  uint8_t *base;
+  size_t stride;
+  int cx1, cy1, cx2, cy2;  // clip, inclusive
+};
+inline uint16_t c565(uint32_t rgb) { return (uint16_t) (((rgb >> 8) & 0xF800) | ((rgb >> 5) & 0x07E0) | ((rgb >> 3) & 0x1F)); }
+inline uint16_t blend565(uint16_t fg, uint16_t bg, uint32_t a5) {  // a5: 0..32 of fg
+  const uint32_t f = (fg | ((uint32_t) fg << 16)) & 0x07E0F81Fu, b = (bg | ((uint32_t) bg << 16)) & 0x07E0F81Fu;
+  const uint32_t r = ((((f - b) * a5) >> 5) + b) & 0x07E0F81Fu;
+  return (uint16_t) (r | (r >> 16));
+}
+inline void px_a(const Rz &r, int x, int y, uint16_t c, uint32_t a5) {  // one pixel at a5/32, clipped
+  if (x < r.cx1 || x > r.cx2 || y < r.cy1 || y > r.cy2 || a5 == 0)
+    return;
+  uint16_t *p = (uint16_t *) (r.base + (size_t) y * r.stride) + x;
+  *p = a5 >= 32 ? c : blend565(c, *p, a5);
+}
+// the row y of a shape whose edges on that row are xl..xr: solid inside, a blended pixel at each end
+// (alpha 0..32 for the whole shape, so a translucent shape works too)
+inline void row(const Rz &r, int y, float xl, float xr, uint16_t c, uint32_t alpha = 32) {
+  if (y < r.cy1 || y > r.cy2 || xr <= xl)
+    return;
+  const int x1 = (int) std::ceil(xl), x2 = (int) std::floor(xr);  // pixel centres at integers
+  if (x1 > x2) {  // narrower than a pixel
+    px_a(r, (int) std::floor(xl), y, c, (uint32_t) ((xr - xl) * alpha));
+    return;
+  }
+  if (x1 - xl > 0.02f)
+    px_a(r, x1 - 1, y, c, (uint32_t) ((x1 - xl) * alpha));
+  if (xr - x2 > 0.02f)
+    px_a(r, x2 + 1, y, c, (uint32_t) ((xr - x2) * alpha));
+  const int a = std::max(x1, r.cx1), b = std::min(x2, r.cx2);
+  if (a > b)
+    return;
+  uint16_t *p = (uint16_t *) (r.base + (size_t) y * r.stride);
+  if (alpha >= 32) {
+    for (int x = a; x <= b; x++)
+      p[x] = c;
+  } else {
+    for (int x = a; x <= b; x++)
+      p[x] = blend565(c, p[x], alpha);
+  }
+}
+inline void ellipse(const Rz &r, float cx, float cy, float rx, float ry, uint16_t c, uint32_t alpha = 32) {
+  if (cx + rx < r.cx1 || cx - rx > r.cx2)
+    return;
+  const int y0 = std::max(r.cy1, (int) std::ceil(cy - ry)), y1 = std::min(r.cy2, (int) std::floor(cy + ry));
+  for (int y = y0; y <= y1; y++) {
+    const float d = (y - cy) / ry, q = 1 - d * d;
+    if (q <= 0)
+      continue;
+    const float hw = rx * std::sqrt(q);
+    row(r, y, cx - hw, cx + hw, c, alpha);
+  }
+}
+inline void disc(const Rz &r, float cx, float cy, float rad, uint16_t c, uint32_t alpha = 32) { ellipse(r, cx, cy, rad, rad, c, alpha); }
+
+// the octopus, onto the composite (everything inside the clip)
+inline void paint_octopus(const Rz &r, const Model &m) {
+  const uint16_t dark = c565(C_DARK), body = c565(m.body), band = c565(m.band), sucker = c565(0xF4E8D0);
+  // arms: all the outlines, then all the fills (neighbours do not outline each other); a stamp every ~3 px
+  for (int pass = 0; pass < 2; pass++)
+    for (int k = 0; k < 8; k++)
+      for (int i = 1; i <= N; i++) {
+        const float xa = m.ax[k][i - 1], ya = m.ay[k][i - 1], xb = m.ax[k][i], yb = m.ay[k][i];
+        const float ra = arm_r(m, k, (float) (i - 1) / N), rb = arm_r(m, k, (float) i / N);
+        const float pad = std::max(ra, rb) + 4;
+        if (std::max(xa, xb) + pad < r.cx1 || std::min(xa, xb) - pad > r.cx2 || std::max(ya, yb) + pad < r.cy1 ||
+            std::min(ya, yb) - pad > r.cy2)
+          continue;
+        const uint16_t c = pass == 0 ? dark : (i % 2 ? body : band);
+        for (int s = 0; s < 4; s++) {
+          const float f = s * 0.25f;
+          disc(r, xa + (xb - xa) * f, ya + (yb - ya) * f, ra + (rb - ra) * f + (pass == 0 ? 2.2f : 0.0f), c);
+        }
+        if (i == N)
+          disc(r, xb, yb, rb + (pass == 0 ? 2.2f : 0.0f), c);
+      }
+  for (int k = 0; k < 8; k++)  // suckers
+    for (int i = 3; i < N; i += 2)
+      disc(r, m.ax[k][i], m.ay[k][i] + 1.5f, arm_r(m, k, (float) i / N) * 0.30f, sucker);
+  // the mantle, with its bands
+  ellipse(r, m.cx, m.my, m.rx + 2.2f, m.ry + 2.2f, dark);
+  ellipse(r, m.cx, m.my, m.rx, m.ry, body);
+  for (int j = 0; j < 5; j++) {
+    const float yb = m.my - m.ry + 14 + j * 26;
+    for (int y = (int) std::ceil(yb - 4); y <= (int) std::floor(yb + 4); y++) {
+      const float d = (y - m.my) / m.ry, q = 1 - d * d;
+      if (q <= 0)
+        continue;
+      const float hw = m.rx * std::sqrt(q) - 3;
+      if (hw > 3)
+        row(r, y, m.cx - hw, m.cx + hw, band);
+    }
+  }
+  ellipse(r, m.cx - 15, m.my - 45, 11, 7, c565(mix3(m.body, 0xFFFFFF, 0.35f)));
+  // the eyes: cream, a horizontal slit pupil, a lid
+  const uint16_t cream = c565(0xFAF4E2), slit = c565(0x140E16);
+  const float ey = m.my + 30, er = 15;
+  for (int sg = -1; sg <= 1; sg += 2) {
+    const float ex = m.cx + sg * 26;
+    disc(r, ex, ey, er + 2, dark);
+    ellipse(r, ex, ey, er, er * m.blink, cream);
+    if (m.blink > 0.5f)
+      for (int y = (int) std::ceil(ey - 3.6f); y <= (int) std::floor(ey + 3.6f); y++)
+        row(r, y, ex + m.look - 10, ex + m.look + 10, slit);
+    // the lid: the wedge of the eye between 205 and 335 degrees (above the middle, 2.14 wide for every 1 up)
+    for (int y = (int) std::ceil(ey - er); y < (int) ey; y++) {
+      const float dy = ey - y, q = er * er - dy * dy;
+      if (q <= 0)
+        continue;
+      const float hw = std::min(std::sqrt(q), dy * 2.14f);
+      row(r, y, ex - hw, ex + hw, body);
+      px_a(r, (int) std::lround(ex - hw), y, dark, 32);  // its lower edges
+      px_a(r, (int) std::lround(ex + hw), y, dark, 32);
+    }
+  }
+}
+
+inline void paint_ink(const Rz &r, float t) {
+  if (t < EXIT_T)
+    return;
+  float ox, oy;
+  pos(EXIT_T, ox, oy);
+  const float age = t - EXIT_T;
+  const uint16_t c = c565(0x0A0418);
+  for (int i = 0; i < 26; i++) {
+    const float x = ox + 10 + st.ivx[i] * age * (0.6f + i / 40.0f), y = oy + 20 + st.ivy[i] * age * 0.6f;
+    const float rad = st.ir[i] * (0.5f + 1.3f * std::min(1.0f, age / 0.8f));
+    const float a = st.ia[i] * std::max(0.0f, 1 - age / 2.3f);
+    if (a <= 0.03f || x + rad < r.cx1 || x - rad > r.cx2 || y + rad < r.cy1 || y - rad > r.cy2)
+      continue;
+    disc(r, x, y, rad, c, (uint32_t) std::min(32.0f, a * 1.4f * 32));
+  }
+}
+
+// ---- the speech bubble now: its box (the same maths for the painter and the redraw box)
 inline void bubble_geom(float t, int beat, float &bx, float &by, float &bw, float &bh) {
   bw = bh = 0;
   bx = by = 0;
@@ -208,7 +351,7 @@ inline void bubble_geom(float t, int beat, float &bx, float &by, float &bw, floa
   float cx, cy;
   pos(t, cx, cy);
   bx = std::max(10.0f, std::min(480 - bw - 10, cx - bw / 2 + 30));
-  by = beat == 3 ? std::max(46.0f, cy - 140) : std::max(46.0f, cy - 46 - 66 - bh - 22);
+  by = beat == N_BEATS - 1 ? std::max(46.0f, cy - 140) : std::max(46.0f, cy - 46 - 66 - bh - 22);
   const float pop = ease((t - BEAT_A[beat]) / 0.18f);
   by += (1 - pop) * 10;
 }
@@ -229,106 +372,35 @@ inline void rect(lv_layer_t *l, float x0, float y0, float x1, float y1, uint32_t
   lv_draw_rect(l, &d, &a);
 }
 
-// Paint the octopus, the ink and the bubble onto the composite (a canvas layer, whose clip is the box being redone)
-inline void paint(lv_layer_t *layer) {
-  const lv_area_t &clip = layer->_clip_area;
-  const Model &m = st.m;
-  if (m.x1 + 30 < clip.x1 || m.x0 - 30 > clip.x2 || m.y1 + 30 < clip.y1 || m.y0 - 30 > clip.y2) {
-    // (the octopus is out of this strip; the ink and bubble may not be)
-  } else {
-    // arms: all the outlines, then all the fills (neighbours do not outline each other)
-    for (int pass = 0; pass < 2; pass++)
-      for (int k = 0; k < 8; k++)
-        for (int i = 1; i <= N; i++) {
-          const float u = (i - 0.5f) / N, r = arm_r(m, k, u);
-          const float xa = m.ax[k][i - 1], ya = m.ay[k][i - 1], xb = m.ax[k][i], yb = m.ay[k][i];
-          const float pad = r + 4;
-          if (std::max(xa, xb) + pad < clip.x1 || std::min(xa, xb) - pad > clip.x2 || std::max(ya, yb) + pad < clip.y1 ||
-              std::min(ya, yb) - pad > clip.y2)
-            continue;
-          lv_draw_line_dsc_t d;
-          lv_draw_line_dsc_init(&d);
-          d.p1.x = xa, d.p1.y = ya, d.p2.x = xb, d.p2.y = yb;
-          d.width = (int32_t) std::lround(2 * r + (pass == 0 ? 4.4f : 0.0f));
-          d.color = lv_color_hex(pass == 0 ? C_DARK : (i % 2 ? m.body : m.band));
-          d.round_start = d.round_end = 1;
-          lv_draw_line(layer, &d);
-        }
-    // the mantle, with its bands
-    rect(layer, m.cx - m.rx, m.my - m.ry, m.cx + m.rx, m.my + m.ry, m.body, LV_RADIUS_CIRCLE, 255, C_DARK, 2);
-    const float half = m.ry - m.rx;  // the straight part of the stadium
-    for (int j = 0; j < 5; j++) {
-      const float y = m.my - m.ry + 14 + j * 26, dy = std::fabs(y - m.my);
-      const float w = dy <= half ? m.rx : std::sqrt(std::max(0.0f, m.rx * m.rx - (dy - half) * (dy - half)));
-      if (w > 6)
-        rect(layer, m.cx - w + 3, y - 4, m.cx + w - 3, y + 4, m.band, 4);
-    }
-    rect(layer, m.cx - 26, m.my - 52, m.cx - 4, m.my - 38, mix3(m.body, 0xFFFFFF, 0.35f), LV_RADIUS_CIRCLE);
-    // the eyes: cream, with a horizontal slit pupil
-    const float ey = m.my + 30, er = 15;
-    for (int sg = -1; sg <= 1; sg += 2) {
-      const float ex = m.cx + sg * 26;
-      rect(layer, ex - er - 2, ey - er - 2, ex + er + 2, ey + er + 2, C_DARK, LV_RADIUS_CIRCLE);
-      rect(layer, ex - er, ey - er * m.blink, ex + er, ey + er * m.blink, 0xFAF4E2, LV_RADIUS_CIRCLE);
-      if (m.blink > 0.5f)
-        rect(layer, ex + m.look - 10, ey - 3.6f, ex + m.look + 10, ey + 3.6f, 0x140E16, 3);
-      lv_draw_arc_dsc_t a;
-      lv_draw_arc_dsc_init(&a);
-      a.center.x = (int32_t) std::lround(ex);
-      a.center.y = (int32_t) std::lround(ey);
-      a.radius = (uint16_t) er;
-      a.start_angle = 205;
-      a.end_angle = 335;
-      a.width = (uint16_t) er;  // a filled wedge: the lid
-      a.color = lv_color_hex(m.body);
-      lv_draw_arc(layer, &a);
-      a.width = 3;
-      a.color = lv_color_hex(C_DARK);
-      lv_draw_arc(layer, &a);
-    }
-  }
-  // the ink
-  if (st.t >= 9.4f) {
-    float ox, oy;
-    pos(9.4f, ox, oy);
-    const float age = st.t - 9.4f;
-    for (int i = 0; i < 26; i++) {
-      const float x = ox + 10 + st.ivx[i] * age * (0.6f + i / 40.0f), y = oy + 20 + st.ivy[i] * age * 0.6f;
-      const float r = st.ir[i] * (0.5f + 1.3f * std::min(1.0f, age / 0.8f));
-      const float a = st.ia[i] * std::max(0.0f, 1 - age / 2.3f);
-      if (a <= 0.02f || x + r < clip.x1 || x - r > clip.x2 || y + r < clip.y1 || y - r > clip.y2)
-        continue;
-      rect(layer, x - r, y - r, x + r, y + r, 0x0A0418, LV_RADIUS_CIRCLE, (uint8_t) std::min(255.0f, a * 1.4f * 255));
-    }
-  }
-  // the speech bubble
-  if (st.bw > 0 && rocket::st.font) {
-    const float bx = st.bx, by = st.by, bw = st.bw, bh = st.bh;
-    rect(layer, bx, by, bx + bw, by + bh, 0x0E1836, 14, 255, 0x3A4E86, 2);
-    float cx, cy;
-    pos(st.t, cx, cy);
-    const float tx = std::min(cx, 440.0f);
-    lv_draw_triangle_dsc_t tri;
-    lv_draw_triangle_dsc_init(&tri);
-    tri.color = lv_color_hex(0x3A4E86);
-    tri.p[0].x = tx - 8, tri.p[0].y = by + bh - 3;
-    tri.p[1].x = tx + 20, tri.p[1].y = by + bh - 3;
-    tri.p[2].x = tx + 2, tri.p[2].y = by + bh + 20;
-    lv_draw_triangle(layer, &tri);
-    tri.color = lv_color_hex(0x0E1836);
-    tri.p[0].x = tx - 4, tri.p[0].y = by + bh - 3;
-    tri.p[1].x = tx + 16, tri.p[1].y = by + bh - 3;
-    tri.p[2].x = tx + 2, tri.p[2].y = by + bh + 14;
-    lv_draw_triangle(layer, &tri);
-    rect(layer, tx - 4, by + bh - 4, tx + 16, by + bh, 0x0E1836, 0);  // the seam
-    lv_draw_label_dsc_t l;
-    lv_draw_label_dsc_init(&l);
-    l.font = rocket::st.font;
-    l.color = lv_color_hex(0xEEF2FF);
-    l.text = st.say[beat_at(st.t)];
-    const lv_area_t a = {(int32_t) (bx + 14), (int32_t) (by + 9), (int32_t) (bx + bw + 40), (int32_t) (by + bh)};
-    lv_draw_label(layer, &l, &a);
-  }
+// the bubble, through a canvas layer (a few primitives and one label; only while a line is up)
+inline void paint_bubble(lv_layer_t *layer) {
+  if (st.bw <= 0 || rocket::st.font == nullptr)
+    return;
+  const float bx = st.bx, by = st.by, bw = st.bw, bh = st.bh;
+  rect(layer, bx, by, bx + bw, by + bh, 0x0E1836, 14, 255, 0x3A4E86, 2);
+  float cx, cy;
+  pos(st.t, cx, cy);
+  const float tx = std::min(cx, 440.0f);
+  lv_draw_triangle_dsc_t tri;
+  lv_draw_triangle_dsc_init(&tri);
+  tri.color = lv_color_hex(0x3A4E86);
+  tri.p[0].x = tx - 8, tri.p[0].y = by + bh - 3;
+  tri.p[1].x = tx + 20, tri.p[1].y = by + bh - 3;
+  tri.p[2].x = tx + 2, tri.p[2].y = by + bh + 20;
+  lv_draw_triangle(layer, &tri);
+  tri.color = lv_color_hex(0x0E1836);
+  tri.p[0].x = tx - 4, tri.p[0].y = by + bh - 3;
+  tri.p[1].x = tx + 16, tri.p[1].y = by + bh - 3;
+  tri.p[2].x = tx + 2, tri.p[2].y = by + bh + 14;
+  lv_draw_triangle(layer, &tri);
+  rect(layer, tx - 4, by + bh - 4, tx + 16, by + bh, 0x0E1836, 0);  // the seam
+  lv_draw_label_dsc_t l;
+  lv_draw_label_dsc_init(&l);
+  l.font = rocket::st.font;
+  l.color = lv_color_hex(0xEEF2FF);
+  l.text = st.say[beat_at(st.t)];
+  const lv_area_t a = {(int32_t) (bx + 14), (int32_t) (by + 9), (int32_t) (bx + bw + 40), (int32_t) (by + bh)};
+  lv_draw_label(layer, &l, &a);
 }
 
 inline void on_refr(lv_event_t *);
@@ -396,13 +468,12 @@ inline void frame() {
     bx1 = std::min(bx1, (int32_t) st.bx - 4), by1 = std::min(by1, (int32_t) st.by - 4);
     bx2 = std::max(bx2, (int32_t) (st.bx + st.bw + 6)), by2 = std::max(by2, (int32_t) (st.by + st.bh + 24));
   }
-  if (t >= 9.4f) {  // the cloud
+  if (t >= EXIT_T) {  // the cloud
     bx1 = std::min<int32_t>(bx1, 160), bx2 = 479, by1 = std::min<int32_t>(by1, 120), by2 = std::max<int32_t>(by2, 440);
   }
   lv_area_t box = {std::max<int32_t>(0, bx1), std::max<int32_t>(0, by1), std::min<int32_t>(479, bx2), std::min<int32_t>(479, by2)};
   // What is drawn on the screen is one RGB565 image (the composite), blitted over the dirty box in a few
-  // milliseconds: painting the arms strip by strip straight into the one framebuffer being scanned out took
-  // ~200 ms a frame and tore badly. The paint happens here, off the scan, into the composite.
+  // milliseconds. The paint happens here, off the scan, into the composite.
   lv_area_t reg = box;
   if (st.last_box.x2 >= st.last_box.x1) {
     reg.x1 = std::min(reg.x1, st.last_box.x1), reg.y1 = std::min(reg.y1, st.last_box.y1);
@@ -412,11 +483,16 @@ inline void frame() {
   for (int32_t y = reg.y1; y <= reg.y2; y++)  // the screen as it was, under the box
     memcpy((uint8_t *) st.comp->data + (size_t) y * st.comp->header.stride + (size_t) reg.x1 * 2,
            (const uint8_t *) st.clean->data + (size_t) y * st.clean->header.stride + (size_t) reg.x1 * 2, (size_t) (reg.x2 - reg.x1 + 1) * 2);
-  lv_layer_t layer;
-  lv_canvas_init_layer(st.cv, &layer);
-  layer._clip_area = reg;
-  paint(&layer);
-  lv_canvas_finish_layer(st.cv, &layer);
+  const Rz rz = {(uint8_t *) st.comp->data, st.comp->header.stride, reg.x1, reg.y1, reg.x2, reg.y2};
+  paint_octopus(rz, st.m);
+  paint_ink(rz, t);
+  if (st.bw > 0) {
+    lv_layer_t layer;
+    lv_canvas_init_layer(st.cv, &layer);
+    layer._clip_area = reg;
+    paint_bubble(&layer);
+    lv_canvas_finish_layer(st.cv, &layer);
+  }
   const uint32_t us = rocket::now_us() - t_paint;
   st.paint_us += us;
   st.paint_max = std::max(st.paint_max, us);
@@ -449,13 +525,14 @@ inline bool begin(uint32_t seed) {
   for (int32_t y = 0; y < 480; y++)
     memcpy((uint8_t *) st.comp->data + (size_t) y * st.comp->header.stride, (const uint8_t *) st.clean->data + (size_t) y * st.clean->header.stride, 480 * 2);
   rocket::st.snap = st.comp;
-  st.kind = (int) (rnd() % 2);
+  // one thing to morph into, and a line for each beat
+  st.kind = (int) (rnd() % 3);
   st.say[0] = SAY_ARRIVE[rnd() % (sizeof(SAY_ARRIVE) / sizeof(*SAY_ARRIVE))];
-  st.say[1] = st.kind == 0 ? SAY_LION[rnd() % (sizeof(SAY_LION) / sizeof(*SAY_LION))]
-                           : SAY_SNAKE[rnd() % (sizeof(SAY_SNAKE) / sizeof(*SAY_SNAKE))];
-  st.say[2] = SAY_ISS[rnd() % (sizeof(SAY_ISS) / sizeof(*SAY_ISS))];
-  st.say[3] = SAY_INK[rnd() % (sizeof(SAY_INK) / sizeof(*SAY_INK))];
-  uint32_t keep = st.rng;
+  st.say[1] = st.kind == K_LION    ? SAY_LION[rnd() % (sizeof(SAY_LION) / sizeof(*SAY_LION))]
+              : st.kind == K_SNAKE ? SAY_SNAKE[rnd() % (sizeof(SAY_SNAKE) / sizeof(*SAY_SNAKE))]
+                                   : SAY_ISS[rnd() % (sizeof(SAY_ISS) / sizeof(*SAY_ISS))];
+  st.say[2] = SAY_INK[rnd() % (sizeof(SAY_INK) / sizeof(*SAY_INK))];
+  const uint32_t keep = st.rng;
   st.rng = 0x1234567u;  // the ink is the same every visit
   for (int i = 0; i < 26; i++) {
     st.ivx[i] = -30 + 100 * rnd01();
@@ -489,7 +566,7 @@ inline bool begin(uint32_t seed) {
       },
       40, nullptr);
   frame();
-  ESP_LOGI("octo", "visit: %s, \"%s\" / \"%s\"", st.kind == 0 ? "lionfish" : "sea snake", st.say[1], st.say[2]);
+  ESP_LOGI("octo", "visit: %s, \"%s\" / \"%s\"", st.kind == K_LION ? "lionfish" : st.kind == K_SNAKE ? "sea snake" : "ISS", st.say[1], st.say[2]);
   return true;
 }
 

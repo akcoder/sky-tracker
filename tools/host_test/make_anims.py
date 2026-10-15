@@ -21,7 +21,7 @@ ANIMS = [
     ("splashdown", "sgif", 2, 60, 128, (0.2, 0.5, 0.62, 0.85), None, FULL),      # UI-69m
     ("undocking", "ugif", 3, 60, 128, (0.15, 0.4, 0.65, 0.9), (990, 790), FULL),  # UI-69f
     ("docking", "dgif", 3, 60, 128, (0.1, 0.35, 0.6, 0.85), (600, 990), FULL),     # UI-69p
-    ("octopus", "ogif", 2, 66, 128, (0.28, 0.55, 0.75, 0.88), None, FULL),         # UI-85: the mimic octopus visits
+    ("octopus", "ogif", 2, 66, 128, (0.12, 0.35, 0.65, 0.88), None, FULL),         # UI-85: the mimic octopus visits
     ("boot_launch", "bgif", 2, 66, 128, (0.1, 0.35, 0.6, 0.85), None, FULL),     # UI-69k: a launch over the boot screen
     ("about_meteor", "agif", 3, 100, 96, "active", None, (0, 40, 270, 170)),      # UI-67a: the shooting star over the logo
     ("reentry", "fgif", 1, 40, 128, (0.15, 0.4, 0.6, 0.85), None, FULL),          # UI-79: the re-entry fireball
