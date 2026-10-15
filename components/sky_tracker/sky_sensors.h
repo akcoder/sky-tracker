@@ -301,9 +301,10 @@ inline bool compass_poll(uint32_t now_ms) {
   if (compass.calibrating) {
     if (fresh)
       cal_feed(x, y, now_ms);
-    // done: every sector seen after at least a full turn, or out of time
-    if ((__builtin_popcountll(compass.cal_bins) >= 35 && fabsf(compass.cal_turn) >= 360.0f &&
-         compass.cal_samples >= 40) ||
+    // done: every sector seen (35 of 36 proves a full circle; the net turn is not
+    // required: turning back and forth fills the ring while it nets to less than
+    // 360°, and the run used to wait out the 60 s), or out of time
+    if ((__builtin_popcountll(compass.cal_bins) >= 35 && compass.cal_samples >= 40) ||
         (int32_t) (now_ms - compass.cal_end_ms) >= 0)
       return true;
   }
