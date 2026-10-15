@@ -150,6 +150,16 @@ attaches it to the release and updates the manifest the devices read.
 All of these are free and need no API key. Please don't point a fleet of
 devices at them more often than the firmware already does.
 
+## Is this vibe-coded AI slop?
+
+Every line of this project was written by Claude, and it was not left to
+guess. I bring almost 30 years of professional software engineering and
+architecture experience, and I steered the work: small memory use, low CPU
+use, and a fast, responsive touch interface on a chip with about 20 kB of free
+internal RAM. The design decisions and the spec are written down in
+[docs/requirements.md](docs/requirements.md), and the host tests have to pass
+before anything ships. This project would not exist without Claude.
+
 ## License
 
 GPL-3.0. See [LICENSE](LICENSE).
