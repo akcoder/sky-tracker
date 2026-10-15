@@ -8081,6 +8081,7 @@ inline void settings_planet_icon(lv_obj_t *parent, int x, int y, lv_obj_t *alert
   lv_obj_set_pos(al, ax, ay);
 }
 
+inline void settings_show_heading();  // UI-16c: the Settings heading field follows the compass (defined with the form)
 inline void set_heading(float deg) {
   if (std::isnan(deg))
     return;
@@ -8090,6 +8091,7 @@ inline void set_heading(float deg) {
   if (fabsf(deg - ui.heading) < 0.01f)
     return;
   ui.heading = deg;
+  settings_show_heading();
   if (!ui.ready)
     return;
   ESP_LOGI(UI_TAG, "map heading %.0f°", deg);
@@ -8441,6 +8443,16 @@ inline void mark_field(lv_obj_t *ta, bool bad) {
 }
 
 // on_load of the settings page: show the values in use now.
+// UI-16c: while the compass owns the heading (the field is locked), the Settings heading field shows the live value,
+// so the page reads what the map does. A field the user may be typing in (unlocked) is left alone.
+inline void settings_show_heading() {
+  if (form.heading == nullptr || !lock_head)
+    return;
+  char b[16];
+  snprintf(b, sizeof(b), "%d", (int) lroundf(ui.heading) % 360);
+  if (strcmp(lv_textarea_get_text(form.heading), b) != 0)
+    lv_textarea_set_text(form.heading, b);
+}
 inline void settings_fill() {
   if (form.heading == nullptr)
     return;

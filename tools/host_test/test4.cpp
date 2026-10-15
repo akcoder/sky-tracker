@@ -1736,6 +1736,21 @@ int main() {
     sat::finder_close();
     CHECK(sat::sv.holds == 0 && sat::sv.n_under == 0 && lv_obj_is_visible(sat::ui.w.sky),
           "PERF-22: the map is back after the finder closes (holds %d, %d objects)", sat::sv.holds, sat::sv.n_under);
+    {  // UI-16c: the Settings heading field follows the compass while it owns the heading
+      lv_obj_t *ta = lv_textarea_create(lv_screen_active());
+      lv_textarea_set_text(ta, "7");
+      sat::settings_bind(ta, nullptr, nullptr, nullptr, nullptr);
+      const float h0 = sat::ui.heading;
+      sat::set_heading(123);  // unlocked: the user's field is left alone
+      CHECK(!strcmp(lv_textarea_get_text(ta), "7"), "UI-16c: an unlocked heading field keeps its text (%s)", lv_textarea_get_text(ta));
+      sat::set_locks(false, true);
+      sat::set_heading(301.4f);
+      CHECK(!strcmp(lv_textarea_get_text(ta), "301"), "UI-16c: the locked heading field follows the compass (%s)", lv_textarea_get_text(ta));
+      sat::set_locks(false, false);
+      sat::settings_bind(nullptr, nullptr, nullptr, nullptr, nullptr);
+      lv_obj_delete(ta);
+      sat::set_heading(h0);
+    }
     sat::live.launches.clear();
     sat::live.wind = sat::net::SolarWind();
   }
