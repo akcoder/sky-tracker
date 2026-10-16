@@ -265,6 +265,7 @@ inline volatile uint32_t hold_until_ms = 0;
 inline volatile bool job_busy = false;
 inline uint32_t net_ms() { return (uint32_t) (net_us() / 1000); }
 inline bool hold_active() { return (int32_t) (hold_until_ms - net_ms()) > 0; }
+inline volatile bool dns_failed = false;  // NET-15: set when a connect fails (no answer or REFUSED), read by dns_check
 inline volatile bool link_up = false;  // NET-8: written by the loop each tick; no downloads while false
 
 // ---- pending slot: written by the task, drained by the loop, guarded by `mutex`
@@ -291,7 +292,8 @@ struct LaunchRec {
   double net = 0;         // UTC seconds
   float lat = NAN, lon = NAN;
   bool webcast = false;   // UI-76: Launch Library says its webcast is live
-  char watch[100] = "";   // UI-80: where to watch it (the best-ranked of its video links), for the QR code
+  char watch[128] = "";   // UI-80/80c: where to watch it, or else its info page (the best-ranked link), for the QR code
+  char id[40] = "";       // UI-80c: Launch Library's id, to ask for its links
 };
 // UI-54c: an upcoming space event (Launch Library 2 events: dockings, undockings, EVAs...)
 struct EventRec {
@@ -301,7 +303,7 @@ struct EventRec {
   bool exact = false;     // time known to the hour or better
   bool iss = false;       // UI-69f: at the International Space Station (its "location")
   char cc[4] = "";        // UI-54d: the spacecraft's country, from its name (Dragon -> USA...)
-  char watch[100] = "";   // UI-80b: where to watch it (the best-ranked of its video links), for the card's QR code
+  char watch[128] = "";   // UI-80b/80c: where to watch it, or else its info page (best-ranked link), for the card's QR code
 };
 // UI-69p: an exact-time docking at the ISS (not an undocking: "Docking" is not in "Undocking")
 inline bool event_docking(const EventRec &e) {
@@ -627,6 +629,7 @@ inline HttpResult http_stream(const char *url, const char *what, const std::func
         continue;
       }
       ESP_LOGW(TAG, "%s: connect failed (%s) (%s)", what, esp_err_to_name(err), url);
+      dns_failed = true;
       return res;
     }
     t_hdr = net_us();
@@ -1967,6 +1970,24 @@ inline void launch_cache_load() {
   }
   heap_caps_free(c);
 }
+// UI-80c: the QR code's link: the best-ranked (lowest priority number) https video link, else the best info page;
+// none when there is neither (no QR code then). Links too long for the code are skipped.
+inline void best_link(JsonArray vid, JsonArray info, char *out, size_t n) {
+  out[0] = 0;
+  for (JsonArray a : {vid, info}) {
+    int best = INT_MAX;
+    for (JsonObject v : a) {
+      const char *u = v["url"] | "";
+      const int pr = v["priority"] | 1000;
+      if (strncmp(u, "https://", 8) == 0 && strlen(u) < n && pr < best) {
+        best = pr;
+        copy_cstr(out, n, u);
+      }
+    }
+    if (out[0])
+      return;
+  }
+}
 inline void launches_publish(pvector<LaunchRec> &out, double now, const char *src) {
   for (LaunchRec &l : out) {  // UI-78
     fold_text(l.name);
@@ -2079,6 +2100,61 @@ inline void launches_rll(char *buf, double now) {
   if (!out.empty())
     launches_publish(out, now, "RocketLaunch.Live");
 }
+// UI-80c: Launch Library's list has no links; one launch's own reply has its video and info links (48 KB, one of the
+// 15 calls an hour). The links are kept per id, so each launch costs one call, up to two per list refresh, only when
+// no launch is inside its dense polling window (the 90 min before it), and a reboot keeps them (the flash cache).
+struct LinkRec {
+  char id[40] = "";
+  char watch[128] = "";
+  double at = 0;
+};
+inline LinkRec link_recs[16];
+inline void launch_links(pvector<LaunchRec> &out, char *buf, double now) {
+  std::sort(out.begin(), out.end(), [](const LaunchRec &a, const LaunchRec &b) { return a.net < b.net; });
+  bool dense = false;
+  for (const LaunchRec &l : out)
+    dense = dense || (l.net - now > -20 * 60.0 && l.net - now < 120 * 60.0);
+  int calls = 0;
+  size_t seen = 0;
+  for (LaunchRec &l : out) {
+    if (l.id[0] == 0 || l.net < now - 3600.0 || seen++ >= 4)
+      continue;
+    LinkRec *rec = nullptr, *oldest = &link_recs[0];
+    for (LinkRec &r : link_recs) {
+      if (!strcmp(r.id, l.id))
+        rec = &r;
+      if (r.at < oldest->at)
+        oldest = &r;
+    }
+    const bool stale = rec == nullptr || (now - rec->at > 6 * 3600.0 && l.net - now > 120 * 60.0);
+    if (stale && !dense && calls < 2) {
+      calls++;
+      char url[110];
+      snprintf(url, sizeof(url), "https://ll.thespacedevs.com/2.3.0/launches/%s/?mode=list", l.id);
+      const int len = http_get(url, buf, LAUNCH_BUF, "launch links");
+      if (len > 0) {
+        JsonDocument filter;
+        filter["vid_urls"][0]["url"] = true;
+        filter["vid_urls"][0]["priority"] = true;
+        filter["info_urls"][0]["url"] = true;
+        filter["info_urls"][0]["priority"] = true;
+        JsonDocument doc(&psram_alloc);
+        if (!deserializeJson(doc, buf, (size_t) len, DeserializationOption::Filter(filter),
+                             DeserializationOption::NestingLimit(24))) {
+          if (rec == nullptr) {
+            rec = oldest;
+            copy_cstr(rec->id, sizeof(rec->id), l.id);
+          }
+          best_link(doc["vid_urls"].as<JsonArray>(), doc["info_urls"].as<JsonArray>(), rec->watch, sizeof(rec->watch));
+          rec->at = now;
+          ESP_LOGI(TAG, "launch links: %s -> %s", l.name, rec->watch[0] ? rec->watch : "(none)");
+        }
+      }
+    }
+    if (rec != nullptr)
+      copy_cstr(l.watch, sizeof(l.watch), rec->watch);
+  }
+}
 inline void do_launches(double now) {
   if (now < launch_next)
     return;
@@ -2105,8 +2181,7 @@ inline void do_launches(double now) {
   f["pad"]["location"]["name"] = true;
   f["rocket"]["configuration"]["name"] = true;
   f["webcast_live"] = true;  // UI-76
-  f["vid_urls"][0]["url"] = true;  // UI-80
-  f["vid_urls"][0]["priority"] = true;
+  f["id"] = true;  // UI-80c: the list carries no links; one launch's own reply does
   JsonDocument doc(&psram_alloc);
   // the 2.3.0 reply nests 11 deep (ArduinoJson stops at 10 unless told)
   if (const DeserializationError de = deserializeJson(doc, buf, (size_t) len, DeserializationOption::Filter(filter),
@@ -2132,17 +2207,10 @@ inline void do_launches(double now) {
     l.lat = num(r["pad"]["latitude"]);
     l.lon = num(r["pad"]["longitude"]);
     l.webcast = r["webcast_live"] | false;
-    int best = INT_MAX;  // UI-80: the lowest priority number is Launch Library's first choice
-    for (JsonObject v : r["vid_urls"].as<JsonArray>()) {
-      const char *u = v["url"] | "";
-      const int pr = v["priority"] | 1000;
-      if (strncmp(u, "https://", 8) == 0 && strlen(u) < sizeof(l.watch) && pr < best) {
-        best = pr;
-        copy_cstr(l.watch, sizeof(l.watch), u);
-      }
-    }
+    copy_cstr(l.id, sizeof(l.id), r["id"] | "");
     out.push_back(l);
   }
+  launch_links(out, buf, now);
   launches_publish(out, now, "Launch Library");
 }
 
@@ -2229,6 +2297,8 @@ inline void do_events(double now) {
   f["location"] = true;  // a plain string in list mode: "International Space Station"
   f["vid_urls"][0]["url"] = true;  // UI-80b
   f["vid_urls"][0]["priority"] = true;
+  f["info_urls"][0]["url"] = true;  // UI-80c: else its page
+  f["info_urls"][0]["priority"] = true;
   JsonDocument doc(&psram_alloc);
   if (const DeserializationError de = deserializeJson(doc, buf, (size_t) len, DeserializationOption::Filter(filter),
                                                      DeserializationOption::NestingLimit(24))) {
@@ -2246,15 +2316,7 @@ inline void do_events(double now) {
       continue;
     const char *pr = r["date_precision"]["abbrev"] | "";
     e.exact = !strcmp(pr, "SEC") || !strcmp(pr, "MIN") || !strcmp(pr, "HR") || !*pr;
-    int best = INT_MAX;  // UI-80b: as the launches (UI-80), the lowest priority number first
-    for (JsonObject v : r["vid_urls"].as<JsonArray>()) {
-      const char *u = v["url"] | "";
-      const int pr_ = v["priority"] | 1000;
-      if (strncmp(u, "https://", 8) == 0 && strlen(u) < sizeof(e.watch) && pr_ < best) {
-        best = pr_;
-        copy_cstr(e.watch, sizeof(e.watch), u);
-      }
-    }
+    best_link(r["vid_urls"].as<JsonArray>(), r["info_urls"].as<JsonArray>(), e.watch, sizeof(e.watch));  // UI-80b/c
     out.push_back(e);
   }
   std::sort(out.begin(), out.end(), [](const EventRec &a, const EventRec &b) { return a.t < b.t; });

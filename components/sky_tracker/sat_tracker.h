@@ -394,7 +394,7 @@ struct Ui {
   lv_obj_t *card_img_btn = nullptr, *card_img_lbl = nullptr;  // UI-59/60: "Sun image" / "Moon image", bottom left
   lv_obj_t *card_moon = nullptr;  // UI-36: phase picture on the Moon card (UI-46a: or a constellation figure)
   lv_obj_t *card_qr = nullptr;    // UI-80b: a space event's webcast link, under the text of its card
-  char card_qr_text[100] = "";    // what it encodes
+  char card_qr_text[128] = "";    // what it encodes
   float moon_drawn_k = -1;         // phase last drawn into card_moon (-1: something else is there)
   int fig_drawn = -1;              // UI-46a: constellation figure last drawn into card_moon
   float decl = 0, maglat = 0;     // HW-9a declination, UI-37 geomagnetic latitude (degrees)
@@ -2059,8 +2059,16 @@ inline void draw_moon_icon(float illum, bool waxing, bool south) {
 // UI-20: next sunrise or sunset, next moonrise or moonset, and the Moon's phase.
 // A body that stays below the horizon for the next 24 h gets an empty line.
 inline void draw_almanac(double t) {
-  if (ui.w.alm_sun == nullptr || !clock_valid())
+  if (ui.w.alm_sun == nullptr)
     return;
+  if (!clock_valid()) {  // no time, no phase: the picture buffer holds whatever the allocator left (a corrupt moon)
+    static bool cleared = false;
+    if (ui.w.moon_img != nullptr && !cleared) {
+      lv_canvas_fill_bg(ui.w.moon_img, lv_color_black(), LV_OPA_TRANSP);
+      cleared = true;
+    }
+    return;
+  }
   const Config &c = config();
   if (t >= ui.alm_next || (ui.sun_ev.t > 0 && t >= ui.sun_ev.t) || (ui.moon_ev.t > 0 && t >= ui.moon_ev.t)) {
     astro::next_events(t, c.lat, c.lon, c.alt_m, ui.sun_ev, ui.moon_ev);
@@ -2113,7 +2121,10 @@ inline uint32_t status_text(double t, char *b, size_t n, bool ha = false) {
     snprintf(b, n, network_up() ? "Downloading orbital data..." : "Waiting for Wi-Fi to download orbital data");
     return C_OK;
   }
-  fmt_age(std::max(0.0, s.next_try - t), retry, sizeof(retry));
+  if (s.next_try <= t)
+    snprintf(retry, sizeof(retry), "a moment");  // due: not "1m" (the age format floors at a minute)
+  else
+    fmt_age(s.next_try - t, retry, sizeof(retry));
   if (!have) {
     if (ha)
       snprintf(b, n, "%s.\nNo orbital data yet; retrying", s.error);
@@ -4948,6 +4959,18 @@ inline void card_pad_update() {
   const bool buttons = !info || info_alert.info == AI_AURORA || info_alert.info == AI_WIND || info_alert.info == AI_SWX;
   lv_obj_set_style_pad_bottom(ui.card, buttons ? 52 : 10, 0);
 }
+// UI-80b/c: the card's QR code for a launch or event link; nothing (hidden) when it has none
+inline void card_qr_show(const char *link) {
+  if (ui.card_qr == nullptr || link == nullptr || link[0] == 0)
+    return;
+  if (strcmp(ui.card_qr_text, link) != 0) {
+    net::copy_cstr(ui.card_qr_text, sizeof(ui.card_qr_text), link);
+    if (lv_qrcode_update(ui.card_qr, ui.card_qr_text, (uint32_t) strlen(ui.card_qr_text)) != LV_RESULT_OK)
+      ui.card_qr_text[0] = 0;
+  }
+  if (ui.card_qr_text[0])
+    lv_obj_remove_flag(ui.card_qr, LV_OBJ_FLAG_HIDDEN);
+}
 inline void info_card_update(double t) {
   const Alert &al = info_alert;
   if (t - ui.sel_since > CARD_TIMEOUT_S) {
@@ -5003,6 +5026,7 @@ inline void info_card_update(double t) {
         snprintf(far, sizeof(far), "\n%.0f %s away, to the %s", dist(km), dist_unit(), compass(brg));  // UI-29
       snprintf(body, sizeof(body), "%s\n%s %s (%s%s)\nFrom %s\nStatus: %s%s", mission, d0, h0, l.net > t ? "in " : "",
                cd, l.where, l.status[0] ? l.status : "unknown", far);
+      card_qr_show(l.watch);  // UI-80c: its webcast or page
       break;
     }
     case AI_EVENT: {
@@ -5017,15 +5041,7 @@ inline void info_card_update(double t) {
       snprintf(body, sizeof(body), "%s\n%s %s%s%s%s", e.name, d0, h0, e.t > t ? " (in " : " (now", e.t > t ? cd : "", ")");
       if (e.iss)
         snprintf(body + strlen(body), sizeof(body) - strlen(body), "\nAt the International Space Station");
-      if (e.watch[0] && ui.card_qr) {  // UI-80b: its webcast (a press event, a docking...), to open on a phone
-        if (strcmp(ui.card_qr_text, e.watch) != 0) {
-          net::copy_cstr(ui.card_qr_text, sizeof(ui.card_qr_text), e.watch);
-          if (lv_qrcode_update(ui.card_qr, ui.card_qr_text, (uint32_t) strlen(ui.card_qr_text)) != LV_RESULT_OK)
-            ui.card_qr_text[0] = 0;
-        }
-        if (ui.card_qr_text[0])
-          lv_obj_remove_flag(ui.card_qr, LV_OBJ_FLAG_HIDDEN);
-      }
+      card_qr_show(e.watch);  // UI-80b/c: its webcast or page (a press event, a docking...), to open on a phone
       break;
     }
     case AI_AURORA:
@@ -7988,11 +8004,15 @@ inline void sntp_kick() {
 inline void dns_check(const char *why) {
 #ifndef SAT_HOST_TEST
   esp_netif_t *n = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-  if (n == nullptr)
+  if (n == nullptr) {
+    ESP_LOGW("net", "dns (%s): no Wi-Fi station interface", why);
     return;
+  }
   esp_netif_ip_info_t ip = {};
-  if (esp_netif_get_ip_info(n, &ip) != ESP_OK || ip.ip.addr == 0)
-    return;  // not connected yet
+  if (esp_netif_get_ip_info(n, &ip) != ESP_OK || ip.ip.addr == 0) {
+    ESP_LOGI("net", "dns (%s): no IP address yet", why);  // on_connect fires before DHCP answers
+    return;
+  }
   esp_netif_dns_info_t main = {}, back = {};
   esp_netif_get_dns_info(n, ESP_NETIF_DNS_MAIN, &main);
   esp_netif_get_dns_info(n, ESP_NETIF_DNS_BACKUP, &back);
@@ -8011,7 +8031,19 @@ inline void dns_check(const char *why) {
     set(ESP_NETIF_DNS_BACKUP, esp_ip4addr_aton("1.1.1.1"));
     esp_netif_get_dns_info(n, ESP_NETIF_DNS_BACKUP, &back);
   }
-  if (main.ip.u_addr.ip4.addr != last_main || back.ip.u_addr.ip4.addr != last_back) {
+  // A DNS server that answers REFUSED (192.168.0.14 did, for every name) is an answer: lwIP never tries the backup, so
+  // nothing resolved and no time came. When a connect failed or the clock is still unset a minute on, swap the two.
+  if (strcmp(why, "periodic") == 0 && (net::dns_failed || !clock_valid()) && back.ip.u_addr.ip4.addr != 0) {
+    ESP_LOGW("net", "dns: lookups fail with " IPSTR " as main; swapping to " IPSTR, IP2STR(&main.ip.u_addr.ip4),
+             IP2STR(&back.ip.u_addr.ip4));
+    const uint32_t m = main.ip.u_addr.ip4.addr, b = back.ip.u_addr.ip4.addr;
+    set(ESP_NETIF_DNS_MAIN, b);
+    set(ESP_NETIF_DNS_BACKUP, m);
+    esp_netif_get_dns_info(n, ESP_NETIF_DNS_MAIN, &main);
+    esp_netif_get_dns_info(n, ESP_NETIF_DNS_BACKUP, &back);
+    net::dns_failed = false;
+  }
+  if (main.ip.u_addr.ip4.addr != last_main || back.ip.u_addr.ip4.addr != last_back || strcmp(why, "periodic") == 0) {
     last_main = main.ip.u_addr.ip4.addr;
     last_back = back.ip.u_addr.ip4.addr;
     ESP_LOGI("net", "dns (%s): main " IPSTR ", backup " IPSTR ", gateway " IPSTR, why, IP2STR(&main.ip.u_addr.ip4),
@@ -8144,7 +8176,7 @@ inline void settings_planet_icon(lv_obj_t *parent, int x, int y, lv_obj_t *alert
 inline uint32_t head_last_ms = 0;  // the last time the map took a compass heading
 inline bool heading_update_due(float diff_deg, uint32_t since_last_ms, uint32_t idle_ms) {
   const float d = std::fabs(diff_deg);
-  if (d < 3.0f)
+  if (d < 5.0f)
     return false;
   if (d >= 30.0f)
     return true;

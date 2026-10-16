@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.46 (unreleased): every launch and space event (docking, undocking...) card has a QR code to its webcast, or else its info page (a launch's links come from its own Launch Library reply, two calls per list refresh at most and none inside a launch's dense polling window; the countdown shows the code whenever there is a link, the LIVE pill only while live); no link, no QR code (UI-80c). malloc of over 4 KB comes from PSRAM, so the HTTP client's 8 KB buffer no longer fails in internal RAM ("download was cut short" on a unit with ~44 KB free) (NET-16). the web page has a Location section: latitude, longitude, magnetic declination, heading, compass offset and reverse, Calibrate Compass, Heading Source and Location Source; the rest of Location & Sky is now called Sky; GPS Satellites, GPS Altitude and Time Zone are in Location, Orbital Data Age and the Satellites and Starlink Tracked counts in Satellites, the Launch Animation and Octopus Visits switches in Animations (NET-6). the map ignores a compass change under 5 degrees (was 3) (UI-15a). the almanac's Moon picture is cleared and not drawn until the time is known (its buffer held garbage: a corrupt moon on a unit with no time) (UI-20). the data status says "retrying in a moment" when the retry is due, not "1m". the DNS check logs every minute and why it skipped (NET-15). A DNS server that answers REFUSED (unit B's DHCP gave 192.168.0.14, which refused every name, so there was no time and no download) is swapped with the backup 1.1.1.1 when a connect failed or the clock is still unset a minute on (NET-15). no network call before Wi-Fi is up: SNTP is now stopped right after its own set-up (it had asked for the time and failed, then backed off, before the old stop ran) (NET-8)
 - 4.6.45 (released): the unit checks its DNS servers on connect and each minute, logs them, uses the gateway when DHCP gave none and 1.1.1.1 as a backup: one unit could not resolve celestrak.org or NOAA's host and its orbital data and space weather stood still (NET-15). the map follows the compass calmly: a change under 3 degrees is ignored, at most one redraw in 1.5 s, none while a finger is on the screen (a press on the Settings button made the map redraw and the touch was missed) (UI-15a). Settings > Location is ordered Coordinates, Latitude, Longitude, Heading, Offset (a plus-minus icon), Compass (Calibrate); the offset field is enabled only with a compass connected (HW-9c, UI-16). the compass's SDA and SCL pins are found at run time (among GPIO 1, 2, 40 and 41, only pins that show an external pull-up are ever driven) and its I2C bus is made at run time with ESP-IDF's own driver (HW-9c). a launch past its time shows "Falcon 9 launched - Vandenberg SFB" in the alert line (for up to 15 min, until Launch Library says Success) instead of "launches in 0s", and not at all when its time was never confirmed (Hold, TBD, TBC) (UI-54). the Firmware entity no longer says UPDATE AVAILABLE when the published release is older than (or the same as) the installed one (UI-68). the launch countdown's webcast QR code is centred between the liftoff line and "Tap to close", the badge is a small LIVE pill at the top right (UI-80). the octopus is painted by a small rasteriser of its own instead of LVGL's line and arc drawing, which cost 192 ms a frame on the unit: painting is 61 ms, and it is drawn at 75% size (on the unit a refresh of it is ~27 ms and painting ~45 ms; the 4.5 fps was the 150 ms fallback timer waking each step, because a step skipped by the throttle invalidated nothing, so no refresh came: the 20 ms timer is the clock now, up to ~14 fps). Each visit morphs into ONE thing picked at random (a lionfish, a banded sea snake or the ISS) and is 10 s (UI-85).
 - 4.6.44 (released): the boot logo has the shooting star too, as the About page's has (UI-67a); the "Heading from compass" note shows on the Location tab only (UI-16c); the octopus is painted off-screen and blitted, so it no longer tears (UI-85). a mimic octopus visits the map 2-3 times an hour: it says something, imitates a lionfish or a sea snake, then the ISS, squirts ink and jets off; an Octopus Visits switch and a Play Octopus Animation button on the web page and in HA (UI-85). the Wi-Fi status page's network name is read from a held copy of the station/AP entry: ESPHome 2026.9 returns it by value and the name is a reference into it, which dangled and showed fragments of the label's own buffer (reported by the f1-tracker session; NET-2c). the compass calibration run ends as soon as the ring is full (35 of 36 sectors seen and 40 samples); it no longer also waits for a net full turn in one direction, which turning back and forth never reached, so the run sat at 100% asking for more turning until the 60 s ran out (HW-9b). The calibration ring and the Find arrow no longer redraw the sky map under them on every compass sample: the page is hidden under those screens as under the picture viewer, so the ring and the arrow keep up with the turning (PERF-22). The calibration percentage stays centred in the ring as it grows from 0% to 100% (HW-9b). The heading field on the Settings Location tab follows the compass live while the compass owns it (UI-16c). Compass wiring diagram in docs/wiring_compass.svg (HW-9).
 - 4.6.43 (released): docking animation: at the time of a Launch Library docking at the ISS the capsule comes in from the top, slowing, braking puffs at its nose, and docks at the forward port with a burst as the hooks close (UI-69p; Play Docking Animation button in the web Animations group and HA); a docking or undocking within the hour has its list fetched every 20 min, so the scene plays at the time last given; a launch's list is fetched every 5 min from 30 min before to 10 min after T-0 (a Starlink T-0 moved 22 min inside its window was missed at 10-min polling; UI-76), and the T-0 scene does not play on a Hold or an unconfirmed (TBD) time; a space event's details card (a press conference, a docking...) carries a QR code to its webcast, centred under the text (UI-80b).
@@ -454,7 +455,7 @@ UI-15  The map heading (the compass direction at the top) is a Home Assistant nu
        redraws every marker once, snapping without the MOTION-5 offset. The list page
        always shows true azimuths.
 UI-15a The map follows the compass calmly: a heading change redraws the whole map, and a compass in the hand moves a degree
-       or two with every press on the screen, which made the page jitter and dropped touches. A change under 3 degrees is
+       or two with every press on the screen, which made the page jitter and dropped touches. A change under 5 degrees is
        ignored; changes are applied at most once in 1.5 s and not while a finger is on the screen (nothing touched for 700 ms);
        a swing of 30 degrees or more is followed at once. The Find pointer and the calibration read the compass directly
        at 5 Hz and are not slowed.
@@ -1579,7 +1580,9 @@ NET-8  No network calls until Wi-Fi is up, and none while it is down.
          it is false nothing is scheduled, and the fetch task drops any job still in
          its queue. On reconnect every layer refreshes at once (Starlink keeps its
          45 s offset).
-       - SNTP: stopped at boot (on_boot) until the first Wi-Fi connect and again on
+       - SNTP: stopped at boot (on_boot priority 215, straight after its own setup at 220;
+         it used to be stopped only at -100, after the slow start-up, so it had already asked
+         before Wi-Fi) until the first Wi-Fi connect and again on
          every disconnect; wifi on_connect starts it or asks again (NET-7).
 NET-3  (Removed in rev 4: no API key is needed. CelesTrak is fetched over HTTPS
        with the ESP-IDF certificate bundle.)
@@ -1589,8 +1592,9 @@ NET-5  api max_connections is 8 (ESPHome default 5). HA holds one, and every ope
        "Try enabling encryption on the device" (EncryptionHelloAPIError). The
        encryption key is not the problem.
 NET-6  The web page groups entities into sections (web_server v3 sorting_groups;
-       Home Assistant is unaffected), in this order: Location & Sky (Latitude,
-       Longitude, Map Heading, compass, Magnetic Declination, Aurora Kp),
+       Home Assistant is unaffected), in this order: Location (Latitude, Longitude,
+       Magnetic Declination, GPS Satellites and Altitude, Time Zone, Map Heading, Compass Offset and Reverse, Calibrate Compass, Heading Source, Location Source),
+       Sky (Aurora Kp, solar wind, Next Launch, aurora chance),
        Satellites (LEO Cone, Show LEO/Starlink/MEO/GEO/Orbital Debris and the
        counts), Celestial (Show Stars & Constellations, Stars Only After Dusk, Show
        Motion Trails, Show Planets), Alerts (NET-6a), Display (Backlight, Auto Brightness, 24-hour
@@ -1657,6 +1661,12 @@ NET-2c The Wi-Fi status page's second line is the SSID being tried (the station 
 NET-13 Each request's URL goes to the log at DEBUG when it starts ("<what>: GET <url>"), and the
        failure lines (client init, connect failed, HTTP <code>, read failed) end with the URL,
        so any download can be tried by hand from a browser.
+NET-16 sdkconfig CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL is 4096 (malloc over 4 KB from PSRAM; explicit INTERNAL requests,
+       the LVGL draw buffer and DMA, are unaffected). The HTTP client's own buffers (8 KB receive) failed to allocate in
+       internal RAM on a unit with ~44 KB free.
+UI-80c Launch and event QR codes: the link is the best-ranked https video link, else the best info page; none, no QR.
+       A launch's links come from its own reply (/launches/<id>/, 48 KB): the list has none. At most two such calls per list
+       refresh, only when no launch is inside 120 min of its time, a link kept per id for 6 h (and in the flash cache).
 NET-15 DNS check (dns_check, sat_tracker.h): on Wi-Fi connect and once a minute the DNS servers the unit holds are read; a
        change is logged ("dns (connected): main x, backup y, gateway z"); a unit with no main DNS server (a DHCP reply without
        one) gets the gateway as its main one, and every unit gets Cloudflare 1.1.1.1 as a backup when it has none, which
