@@ -42,7 +42,7 @@ constexpr float DUR_S = 10.0f;
 constexpr float SC = 0.75f;  // its size: the screen blit costs ~0.8 us a pixel, so the box it covers (and its fps) is set by this
 constexpr int N = 12;  // segments an arm is kept in
 constexpr uint32_t MIN_GAP_S = 15 * 60, MAX_GAP_S = 35 * 60, FIRST_MIN_S = 8 * 60, FIRST_MAX_S = 15 * 60;
-constexpr uint32_t MODEL_MS = 90;  // the model steps at ~11 fps: the octopus is slow
+constexpr uint32_t MODEL_MS = 70;  // the model steps at up to ~14 fps (a step is ~45 ms to paint and ~30 ms to refresh)
 constexpr uint32_t C_BODY = 0x80583C, C_BAND = 0xEEE0C0, C_DARK = 0x3C2820, C_ISS_BODY = 0x3E5CA0, C_ISS_BAND = 0xDECC82,
                    C_LION = 0xA04E34, C_SNAKE = 0x2C2630, C_SNAKE_BAND = 0xF4F0E8;
 
@@ -456,12 +456,6 @@ inline void frame() {
   if (!st.running)
     return;
   const uint32_t now = rocket::now_ms();
-  if (st.last_frame) {
-    const uint32_t gap = now - st.last_frame;
-    if (gap > st.max_gap)
-      st.max_gap = gap;
-  }
-  st.last_frame = now;
   const float t = (now - st.t0) / 1000.0f;
   if (t >= DUR_S || (rocket::st.back && lv_obj_get_parent(rocket::st.back) != lv_screen_active())) {
     end_visit();
@@ -469,6 +463,12 @@ inline void frame() {
   }
   if (st.frames > 0 && now - st.last_model < MODEL_MS)
     return;
+  if (st.last_frame) {
+    const uint32_t gap = now - st.last_frame;
+    if (gap > st.max_gap)
+      st.max_gap = gap;
+  }
+  st.last_frame = now;
   st.last_model = now;
   st.frames++;
   st.t = t;
@@ -579,11 +579,11 @@ inline bool begin(uint32_t seed) {
       lv_display_add_event_cb(d, rocket::on_prof, c, nullptr);
   }
   st.timer = lv_timer_create(
-      [](lv_timer_t *) {
-        if (rocket::now_ms() - st.last_frame >= 150)
+      [](lv_timer_t *) {  // the clock: a step skipped by the throttle invalidates nothing, so no refresh would come to wake it
+        if (rocket::now_ms() - st.last_model >= MODEL_MS)
           frame();
       },
-      40, nullptr);
+      20, nullptr);
   frame();
   ESP_LOGI("octo", "visit: %s, \"%s\" / \"%s\"", st.kind == K_LION ? "lionfish" : st.kind == K_SNAKE ? "sea snake" : "ISS", st.say[1], st.say[2]);
   return true;
