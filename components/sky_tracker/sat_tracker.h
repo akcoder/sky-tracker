@@ -757,6 +757,64 @@ inline const char *orbit_class(uint8_t cls) {  // UI-28
 constexpr float KM_PER_MI = 1.609344f;
 inline float dist(float km) { return ui.miles ? km / KM_PER_MI : km; }
 inline const char *dist_unit() { return ui.miles ? "mi" : "km"; }
+// UI-29b: fixed texts (the fact cards, the planet stories, the history lines) write their lengths as {km:22}, {km:1.39 million},
+// {kmh:2,000} and {km2:2,000}; this gives them in the unit the setting says (miles to 3 digits, once past 1,000). Returns a
+// static buffer: use it before the next call.
+inline const char *units_text(const char *in) {
+  static char out[1400];
+  size_t o = 0;
+  auto put = [&](const char *t) {
+    while (*t && o + 1 < sizeof(out))
+      out[o++] = *t++;
+  };
+  while (*in && o + 1 < sizeof(out)) {
+    const char *kinds[3] = {"{km:", "{kmh:", "{km2:"};
+    int kind = -1;
+    for (int k = 0; k < 3; k++)
+      if (!strncmp(in, kinds[k], strlen(kinds[k]))) {
+        kind = k;
+        break;
+      }
+    const char *end = kind >= 0 ? strchr(in, '}') : nullptr;
+    if (kind < 0 || end == nullptr) {
+      out[o++] = *in++;
+      continue;
+    }
+    char num[24];
+    const char *v = in + strlen(kinds[kind]);
+    size_t nl = 0;
+    for (; v < end && (isdigit((unsigned char) *v) || *v == '.' || *v == ','); v++)
+      if (*v != ',' && nl + 1 < sizeof(num))
+        num[nl++] = *v;
+    num[nl] = 0;
+    const bool million = strstr(v, "million") != nullptr && v < end;
+    double x = atof(num);
+    const double f = kind == 2 ? 1.0 / (1.609344 * 1.609344) : 1.0 / 1.609344;
+    if (ui.miles)
+      x *= f;
+    char t[40];
+    if (million) {
+      snprintf(t, sizeof(t), "%.2f million", x);
+    } else {
+      long r = lroundf((float) x);
+      if (ui.miles && r >= 1000) {  // three digits: a converted figure is not exact
+        long mag = 1;
+        while (r / mag >= 1000)
+          mag *= 10;
+        r = (r + mag / 2) / mag * mag;
+      }
+      if (r >= 1000)
+        snprintf(t, sizeof(t), "%ld,%03ld", r / 1000, r % 1000);
+      else
+        snprintf(t, sizeof(t), "%ld", r);
+    }
+    put(t);
+    put(kind == 0 ? (ui.miles ? " mi" : " km") : kind == 1 ? (ui.miles ? " mph" : " km/h") : (ui.miles ? " sq mi" : " km2"));
+    in = end + 1;
+  }
+  out[o] = 0;
+  return out;
+}
 
 inline uint32_t orbit_color(float alt_km) {  // UI-3
   if (alt_km >= 35000.0f)
@@ -4363,7 +4421,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
       if (Alert *a = add(C_HISTORY, ICON_HISTORY, nullptr)) {
         a->info = AI_HISTORY;
         const hist::Ev &e = *ev[(int64_t) (t / 1800) % ne];
-        snprintf(a->text, sizeof(a->text), "This day in %d: %s", e.y, e.text);
+        snprintf(a->text, sizeof(a->text), "This day in %d: %s", e.y, units_text(e.text));
       }
   }
   return n;
@@ -5577,7 +5635,7 @@ inline const char *planet_story(int p) {
       "Named for the king of the Roman gods (Greek Zeus). The largest planet: 11 Earths "
       "across. Its big moons are Zeus's companions.",
       "Named for the Roman god of farming and time (Greek Kronos), Jupiter's father. "
-      "Its rings are ice, 280,000 km wide.",
+      "Its rings are ice, {km:280,000} wide.",
   };
   return S[p];
 }
@@ -5603,7 +5661,7 @@ inline void planet_card_update(double t) {
            "Magnitude %.1f%s\n"
            "%s",
            a.az, compass(a.az), a.el, ps.dist_au, far / 1e6, ui.miles ? "mi" : "km", light, ps.mag,
-           ui.planet_visible[p] ? "   visible now" : "", planet_story(p));
+           ui.planet_visible[p] ? "   visible now" : "", units_text(planet_story(p)));
   set_text_if(ui.card_title, planets::name(p));
   set_text_if(ui.card_body, text);
   if (ui.card_moon)
@@ -6090,6 +6148,7 @@ struct ImgView {
   lv_obj_t *tab[4] = {}, *mlab[4] = {}, *east = nullptr, *west = nullptr;
   lv_obj_t *seg[2] = {};  // (unused: the Globe | region buttons are gone)
   lv_obj_t *facts = nullptr;  // UI-84: the fact card over the picture (touch the planet)
+  uint32_t swipe_ms = 0;      // UI-86: when the last swipe was seen (the touch that ends it is not a tap)
   lv_obj_t *credit = nullptr;  // UI-61b: the planet photo's credit, top left of the picture
   lv_obj_t *phase_mark = nullptr;  // UI-61g: the "Tonight's phase" switch
   int kind = net::IMG_SUN;
@@ -6109,7 +6168,7 @@ inline ImgView sv;
 // size: nothing is scaled on the device; LVGL's own scaling of an RGB565 picture needs RGB565A8 drawing, which this
 // build leaves out), centred at y PV_CY, with the caption (the name and the facts), the credit under it, the tab's own
 // controls and a strip of the planets (Earth among them) under that. Other tabs: the full 360 px picture.
-constexpr int PV_PX = 300, PV_CY = 209, PV_CAP_Y = 361, PV_CAP2_Y = 379, PV_STRIP_Y = 410;  // picture and captions centred between the buttons (46) and the strip
+constexpr int PV_PX = 300, PV_CY = 209, PV_CAP_Y = 365, PV_CAP2_Y = 383, PV_STRIP_Y = 410;  // picture and captions centred between the buttons (46) and the strip
 constexpr int PV_X0 = 240 - PV_PX / 2, PV_Y0 = PV_CY - PV_PX / 2;
 inline int pv_x(int x) { return sv.pf ? PV_X0 + x : (480 - net::IMG_PX) / 2 + x; }
 inline int pv_y(int y) { return sv.pf ? PV_Y0 + y : 48 + y; }
@@ -6374,6 +6433,7 @@ inline bool planet_photo_ready(int p) {
 }
 inline void planet_view_update(double t) {
   const int p = sv.kind - VIEW_PLANET;
+  img_request(net::IMG_EARTH, t);  // UI-86a: the latest Earth picture comes in the background, ready for the swipe to Earth
   for (int k : {(int) net::IMG_EARTH, (int) net::IMG_REGION})  // planet_px is no longer the Blue Marble
     if (net::img_shown[k] == planet_px && !live.img_px[k])
       net::img_shown[k] = nullptr;
@@ -6644,9 +6704,12 @@ inline void img_view_update(double t) {
     } else if (have) {
       snprintf(c2, sizeof(c2), "The latest picture%s", tail);
     } else {
+      const long gv = lroundf(dist(35786.0f));  // UI-59: the geostationary height, in the unit the setting says
       snprintf(c2, sizeof(c2), "%s", k == net::IMG_SUN      ? "Bright: active regions   Edge: prominences"
                                      : k == net::IMG_ALLSKY ? "The whole sky over Poker Flat, dusk to dawn"
-                                                            : "Seen from 35,786 km above the equator");
+                                                            : "");
+      if (k != net::IMG_SUN && k != net::IMG_ALLSKY)
+        snprintf(c2, sizeof(c2), "Seen from %ld,%03ld %s above the equator", gv / 1000, gv % 1000, dist_unit());
     }
   }
   set_text_if(sv.cap1, c1);
@@ -6678,7 +6741,10 @@ inline void facts_hide_cb(lv_event_t *) {
   if (sv.facts)
     lv_obj_add_flag(sv.facts, LV_OBJ_FLAG_HIDDEN);
 }
+inline bool swipe_recent();
 inline void facts_open_cb(lv_event_t *) {
+  if (swipe_recent())
+    return;  // UI-86: the touch that ended a swipe
   const int fi = facts_index(sv.kind);
   if (fi < 0 || sv.root == nullptr)
     return;
@@ -6719,7 +6785,7 @@ inline void facts_open_cb(lv_event_t *) {
   add(w.label_font, 0x7E8BB3, "Named for", 6);
   add(body, 0xC9D3F2, b.named, 0);
   add(w.label_font, 0x7E8BB3, "Facts", 6);
-  add(body, 0xC9D3F2, b.facts, 0);
+  add(body, 0xC9D3F2, units_text(b.facts), 0);
   lv_obj_t *hint = lv_label_create(sv.facts);  // as f1-tracker's detail card
   lv_obj_add_flag(hint, LV_OBJ_FLAG_FLOATING);
   if (w.label_font)
@@ -6730,10 +6796,56 @@ inline void facts_open_cb(lv_event_t *) {
   lv_obj_remove_flag(sv.facts, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(sv.facts);
 }
+inline bool swipe_recent();
 inline void img_tab_cb(lv_event_t *e) {
   const int kind = (int) (intptr_t) lv_event_get_user_data(e);
-  if (kind != sv.kind)
+  if (kind != sv.kind && !swipe_recent())
     img_view_open_now(kind);
+}
+// UI-86: the planets in the strip's order; a swipe left shows the next one, a swipe right the one before (the ends wrap)
+inline int planet_kind_at(int i) {
+  static const int order[9] = {VIEW_PLANET + planets::MERCURY, VIEW_PLANET + planets::VENUS, net::IMG_EARTH,
+                               VIEW_PLANET + planets::MARS,    VIEW_PLANET + planets::JUPITER, VIEW_PLANET + planets::SATURN,
+                               VIEW_PLANET + planets::N_PLANETS, VIEW_PLANET + planets::N_PLANETS + 1,
+                               VIEW_PLANET + planets::N_PLANETS + 2};
+  return order[((i % 9) + 9) % 9];
+}
+inline int planet_swipe_target(int kind, int dir) {  // -1: not on the Planets tab
+  if (!(kind >= VIEW_PLANET || kind == net::IMG_EARTH))
+    return -1;
+  for (int i = 0; i < 9; i++)
+    if (planet_kind_at(i) == kind)
+      return planet_kind_at(i + dir);
+  return -1;
+}
+inline bool swipe_recent() { return sv.swipe_ms != 0 && lv_tick_elaps(sv.swipe_ms) < 400; }
+// UI-86: press and release, not LVGL's gesture (it came after the click: a swipe on the picture opened its facts). The
+// release of any drag of 10 px or more is not a tap (swipe_recent); a horizontal one (28 px, at least twice its height,
+// within 700 ms) steps to the next or previous planet. As f1-tracker does (its decision 202).
+inline lv_point_t swipe_from = {0, 0};
+inline uint32_t swipe_t0 = 0;
+inline void swipe_press_cb(lv_event_t *) {
+  lv_indev_t *in = lv_indev_active();
+  if (in)
+    lv_indev_get_point(in, &swipe_from);
+  swipe_t0 = lv_tick_get();
+}
+inline void swipe_release_cb(lv_event_t *) {
+  lv_indev_t *in = lv_indev_active();
+  if (in == nullptr || sv.root == nullptr)
+    return;
+  lv_point_t p;
+  lv_indev_get_point(in, &p);
+  const int dx = p.x - swipe_from.x, dy = p.y - swipe_from.y;
+  if (dx * dx + dy * dy >= 100)
+    sv.swipe_ms = lv_tick_get();
+  if (std::abs(dx) < 28 || std::abs(dx) < 2 * std::abs(dy) || lv_tick_elaps(swipe_t0) > 700)
+    return;
+  if (sv.facts != nullptr && !lv_obj_has_flag(sv.facts, LV_OBJ_FLAG_HIDDEN))
+    return;
+  const int to = planet_swipe_target(sv.kind, dx < 0 ? 1 : -1);
+  if (to >= 0)
+    img_view_open_now(to);
 }
 inline void img_view_open_now(int kind, int planet) {
   if (planet == -2)
@@ -6759,6 +6871,8 @@ inline void img_view_open_now(int kind, int planet) {
   lv_obj_set_style_bg_color(root, lv_color_hex(0x070B18), 0);
   lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
   lv_obj_add_flag(root, LV_OBJ_FLAG_CLICKABLE);  // (the page under it is hidden: page_hide_under, PERF-22)
+  lv_obj_add_event_cb(root, swipe_press_cb, LV_EVENT_PRESSED, nullptr);  // UI-86: swipe between the planets
+  lv_obj_add_event_cb(root, swipe_release_cb, LV_EVENT_RELEASED, nullptr);
   auto button = [&](int x, int wd, const char *text, bool on) {
     lv_obj_t *b = lv_button_create(root);
     lv_obj_set_size(b, wd, 36);
@@ -6798,7 +6912,7 @@ inline void img_view_open_now(int kind, int planet) {
   lv_obj_set_pos(sv.img, pf ? PV_X0 : (480 - net::IMG_PX) / 2, pf ? PV_Y0 : 48);
   lv_obj_add_flag(sv.img, LV_OBJ_FLAG_HIDDEN);
   if ((pf && !alaska) || kind == net::IMG_SUN || kind == net::IMG_MOON) {  // UI-84: touch the picture for its facts
-    lv_obj_add_flag(sv.img, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(sv.img, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE));  // (press and release reach the root: UI-86)
     lv_obj_add_event_cb(sv.img, facts_open_cb, LV_EVENT_CLICKED, nullptr);
   }
   sv.msg = finder_label(root, w.card_font ? w.card_font : w.label_font, 0xC9D3F2, pf ? 150 + (PV_CY - 196) : 150);
@@ -6878,7 +6992,7 @@ inline void img_view_open_now(int kind, int planet) {
     for (int i = 0; i < 9; i++) {
       const bool on = chips[i].p >= 0 ? kind == chips[i].kind : kind == net::IMG_EARTH;
       lv_obj_t *c = lv_button_create(root);
-      lv_obj_set_size(c, 52, 62);
+      lv_obj_set_size(c, 52, 66);  // UI-86a: 4 px taller, so the name sits 4 px lower under its picture
       lv_obj_set_pos(c, 1 + i * 53, PV_STRIP_Y);
       lv_obj_set_style_bg_color(c, lv_color_hex(on ? 0x24356A : 0x121A36), 0);
       lv_obj_set_style_shadow_width(c, 0, 0);
@@ -6915,6 +7029,7 @@ inline void img_view_open_now(int kind, int planet) {
       lv_label_set_text(nl, chips[i].name);
       lv_obj_align(nl, LV_ALIGN_BOTTOM_MID, 0, -3);
       lv_obj_add_event_cb(c, img_tab_cb, LV_EVENT_CLICKED, (void *) (intptr_t) chips[i].kind);
+      lv_obj_add_flag(c, LV_OBJ_FLAG_EVENT_BUBBLE);  // UI-86
     }
   }
   if (pf && alaska) {  // Poker Flat's all-sky camera, and NOAA's picture of the region (the satellite)

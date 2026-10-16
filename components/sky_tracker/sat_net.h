@@ -1284,7 +1284,8 @@ constexpr uint32_t HOLD_MAGIC = 0x534B5948;    // "SKYH"
 struct HoldRec {
   uint32_t magic;
   uint32_t crc;
-  double until;  // UTC: no CelesTrak download before this
+  double until;     // UTC: no CelesTrak download before this
+  double decay_at;  // UTC: when the re-entries list was last downloaded (a reboot must not ask again inside 6 h)
 };
 struct CacheHdr {
   uint32_t magic, ver, rec_size, n, n2, flags;  // flags bit0: have_iss
@@ -1433,20 +1434,39 @@ inline bool cache_header(uint32_t off, uint32_t rec, CacheHdr &h) {
 
 // At task start: find the partition and load whatever is valid.
 // DATA-12: the 403 back-off survives a reboot. Written only on a 403, so rarely.
-inline void hold_save(double until) {
+inline double hold_until_kept = 0, decay_at_kept = 0;
+inline uint32_t hold_crc(const HoldRec &h) {
+  return esp_rom_crc32_le(0, (const uint8_t *) &h.until, sizeof(h.until) + sizeof(h.decay_at));
+}
+inline void hold_write() {
   if (cache_part == nullptr)
     return;
-  HoldRec h{HOLD_MAGIC, 0, until};
-  h.crc = esp_rom_crc32_le(0, (const uint8_t *) &h.until, sizeof(h.until));
+  HoldRec h{HOLD_MAGIC, 0, hold_until_kept, decay_at_kept};
+  h.crc = hold_crc(h);
   if (esp_partition_erase_range(cache_part, CACHE_HOLD_OFF, 0x1000) == ESP_OK &&
       esp_partition_write(cache_part, CACHE_HOLD_OFF, &h, sizeof(h)) == ESP_OK)
-    ESP_LOGI(TAG, "cache: CelesTrak hold saved");
+    ESP_LOGI(TAG, "cache: CelesTrak hold / re-entries time saved");
+}
+inline void hold_save(double until) {
+  hold_until_kept = until;
+  hold_write();
+}
+inline void decay_save(double now) {  // the sector's second field: CelesTrak 403s the same list asked for twice in 2 h
+  decay_at_kept = now;
+  hold_write();
 }
 inline double hold_load() {
   HoldRec h{};
   if (cache_part == nullptr || esp_partition_read(cache_part, CACHE_HOLD_OFF, &h, sizeof(h)) != ESP_OK ||
-      h.magic != HOLD_MAGIC || h.crc != esp_rom_crc32_le(0, (const uint8_t *) &h.until, sizeof(h.until)))
+      h.magic != HOLD_MAGIC)
     return 0;
+  if (h.crc != hold_crc(h)) {  // the record before 4.6.46 held `until` only (its CRC covered just that)
+    if (h.crc != esp_rom_crc32_le(0, (const uint8_t *) &h.until, sizeof(h.until)))
+      return 0;
+    h.decay_at = 0;
+  }
+  hold_until_kept = h.until;
+  decay_at_kept = h.decay_at;
   return h.until;
 }
 
@@ -3617,6 +3637,8 @@ inline double decay_estimate(const Omm &o) {  // UTC seconds, 0: not decaying
   return o.epoch + std::max(0.0, DECAY_N_END - o.n_revday) / (2.0 * o.ndot) * 86400.0;
 }
 inline void do_decay(double now) {
+  if (decay_next == 0 && decay_at_kept > 0)
+    decay_next = decay_at_kept + DECAY_EVERY_S;  // DATA-12b: asked before the reboot: not again before its 6 h are up
   if (now < decay_next || now < 1.7e9)
     return;
   decay_next = now + DECAY_RETRY_S;
@@ -3673,6 +3695,7 @@ inline void do_decay(double now) {
     out.push_back(d);
   }
   decay_next = now + DECAY_EVERY_S;
+  decay_save(now);
   ESP_LOGI(TAG, "re-entries: %u within two days (of %u decaying soon)", (unsigned) out.size(), (unsigned) els.size());
   xSemaphoreTake(mutex, portMAX_DELAY);
   std::swap(pending.decays, out);

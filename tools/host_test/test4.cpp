@@ -1762,6 +1762,27 @@ int main() {
         CHECK(sat::heading_update_due(45.0f, 100, 100), "heading: a big swing is followed at once");
         CHECK(sat::heading_update_due(-170.0f, 100, 100), "heading: either way round");
       }
+    {  // UI-29b: fixed texts follow the distance unit
+      const bool was = sat::ui.miles;
+      sat::ui.miles = false;
+      CHECK(!strcmp(sat::units_text("Olympus Mons, {km:22} high; {kmh:2,000}; {km:1.39 million} across; {km2:2,000}"),
+                    "Olympus Mons, 22 km high; 2,000 km/h; 1.39 million km across; 2,000 km2"), "units: km");
+      sat::ui.miles = true;
+      const char *m = sat::units_text("{km:22} {kmh:2,000} {km:1.39 million} {km2:2,000} {km:384,400} {km:280,000}");
+      CHECK(!strcmp(m, "14 mi 1,240 mph 0.86 million mi 772 sq mi 239,000 mi 174,000 mi"), "units: miles (%s)", m);
+      sat::ui.miles = was;
+    }
+    {  // UI-86: a swipe steps along the planets strip (Mercury, Venus, Earth, Mars ... Pluto) and wraps
+      namespace p = sat::planets;
+      const int V = sat::VIEW_PLANET;
+      CHECK(sat::planet_swipe_target(V + p::MERCURY, 1) == V + p::VENUS, "swipe: Mercury -> Venus");
+      CHECK(sat::planet_swipe_target(V + p::VENUS, 1) == sat::net::IMG_EARTH, "swipe: Venus -> Earth");
+      CHECK(sat::planet_swipe_target(sat::net::IMG_EARTH, 1) == V + p::MARS, "swipe: Earth -> Mars");
+      CHECK(sat::planet_swipe_target(V + p::MARS, -1) == sat::net::IMG_EARTH, "swipe: Mars back to Earth");
+      CHECK(sat::planet_swipe_target(V + p::N_PLANETS + 2, 1) == V + p::MERCURY, "swipe: Pluto wraps to Mercury");
+      CHECK(sat::planet_swipe_target(V + p::MERCURY, -1) == V + p::N_PLANETS + 2, "swipe: Mercury wraps back to Pluto");
+      CHECK(sat::planet_swipe_target(sat::net::IMG_SUN, 1) < 0, "swipe: not on the Sun tab");
+    }
     {  // UI-16c: the Settings heading field follows the compass while it owns the heading
       lv_obj_t *ta = lv_textarea_create(lv_screen_active());
       lv_textarea_set_text(ta, "7");
@@ -3171,6 +3192,18 @@ int main() {
     net::decay_next = 0;
     net::status.next_try = 0;
     net::do_decay(sat_host_now);
+    CHECK(net::decay_at_kept == sat_host_now, "re-entries: the download time is kept for a reboot (DATA-12b)");
+    {  // a reboot soon after: no second download
+      const double keep_next = net::decay_next;
+      net::decay_next = 0;  // (a new boot)
+      net::decay_at_kept = sat_host_now - 600;
+      host_http_bodies.erase("SPECIAL=DECAYING");
+      net::do_decay(sat_host_now);
+      CHECK(net::decay_next == sat_host_now - 600 + net::DECAY_EVERY_S, "re-entries: not asked again after a reboot inside 6 h");
+      host_http_bodies["SPECIAL=DECAYING"] = slurp(HOST_DIR "/fixtures/decaying.csv");
+      net::decay_next = keep_next;
+      net::decay_at_kept = sat_host_now;
+    }
     sat::tick();
     bool sorted = true;
     for (size_t i = 1; i < sat::live.decays.size(); i++)

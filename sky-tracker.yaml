@@ -375,6 +375,10 @@ update:
       sorting_group_id: grp_system
 
 # ------------------------------------------------------------------ hardware
+touchscreen:
+  - id: !extend touch
+    update_interval: 16ms          # UI-86: the GT911 was read every 50 ms (the default) against LVGL's 16 ms: most reads moved 0 px, a swipe lost its speed
+
 # (i2c: bus_a, the touch, is the board package's; the compass's own bus is made at run time, HW-9c)
 
 uart:                            # HW-8: optional GPS, receive only (NMEA, 9600 baud)
