@@ -793,8 +793,9 @@ UI-83  A dinosaur on the About page: touching the Sky Tracker logo there makes a
        sky_extra.cpp (BUILD-7). The logo and the Play Dinosaur Animation button (web, HA) start it; it begins already
        walking in, and a touch in its first 2.5 s is ignored (a second tap on the logo was ending it unseen).
        The Play Launch / Undocking / Splashdown / Dinosaur Animation buttons are the web page's Animations group.
-UI-85  The octopus: a mimic octopus (brown with cream bands) visits the map 2-3 times an hour, ~10 s: it jets in from the
-       right edge, says a line (a speech bubble above it), morphs into ONE thing chosen at random for the visit, with a
+UI-85  The octopus: a mimic octopus (brown with cream bands) visits the map 2-3 times an hour, ~10 s: it jets in from
+       beyond the right edge, fast and slowing as it arrives (like the dinosaur's entrance; the heavy first refresh does not
+       count against the entrance), says a line (a speech bubble above it), morphs into ONE thing chosen at random for the visit, with a
        line to match: a lionfish (arms fanned out, redder), a banded sea snake (two arms stretched out in a wave, the
        rest drawn in, dark with white bands) or the ISS (arms straight out to each side, blue and gold, like the solar
        arrays), then turns back, squirts a cloud of ink and jets off to the left. Each beat's line is drawn at random from a pool (arrival 5, lionfish 3, sea snake 3, ISS 4, ink 4: the arrival, the morph and the ink). The first

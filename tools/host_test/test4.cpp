@@ -2984,9 +2984,17 @@ int main() {
       rk::set_enabled(true);
       oc::set_enabled(true);
       // the timeline: in from the edge, on screen while it talks, out to the left
-      float x, y;
-      oc::pos(0, x, y);
-      CHECK(x > 380 && x < 480, "octopus enters at the right edge (%.0f)", x);
+      oc::st.kind = 0;
+      oc::Model m0;
+      oc::build(0, m0);
+      CHECK(m0.x0 > 479, "octopus starts off the screen, beyond the right edge (%.0f)", m0.x0);
+      float xa, ya, xb, yb;
+      oc::pos(0.3f, xa, ya);
+      oc::pos(0.6f, xb, yb);
+      float xc, yc, xd, yd;
+      oc::pos(1.5f, xc, yc);
+      oc::pos(1.8f, xd, yd);
+      CHECK(xa - xb > 3 * (xc - xd) && std::fabs(xd - 260) < 8, "it arrives fast and slows down (%.0f px in 0.3 s at first, %.0f at the end)", xa - xb, xc - xd);
       bool inside = true;
       for (int kind = 0; kind < 2; kind++) {
         oc::st.kind = kind;

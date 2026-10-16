@@ -65,9 +65,9 @@ inline float ease(float x) {
 }
 inline float seg(float t, float a, float b) { return ease((t - a) / (b - a)); }
 inline void pos(float t, float &x, float &y) {
-  if (t < 1.8f) {  // in from the right edge, jetting
-    const float k = seg(t, 0, 1.8f);
-    x = 430 - 170 * k;
+  if (t < 1.8f) {  // in from beyond the right edge, jetting: fast, then slowing as it arrives (the dinosaur's entrance)
+    const float u = 1 - t / 1.8f, k = 1 - u * u * u;
+    x = 640 - 380 * k;
     y = 262 + 6 * std::sin(t * 5);
   } else if (t < EXIT_T) {  // hovers
     x = 260 + 10 * std::sin((t - 2.2f) * 0.9f);
@@ -486,6 +486,10 @@ inline void frame() {
   if (!st.running)
     return;
   const uint32_t now = rocket::now_ms();
+  // The first step is followed by a heavy refresh (the whole screen is drawn once, from the snapshot); the time it
+  // took does not count, so the entrance starts when the screen is ready (the dinosaur's ENTRY_SKIP_MS idea).
+  if (st.frames == 1 && now - st.last_model > MODEL_MS * 2)
+    st.t0 += (now - st.last_model) - MODEL_MS;
   const float t = (now - st.t0) / 1000.0f;
   if (t >= DUR_S || (rocket::st.back && lv_obj_get_parent(rocket::st.back) != lv_screen_active())) {
     end_visit();
@@ -516,12 +520,23 @@ inline void frame() {
       bx1 = std::min<int32_t>(bx1, cx1), by1 = std::min<int32_t>(by1, cy1), bx2 = std::max<int32_t>(bx2, cx2), by2 = std::max<int32_t>(by2, cy2);
   }
   lv_area_t box = {std::max<int32_t>(0, bx1), std::max<int32_t>(0, by1), std::min<int32_t>(479, bx2), std::min<int32_t>(479, by2)};
+  const bool box_ok = box.x2 >= box.x1 && box.y2 >= box.y1;  // (empty: all of it is off the screen)
   // What is drawn on the screen is one RGB565 image (the composite), blitted over the dirty box in a few
   // milliseconds. The paint happens here, off the scan, into the composite.
   lv_area_t reg = box;
+  bool reg_ok = box_ok;
   if (st.last_box.x2 >= st.last_box.x1) {
-    reg.x1 = std::min(reg.x1, st.last_box.x1), reg.y1 = std::min(reg.y1, st.last_box.y1);
-    reg.x2 = std::max(reg.x2, st.last_box.x2), reg.y2 = std::max(reg.y2, st.last_box.y2);
+    if (box_ok) {
+      reg.x1 = std::min(reg.x1, st.last_box.x1), reg.y1 = std::min(reg.y1, st.last_box.y1);
+      reg.x2 = std::max(reg.x2, st.last_box.x2), reg.y2 = std::max(reg.y2, st.last_box.y2);
+    } else {
+      reg = st.last_box;  // it has just left: put back what it covered
+    }
+    reg_ok = true;
+  }
+  if (!reg_ok) {
+    st.last_box = {0, 0, -1, -1};
+    return;
   }
   const uint32_t t_paint = rocket::now_us();
   for (int32_t y = reg.y1; y <= reg.y2; y++)  // the screen as it was, under the box
@@ -544,7 +559,7 @@ inline void frame() {
   if (t >= EXIT_T)
     st.exit_us += us, st.exit_n++, st.exit_px += (uint32_t) ((reg.x2 - reg.x1 + 1) * (reg.y2 - reg.y1 + 1));
   inval(reg);
-  st.last_box = box;
+  st.last_box = box_ok ? box : lv_area_t{0, 0, -1, -1};
 }
 inline void on_refr(lv_event_t *) {
   frame();
