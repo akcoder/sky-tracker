@@ -2,7 +2,7 @@
 // Optional add-on sensors (HW-8, HW-9):
 //   - GPS (ATGM336H or any NMEA module, 9600 baud) on a UART: when it has a fix it
 //     supplies the observer latitude/longitude, and the manual fields are locked.
-//   - Magnetometer on its own I2C bus (GPIO1/2): QMC5883L (0x0D), QMC5883P (0x2C) or
+//   - Magnetometer on its own hardware I2C bus, its two pins chosen at run time (HW-9c; default GPIO1/2): QMC5883L (0x0D), QMC5883P (0x2C) or
 //     HMC5883L (0x1E), auto-detected. When present it supplies the map heading, and
 //     the manual heading is locked.
 // Everything here runs on the main loop (the I2C bus is shared with the GT911 touch
@@ -10,8 +10,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include "esphome/components/i2c/i2c_bus.h"
 #include "driver/gpio.h"
+#include "driver/i2c_master.h"
 #include "esp_attr.h"
 
 namespace sat {
@@ -36,8 +36,27 @@ struct Calibration {  // hard-iron centre and soft-iron scale for X and Y (raw c
   bool valid = false;
 };
 
+// HW-9c: the compass bus. ESPHome fixes an i2c bus's pins at build time; this one is made at run time with
+// ESP-IDF's own i2c_master driver (the same driver ESPHome's touch bus uses; a free controller is picked), a device
+// handle for each address the three chips can answer at.
+struct Bus {
+  i2c_master_bus_handle_t bus = nullptr;
+  static constexpr int N_DEV = 3;
+  static constexpr uint8_t ADDR[N_DEV] = {0x0D, 0x2C, 0x1E};  // QMC5883L, QMC5883P, HMC5883L
+  i2c_master_dev_handle_t dev[N_DEV] = {};
+  int sda = -1, scl = -1;
+  bool ok() const { return bus != nullptr; }
+  i2c_master_dev_handle_t at(uint8_t a) const {
+    for (int i = 0; i < N_DEV; i++)
+      if (ADDR[i] == a)
+        return dev[i];
+    return nullptr;
+  }
+};
+
 struct Compass {
-  esphome::i2c::I2CBus *bus = nullptr;
+  Bus bus;
+  bool probe_now = false;  // look for the chip at the next poll (the pins just changed)
   Chip chip = CHIP_NONE;
   uint8_t addr = 0;
   int fails = 0;
@@ -64,11 +83,13 @@ struct Compass {
 inline Compass compass;
 
 inline bool reg_write(uint8_t a, uint8_t reg, uint8_t val) {
-  uint8_t b[2] = {reg, val};
-  return compass.bus->write(a, b, 2) == esphome::i2c::ERROR_OK;
+  const uint8_t b[2] = {reg, val};
+  i2c_master_dev_handle_t d = compass.bus.at(a);
+  return d != nullptr && i2c_master_transmit(d, b, 2, 50) == ESP_OK;
 }
 inline bool reg_read(uint8_t a, uint8_t reg, uint8_t *out, size_t n) {
-  return compass.bus->write_readv(a, &reg, 1, out, n) == esphome::i2c::ERROR_OK;
+  i2c_master_dev_handle_t d = compass.bus.at(a);
+  return d != nullptr && i2c_master_transmit_receive(d, &reg, 1, out, n, 50) == ESP_OK;
 }
 
 inline bool init_chip() {
@@ -90,7 +111,7 @@ inline bool init_chip() {
 
 // Look for a magnetometer; true when one is found and started.
 inline bool probe() {
-  if (compass.bus == nullptr)
+  if (!compass.bus.ok())
     return false;
   uint8_t b[3] = {0, 0, 0};
   compass.chip = CHIP_NONE;
@@ -159,7 +180,59 @@ inline int read_raw(float &x, float &y, float &z) {
   }
 }
 
-inline void set_bus(esphome::i2c::I2CBus *bus) { compass.bus = bus; }
+// HW-9c: the pins the compass is wired to, from the SDA / SCL Pin settings (restored at boot, changeable on the web
+// page and in Home Assistant). Only the board's free header pins are accepted (the rest are the panel, touch, console,
+// GPS, flash and PSRAM): 1 and 2 (the relay pads), 40 and 41. Anything else, or the same pin twice, turns the compass off.
+inline bool pin_allowed(int p) { return p == 1 || p == 2 || p == 40 || p == 41; }
+inline void compass_close_bus() {
+  Bus &b = compass.bus;
+  for (auto &d : b.dev)
+    if (d) {
+      i2c_master_bus_rm_device(d);
+      d = nullptr;
+    }
+  if (b.bus) {
+    i2c_del_master_bus(b.bus);
+    b.bus = nullptr;
+  }
+  b.sda = b.scl = -1;
+}
+inline void compass_set_pins(int sda, int scl) {
+  compass_close_bus();
+  compass.chip = CHIP_NONE;
+  compass.have = false;
+  compass.calibrating = false;
+  compass.fails = 0;
+  if (!pin_allowed(sda) || !pin_allowed(scl) || sda == scl) {
+    ESP_LOGW(HW_TAG, "compass off: SDA GPIO%d / SCL GPIO%d (the free pins are 1, 2, 40 and 41, and two different ones)", sda, scl);
+    return;
+  }
+  i2c_master_bus_config_t cfg = {};
+  cfg.i2c_port = (i2c_port_num_t) -1;  // any free controller
+  cfg.sda_io_num = (gpio_num_t) sda;
+  cfg.scl_io_num = (gpio_num_t) scl;
+  cfg.clk_source = I2C_CLK_SRC_DEFAULT;
+  cfg.glitch_ignore_cnt = 7;
+  cfg.flags.enable_internal_pullup = true;  // (the module has its own pull-ups as well)
+  Bus &b = compass.bus;
+  if (i2c_new_master_bus(&cfg, &b.bus) != ESP_OK) {
+    b.bus = nullptr;
+    ESP_LOGW(HW_TAG, "compass: no I2C controller for SDA GPIO%d / SCL GPIO%d", sda, scl);
+    return;
+  }
+  for (int i = 0; i < Bus::N_DEV; i++) {
+    i2c_device_config_t dc = {};
+    dc.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dc.device_address = Bus::ADDR[i];
+    dc.scl_speed_hz = 100000;
+    if (i2c_master_bus_add_device(b.bus, &dc, &b.dev[i]) != ESP_OK)
+      b.dev[i] = nullptr;
+  }
+  b.sda = sda;
+  b.scl = scl;
+  compass.probe_now = true;
+  ESP_LOGI(HW_TAG, "compass bus: SDA GPIO%d, SCL GPIO%d", sda, scl);
+}
 inline void set_calibration(float cx, float cy, float sx, float sy, bool valid) {
   compass.cal = {cx, cy, (sx > 0.05f && sx < 20) ? sx : 1.0f, (sy > 0.05f && sy < 20) ? sy : 1.0f, valid};
 }
@@ -272,10 +345,11 @@ inline void cal_feed(float x, float y, uint32_t now_ms) {
 // Poll at ~5 Hz from the main loop. Handles detection, hot-unplug and smoothing.
 // Returns true while a calibration run has just ended (caller saves the result).
 inline bool compass_poll(uint32_t now_ms) {
-  if (compass.bus == nullptr)
+  if (!compass.bus.ok())
     return false;
   if (compass.chip == CHIP_NONE) {
-    if ((int32_t) (now_ms - compass.next_probe_ms) >= 0) {
+    if (compass.probe_now || (int32_t) (now_ms - compass.next_probe_ms) >= 0) {
+      compass.probe_now = false;
       compass.next_probe_ms = now_ms + 30000;  // look again every 30 s
       probe();
     }

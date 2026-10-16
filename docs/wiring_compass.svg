@@ -54,7 +54,7 @@
   <!-- notes -->
   <g fill="#333">
     <text x="40" y="410" font-weight="bold">Notes</text>
-    <text x="40" y="432">- Its own I2C bus (bus_b, 100 kHz). The GY-271 has pull-up resistors on board: none to add.</text>
+    <text x="40" y="432">- Its own I2C bus (100 kHz). The pins are the Compass SDA / SCL Pin settings (1, 2, 40 or 41). The GY-271 has pull-ups: none to add.</text>
     <text x="40" y="452">- GPIO2 and GPIO1 drive relays 2 and 3 on the relay version of the board: compass only without relays.</text>
     <text x="40" y="472">- Found at boot and every 30 s: QMC5883L at 0x0D, QMC5883P at 0x2C, HMC5883L at 0x1E.</text>
     <text x="40" y="492">- Mount level, chip up, the X arrow toward where the map top should face, away from board, speaker and steel.</text>
