@@ -73,6 +73,10 @@ inline void when_quiet(void (*fn)(), uint32_t hold_ms) {
       },
       250, nullptr);
 }
+// a pointer to the entity's protected state_ (named through a derived class, which is allowed)
+struct Poke : esphome::update::UpdateEntity {
+  static esphome::update::UpdateState esphome::update::UpdateEntity::*state() { return &Poke::state_; }
+};
 #endif
 
 void init(esphome::update::UpdateEntity *e, const lv_font_t *title, const lv_font_t *body, const lv_font_t *small) {
@@ -82,6 +86,24 @@ void init(esphome::update::UpdateEntity *e, const lv_font_t *title, const lv_fon
 #else
   tracker::upd::run_hook = when_quiet;
   tracker::upd::init(e, title, body, small, nullptr);
+  // UI-68: ESPHome's http_request entity calls ANY version difference "available", an older release too (a dev build
+  // newer than the published one showed UPDATE AVAILABLE in the web page and Home Assistant, with nothing to install).
+  // The display already counts only a newer version (newer_only); this puts the entity's own state right, within 5 s
+  // of each check.
+  lv_timer_create(
+      [](lv_timer_t *) {
+        auto *u = tracker::upd::ent;
+        if (u == nullptr || u->state != esphome::update::UPDATE_STATE_AVAILABLE)
+          return;
+        if (tracker::upd::newer_only((int) u->state, tracker::upd::latest().c_str(), tracker::upd::current().c_str()) ==
+            tracker::upd::E_AVAILABLE)
+          return;
+        u->*Poke::state() = esphome::update::UPDATE_STATE_NO_UPDATE;  // (state is a read-only view of a protected field)
+        u->publish_state();
+        ESP_LOGI("upd", "firmware: the manifest's %s is not newer than %s: no update", tracker::upd::latest().c_str(),
+                 tracker::upd::current().c_str());
+      },
+      5000, nullptr);
 #endif
 }
 void set_button(lv_obj_t *b) {

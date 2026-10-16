@@ -39,6 +39,7 @@ namespace sat {
 namespace octo {
 
 constexpr float DUR_S = 10.0f;
+constexpr float SC = 0.75f;  // its size: the screen blit costs ~0.8 us a pixel, so the box it covers (and its fps) is set by this
 constexpr int N = 12;  // segments an arm is kept in
 constexpr uint32_t MIN_GAP_S = 15 * 60, MAX_GAP_S = 35 * 60, FIRST_MIN_S = 8 * 60, FIRST_MAX_S = 15 * 60;
 constexpr uint32_t MODEL_MS = 90;  // the model steps at ~11 fps: the octopus is slow
@@ -135,7 +136,7 @@ inline float rnd01() { return (rnd() % 10000) / 10000.0f; }
 
 inline void build(float t, Model &m) {
   pos(t, m.cx, m.cy);
-  m.my = m.cy - 46;
+  m.my = m.cy - 46 * SC;
   m.p = jet(t);
   const float w = w_morph(t);
   m.wl = st.kind == K_LION ? w : 0;
@@ -144,8 +145,8 @@ inline void build(float t, Model &m) {
   const float wn = 1 - m.wl - m.wi - m.ws;
   m.body = mix3(mix3(mix3(C_BODY, C_LION, m.wl), C_ISS_BODY, m.wi), C_SNAKE, m.ws);
   m.band = mix3(mix3(C_BAND, C_ISS_BAND, m.wi), C_SNAKE_BAND, m.ws);
-  m.rx = 56 * (1 - 0.10f * m.p);
-  m.ry = 66 * (1 + 0.08f * m.p);
+  m.rx = 56 * SC * (1 - 0.10f * m.p);
+  m.ry = 66 * SC * (1 + 0.08f * m.p);
   const float trail = std::max(-1.2f, std::min(1.2f, -vel(t) / 260.0f));
   for (int k = 0; k < 8; k++) {
     const bool left = k < 4;
@@ -180,6 +181,10 @@ inline void build(float t, Model &m) {
       m.ax[k][i] = x;
       m.ay[k][i] = y;
     }
+    for (int i = 0; i <= N; i++) {  // the whole octopus at SC about its centre
+      m.ax[k][i] = m.cx + (m.ax[k][i] - m.cx) * SC;
+      m.ay[k][i] = m.cy + (m.ay[k][i] - m.cy) * SC;
+    }
   }
   m.blink = 1;
   for (float bt : {3.0f, 6.2f, 8.9f})
@@ -187,17 +192,17 @@ inline void build(float t, Model &m) {
       m.blink = 0.12f;
   m.look = t < 2.3f ? -4.0f : 3 * std::sin(t * 1.3f);
   // the box: every arm point, the mantle, a margin for the arm widths
-  float x0 = m.cx - m.rx - 6, x1 = m.cx + m.rx + 6, y0 = m.my - m.ry - 6, y1 = m.cy + 20;
+  float x0 = m.cx - m.rx - 6, x1 = m.cx + m.rx + 6, y0 = m.my - m.ry - 6, y1 = m.cy + 14;
   for (int k = 0; k < 8; k++)
     for (int i = 0; i <= N; i++) {
-      x0 = std::min(x0, m.ax[k][i] - 22), x1 = std::max(x1, m.ax[k][i] + 22);
-      y0 = std::min(y0, m.ay[k][i] - 22), y1 = std::max(y1, m.ay[k][i] + 22);
+      x0 = std::min(x0, m.ax[k][i] - 17), x1 = std::max(x1, m.ax[k][i] + 17);
+      y0 = std::min(y0, m.ay[k][i] - 17), y1 = std::max(y1, m.ay[k][i] + 17);
     }
   m.x0 = x0, m.y0 = y0, m.x1 = x1, m.y1 = y1;
 }
 
 inline float arm_r(const Model &m, int k, float u) {
-  return (12.5f * std::pow(1 - u, 0.85f) + 2.6f) * (1 - 0.25f * m.wi) * ((k == 3 || k == 4) ? 1 + 0.35f * m.ws : 1.0f);
+  return SC * (12.5f * std::pow(1 - u, 0.85f) + 2.6f) * (1 - 0.25f * m.wi) * ((k == 3 || k == 4) ? 1 + 0.35f * m.ws : 1.0f);
 }
 
 // ---- a small rasteriser: discs, ellipses and spans straight into an RGB565 buffer, with an anti-aliased edge
@@ -274,39 +279,39 @@ inline void paint_octopus(const Rz &r, const Model &m) {
         const uint16_t c = pass == 0 ? dark : (i % 2 ? body : band);
         for (int s = 0; s < 4; s++) {
           const float f = s * 0.25f;
-          disc(r, xa + (xb - xa) * f, ya + (yb - ya) * f, ra + (rb - ra) * f + (pass == 0 ? 2.2f : 0.0f), c);
+          disc(r, xa + (xb - xa) * f, ya + (yb - ya) * f, ra + (rb - ra) * f + (pass == 0 ? 1.8f : 0.0f), c);
         }
         if (i == N)
-          disc(r, xb, yb, rb + (pass == 0 ? 2.2f : 0.0f), c);
+          disc(r, xb, yb, rb + (pass == 0 ? 1.8f : 0.0f), c);
       }
   for (int k = 0; k < 8; k++)  // suckers
     for (int i = 3; i < N; i += 2)
       disc(r, m.ax[k][i], m.ay[k][i] + 1.5f, arm_r(m, k, (float) i / N) * 0.30f, sucker);
   // the mantle, with its bands
-  ellipse(r, m.cx, m.my, m.rx + 2.2f, m.ry + 2.2f, dark);
+  ellipse(r, m.cx, m.my, m.rx + 1.8f, m.ry + 1.8f, dark);
   ellipse(r, m.cx, m.my, m.rx, m.ry, body);
   for (int j = 0; j < 5; j++) {
-    const float yb = m.my - m.ry + 14 + j * 26;
-    for (int y = (int) std::ceil(yb - 4); y <= (int) std::floor(yb + 4); y++) {
+    const float yb = m.my - m.ry + (14 + j * 26) * SC;
+    for (int y = (int) std::ceil(yb - 3); y <= (int) std::floor(yb + 3); y++) {
       const float d = (y - m.my) / m.ry, q = 1 - d * d;
       if (q <= 0)
         continue;
-      const float hw = m.rx * std::sqrt(q) - 3;
-      if (hw > 3)
+      const float hw = m.rx * std::sqrt(q) - 2;
+      if (hw > 2)
         row(r, y, m.cx - hw, m.cx + hw, band);
     }
   }
-  ellipse(r, m.cx - 15, m.my - 45, 11, 7, c565(mix3(m.body, 0xFFFFFF, 0.35f)));
+  ellipse(r, m.cx - 15 * SC, m.my - 45 * SC, 11 * SC, 7 * SC, c565(mix3(m.body, 0xFFFFFF, 0.35f)));
   // the eyes: cream, a horizontal slit pupil, a lid
   const uint16_t cream = c565(0xFAF4E2), slit = c565(0x140E16);
-  const float ey = m.my + 30, er = 15;
+  const float ey = m.my + 30 * SC, er = 15 * SC;
   for (int sg = -1; sg <= 1; sg += 2) {
-    const float ex = m.cx + sg * 26;
-    disc(r, ex, ey, er + 2, dark);
+    const float ex = m.cx + sg * 26 * SC;
+    disc(r, ex, ey, er + 1.5f, dark);
     ellipse(r, ex, ey, er, er * m.blink, cream);
     if (m.blink > 0.5f)
-      for (int y = (int) std::ceil(ey - 3.6f); y <= (int) std::floor(ey + 3.6f); y++)
-        row(r, y, ex + m.look - 10, ex + m.look + 10, slit);
+      for (int y = (int) std::ceil(ey - 3.6f * SC); y <= (int) std::floor(ey + 3.6f * SC); y++)
+        row(r, y, ex + (m.look - 10) * SC, ex + (m.look + 10) * SC, slit);
     // the lid: the wedge of the eye between 205 and 335 degrees (above the middle, 2.14 wide for every 1 up)
     for (int y = (int) std::ceil(ey - er); y < (int) ey; y++) {
       const float dy = ey - y, q = er * er - dy * dy;
@@ -351,7 +356,7 @@ inline void bubble_geom(float t, int beat, float &bx, float &by, float &bw, floa
   float cx, cy;
   pos(t, cx, cy);
   bx = std::max(10.0f, std::min(480 - bw - 10, cx - bw / 2 + 30));
-  by = beat == N_BEATS - 1 ? std::max(46.0f, cy - 140) : std::max(46.0f, cy - 46 - 66 - bh - 22);
+  by = beat == N_BEATS - 1 ? std::max(46.0f, cy - 120) : std::max(46.0f, cy - (46 + 66) * SC - bh - 22);
   const float pop = ease((t - BEAT_A[beat]) / 0.18f);
   by += (1 - pop) * 10;
 }
