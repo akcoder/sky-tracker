@@ -313,7 +313,9 @@ wifi:
   # NET-2: the board package's open fallback AP (named by ap_name, renamed with the MAC suffix at boot, started
   # 30 s after Wi-Fi fails) and reboot_timeout 0s: never reboot away from the AP while someone is configuring
   on_connect:                    # NET-7: ask for the time as soon as there is a network
-    - lambda: sat::sntp_kick();
+    - lambda: |-
+        sat::sntp_kick();
+        sat::dns_check("connected");  // NET-15
   on_disconnect:                 # NET-8: no network calls while Wi-Fi is down
     - lambda: sat::sntp_hold();
 
@@ -479,6 +481,9 @@ globals:
     initial_value: "false"
 
 interval:
+  - interval: 60s                # NET-15: the DNS servers held (a DHCP renewal can drop them)
+    then:
+      - lambda: sat::dns_check("periodic");
   - interval: 1h                 # UI-68: hourly firmware check (logged, NET-13a)
     then:
       - lambda: sat::upd::check_quiet("hourly");

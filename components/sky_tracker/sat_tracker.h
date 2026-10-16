@@ -40,6 +40,7 @@
 #include "driver/gpio.h"
 #include "esp_rom_sys.h"
 #include "esp_sntp.h"
+#include "esp_netif.h"
 #include "esp_timer.h"
 #include "esp_lcd_panel_rgb.h"
 #include "esphome/components/mipi_rgb/mipi_rgb.h"
@@ -7977,6 +7978,47 @@ inline void sntp_kick() {
     esp_sntp_restart();
   else
     esp_sntp_init();  // keeps the servers and interval the SNTP component set up
+#endif
+}
+// NET-15: DNS. Every lookup of celestrak.org and services.swpc.noaa.gov failed on a unit ("getaddrinfo() returns 202"),
+// while the router resolved the same names, so the data stood still. Called when Wi-Fi connects and once a minute: it
+// logs the DNS servers the unit holds (when they change), gives a unit with no DNS server the gateway as its main one
+// (a DHCP reply without one), and gives every unit a public backup (Cloudflare 1.1.1.1), which lwIP tries when the
+// main one does not answer.
+inline void dns_check(const char *why) {
+#ifndef SAT_HOST_TEST
+  esp_netif_t *n = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  if (n == nullptr)
+    return;
+  esp_netif_ip_info_t ip = {};
+  if (esp_netif_get_ip_info(n, &ip) != ESP_OK || ip.ip.addr == 0)
+    return;  // not connected yet
+  esp_netif_dns_info_t main = {}, back = {};
+  esp_netif_get_dns_info(n, ESP_NETIF_DNS_MAIN, &main);
+  esp_netif_get_dns_info(n, ESP_NETIF_DNS_BACKUP, &back);
+  static uint32_t last_main = 1, last_back = 1;
+  auto set = [&](esp_netif_dns_type_t which, uint32_t addr) {
+    esp_netif_dns_info_t d = {};
+    d.ip.type = ESP_IPADDR_TYPE_V4;
+    d.ip.u_addr.ip4.addr = addr;
+    esp_netif_set_dns_info(n, which, &d);
+  };
+  if (main.ip.u_addr.ip4.addr == 0 && ip.gw.addr != 0) {
+    set(ESP_NETIF_DNS_MAIN, ip.gw.addr);
+    esp_netif_get_dns_info(n, ESP_NETIF_DNS_MAIN, &main);
+  }
+  if (back.ip.u_addr.ip4.addr == 0) {
+    set(ESP_NETIF_DNS_BACKUP, esp_ip4addr_aton("1.1.1.1"));
+    esp_netif_get_dns_info(n, ESP_NETIF_DNS_BACKUP, &back);
+  }
+  if (main.ip.u_addr.ip4.addr != last_main || back.ip.u_addr.ip4.addr != last_back) {
+    last_main = main.ip.u_addr.ip4.addr;
+    last_back = back.ip.u_addr.ip4.addr;
+    ESP_LOGI("net", "dns (%s): main " IPSTR ", backup " IPSTR ", gateway " IPSTR, why, IP2STR(&main.ip.u_addr.ip4),
+             IP2STR(&back.ip.u_addr.ip4), IP2STR(&ip.gw));
+  }
+#else
+  (void) why;
 #endif
 }
 // NET-8: no SNTP traffic without Wi-Fi: stopped at boot until the first connect,
