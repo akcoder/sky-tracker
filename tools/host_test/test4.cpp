@@ -2540,6 +2540,7 @@ int main() {
     CHECK(up::ui_.mode == up::M_LATEST, "older release: up to date");
     up::close();
     up::host.latest_version = "4.6.11";
+    up::host.state = 2;  // (a new check says available again; the older one had been put right to "no update")
     up::tick();
     up::offer_now();
     CHECK(up::ui_.mode == up::M_AVAILABLE, "newer release offered");
@@ -2948,6 +2949,33 @@ int main() {
       CHECK(rk::playing() && rk::st.dock, "docking button");
       rk::stop();
       sat::live.events.clear();
+    }
+    {  // UI-54: a launch past its time says "launched", not "in 0s"; one whose time was never confirmed says nothing
+      sat::live.launches.clear();
+      sat::net::LaunchRec l;
+      snprintf(l.rocket, sizeof(l.rocket), "Falcon 9");
+      snprintf(l.name, sizeof(l.name), "Falcon 9 | Starlink Group 15-25");
+      snprintf(l.where, sizeof(l.where), "Vandenberg SFB, CA, USA");
+      snprintf(l.status, sizeof(l.status), "Go");
+      l.net = sat::clock_now() - 60;
+      sat::live.launches.push_back(l);
+      sat::Alert la[sat::MAX_ALERTS];
+      auto launch_text = [&]() {
+        const int n = sat::collect_alerts(sat_host_now, la, sat::MAX_ALERTS);
+        for (int i = 0; i < n; i++)
+          if (strstr(la[i].text, "Falcon 9")) return std::string(la[i].text);
+        return std::string();
+      };
+      std::string tx = launch_text();
+      CHECK(tx.find("launched") != std::string::npos && tx.find(" in 0s") == std::string::npos && tx.find("launches in") == std::string::npos,
+            "a launch past its time says it launched (%s)", tx.c_str());
+      snprintf(sat::live.launches[0].status, sizeof(l.status), "TBD");
+      CHECK(launch_text().empty(), "...and one whose time was never confirmed says nothing");
+      sat::live.launches[0].net = sat::clock_now() + 1800;
+      snprintf(sat::live.launches[0].status, sizeof(l.status), "Go");
+      tx = launch_text();
+      CHECK(tx.find("launches in") != std::string::npos || tx.find(" in ") != std::string::npos, "a launch ahead still counts down (%s)", tx.c_str());
+      sat::live.launches.clear();
     }
     {  // UI-85 the octopus
       namespace oc = sat::octo;

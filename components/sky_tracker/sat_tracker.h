@@ -4140,6 +4140,11 @@ inline int collect_alerts(double t, Alert *out, int max) {
       const auto &l = live.launches[li];
       if (shown >= 3 || !launch_pending(l) || l.net < t - 900 || l.net - t > LAUNCH_AHEAD_S)
         continue;
+      // past its time (up to 15 min, until Launch Library says Success): it has lifted off, unless the time
+      // was never confirmed (Hold/TBD/TBC), when the list will move it and the alert goes
+      const bool flown = l.net <= t;
+      if (flown && (!strcmp(l.status, "Hold") || !strcmp(l.status, "TBD") || !strcmp(l.status, "TBC")))
+        continue;
       float brg;
       const float km = launch_km(l, &brg);
       const bool near = km < LAUNCH_NEAR_KM;
@@ -4148,7 +4153,12 @@ inline int collect_alerts(double t, Alert *out, int max) {
         a->flag = l.cc[0] ? card_flag_for(l.cc) : nullptr;  // UI-54d: shown on its details card
         char cd[24];
         countdown(l.net - t, cd, sizeof(cd));
-        if (near)
+        if (flown && near)
+          snprintf(a->text, sizeof(a->text), "%s launched from %s - look %s", l.rocket[0] ? l.rocket : "Launch",
+                   short_site(l.where), compass(brg));
+        else if (flown)
+          snprintf(a->text, sizeof(a->text), "%s launched - %s", l.rocket[0] ? l.rocket : "Rocket", short_site(l.where));
+        else if (near)
           snprintf(a->text, sizeof(a->text), "%s from %s in %s - look %s", l.rocket[0] ? l.rocket : "Launch",
                    short_site(l.where), cd, compass(brg));
         else

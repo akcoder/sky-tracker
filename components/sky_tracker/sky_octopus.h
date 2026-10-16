@@ -418,8 +418,15 @@ inline void end_visit() {
     lv_timer_delete(st.timer);
     st.timer = nullptr;
   }
-  if (lv_display_t *d = lv_display_get_default())
+  if (lv_display_t *d = lv_display_get_default()) {
     lv_display_remove_event_cb_with_user_data(d, on_refr, nullptr);
+    lv_display_remove_event_cb_with_user_data(d, rocket::on_prof, nullptr);
+  }
+  const auto &pf = rocket::st.prof;
+  if (pf.n > 0)  // what the screen's refreshes cost while it played (the same counters as the launch animation's)
+    ESP_LOGI("octo", "%u refreshes: render %.1f/%.1f ms (avg/max), flush %.1f/%.1f ms in %.1f chunks, %u/%u px (avg/max)", (unsigned) pf.n,
+             pf.render / 1000.0f / pf.n, pf.render_max / 1000.0f, pf.flush / 1000.0f / pf.n, pf.flush_max / 1000.0f,
+             (float) pf.chunks / pf.n, (unsigned) (pf.px / pf.n), (unsigned) pf.px_max);
   const uint32_t ms = rocket::now_ms() - st.t0;
   if (st.frames > 1 && ms) {
     rocket::set_last_fps(st.frames * 1000.0f / ms);
@@ -505,7 +512,10 @@ inline void frame() {
   inval(reg);
   st.last_box = box;
 }
-inline void on_refr(lv_event_t *) { frame(); }
+inline void on_refr(lv_event_t *) {
+  frame();
+  rocket::st.prof.start = rocket::now_us();  // the refresh that follows: its render time, from here to REFR_READY
+}
 
 // start a visit now; false: no memory for the backdrop, or something else is playing
 inline bool begin(uint32_t seed) {
@@ -562,8 +572,12 @@ inline bool begin(uint32_t seed) {
   st.t = 0;
   st.t0 = rocket::now_ms();
   st.running = true;
-  if (lv_display_t *d = lv_display_get_default())
+  rocket::st.prof = rocket::St::Prof();
+  if (lv_display_t *d = lv_display_get_default()) {
     lv_display_add_event_cb(d, on_refr, LV_EVENT_REFR_START, nullptr);
+    for (lv_event_code_t c : {LV_EVENT_REFR_READY, LV_EVENT_FLUSH_START, LV_EVENT_FLUSH_FINISH, LV_EVENT_INVALIDATE_AREA})
+      lv_display_add_event_cb(d, rocket::on_prof, c, nullptr);
+  }
   st.timer = lv_timer_create(
       [](lv_timer_t *) {
         if (rocket::now_ms() - st.last_frame >= 150)
