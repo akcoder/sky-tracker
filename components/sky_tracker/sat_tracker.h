@@ -8095,6 +8095,19 @@ inline void settings_planet_icon(lv_obj_t *parent, int x, int y, lv_obj_t *alert
   lv_obj_set_pos(al, ax, ay);
 }
 
+// UI-15a: when the map follows the compass. Each heading change redraws the whole map, and a compass in the hand moves
+// a degree or two with every press on the screen: a redraw each time made the page jitter and dropped touches. So a small
+// change is ignored (3 degrees), changes are applied at most once in 1.5 s, and none while a finger is on the screen
+// (nothing touched for 700 ms), unless the display has really turned (30 degrees or more).
+inline uint32_t head_last_ms = 0;  // the last time the map took a compass heading
+inline bool heading_update_due(float diff_deg, uint32_t since_last_ms, uint32_t idle_ms) {
+  const float d = std::fabs(diff_deg);
+  if (d < 3.0f)
+    return false;
+  if (d >= 30.0f)
+    return true;
+  return since_last_ms >= 1500 && idle_ms >= 700;
+}
 inline void settings_show_heading();  // UI-16c: the Settings heading field follows the compass (defined with the form)
 inline void set_heading(float deg) {
   if (std::isnan(deg))

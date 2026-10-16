@@ -1737,6 +1737,14 @@ int main() {
     sat::finder_close();
     CHECK(sat::sv.holds == 0 && sat::sv.n_under == 0 && lv_obj_is_visible(sat::ui.w.sky),
           "PERF-22: the map is back after the finder closes (holds %d, %d objects)", sat::sv.holds, sat::sv.n_under);
+      {  // UI-15a: the map follows the compass calmly (no redraw for a press on the screen)
+        CHECK(!sat::heading_update_due(2.0f, 99999, 99999), "heading: under 3 degrees is ignored");
+        CHECK(sat::heading_update_due(4.0f, 99999, 99999), "heading: a real change is applied when idle");
+        CHECK(!sat::heading_update_due(4.0f, 500, 99999), "heading: at most one redraw in 1.5 s");
+        CHECK(!sat::heading_update_due(8.0f, 99999, 200), "heading: not while a finger is on the screen");
+        CHECK(sat::heading_update_due(45.0f, 100, 100), "heading: a big swing is followed at once");
+        CHECK(sat::heading_update_due(-170.0f, 100, 100), "heading: either way round");
+      }
     {  // UI-16c: the Settings heading field follows the compass while it owns the heading
       lv_obj_t *ta = lv_textarea_create(lv_screen_active());
       lv_textarea_set_text(ta, "7");

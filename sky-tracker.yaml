@@ -431,7 +431,7 @@ font:
     # monitor, map-marker, weather-night (UI-16a settings tabs); star-shooting, star-four-points,
     # weather-sunset-down (UI-33 Sat Trails, Stars, After dusk)
     # moon-full (UI-48/49 alerts, 4.5.15)
-    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F1BB9", "\U000F0379", "\U000F034E", "\U000F0594", "\U000F1741", "\U000F0AE2", "\U000F059B", "\U000F0F62", "\U000F018C", "\U000F14DE", "\U000F0629", "\U000F00B8", "\U000F0150", "\U000F00DF", "\U000F00E1", "\U000F08F0", "\U000F0F57", "\U000F0F5A", "\U000F1382", "\U000F009E", "\U000F1616", "\U000F0937", "\U000F0CB4", "\U000F17FE", "\U000F15D7", "\U000F09D3", "\U000F051B"]  # moon-full, compass-outline, rocket-launch, meteor (UI-63), blur-radial (UI-64); settings row icons (UI-16a, 4.5.38): clock-outline, brightness-6, brightness-auto, map-marker-distance; latitude, longitude, compass-rose; sun-wireless, fire-alert, calendar-star, timer-outline (UI-73/74/77/76)
+    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F1BB9", "\U000F0379", "\U000F034E", "\U000F0594", "\U000F1741", "\U000F0AE2", "\U000F059B", "\U000F0F62", "\U000F018C", "\U000F14DE", "\U000F0629", "\U000F00B8", "\U000F0150", "\U000F00DF", "\U000F00E1", "\U000F08F0", "\U000F0F57", "\U000F0F5A", "\U000F1382", "\U000F009E", "\U000F1616", "\U000F0937", "\U000F0CB4", "\U000F17FE", "\U000F15D7", "\U000F09D3", "\U000F051B", "\U000F14C9"]  # moon-full, compass-outline, rocket-launch, meteor (UI-63), blur-radial (UI-64); settings row icons (UI-16a, 4.5.38): clock-outline, brightness-6, brightness-auto, map-marker-distance; latitude, longitude, compass-rose; sun-wireless, fire-alert, calendar-star, timer-outline (UI-73/74/77/76)
   - file:
       type: web
       url: https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf
@@ -595,7 +595,9 @@ interval:
             // HW-9a: declination from the location (WMM2025), not a fixed setting
             const float h = sat::hw::wrap360(mag + sat::declination() + id(compass_offset).state);
             const float cur = id(map_heading).state;
-            if (std::isnan(sat::hw::head_pub) || std::isnan(cur) || fabsf(sat::hw::angle_diff(h, cur)) >= 1.0f) {
+            const float diff = (std::isnan(sat::hw::head_pub) || std::isnan(cur)) ? 360.0f : sat::hw::angle_diff(h, cur);
+            if (sat::heading_update_due(diff, esphome::millis() - sat::head_last_ms, lv_display_get_inactive_time(nullptr))) {  // UI-15a
+              sat::head_last_ms = esphome::millis();
               sat::hw::head_pub = roundf(h) >= 360 ? 0 : roundf(h);
               id(map_heading).publish_state(sat::hw::head_pub);   // not saved: no flash wear
             }
@@ -2734,141 +2736,24 @@ lvgl:
             widgets:
               - label:
                   x: 16
-                  y: 16
-                  text: "Heading"
-                  text_font: mono16
-              - label:                 # UI-16a: row icon, as on the Celestial tab
-                  x: 140
-                  y: 14
-                  text: "\U000F1382"   # compass-rose (heading)
-                  text_font: mdi_card20
-                  text_color: 0xA8D8FF
-              - textarea:
-                  id: ta_heading
-                  x: 190
-                  y: 8
-                  width: 90
-                  height: 36
-                  one_line: true
-                  max_length: 3
-                  accepted_chars: "0123456789"
-                  text_font: mono16
-                  text_color: 0xEEF2FF   # theme default is dark grey
-                  bg_color: 0x0E1836
-                  border_color: 0x3A4E86
-                  border_width: 2
-                  pad_all: 6
-                  on_click:
-                    - lvgl.keyboard.update:
-                        id: settings_kb
-                        textarea: ta_heading
-                    - lvgl.widget.show: settings_kb
-              - label:
-                  x: 290
-                  y: 18
-                  text: "deg (0 = N up)"
-                  text_font: mono12
-                  text_color: 0x7E8BB3
-              # HW-9c: the compass's mounting offset and its calibration, under the heading they steer (both enabled with a compass)
-              - label:
-                  x: 16
-                  y: 64
-                  text: "Offset"
-                  text_font: mono16
-              - label:                 # UI-16a: row icon
-                  x: 140
-                  y: 62
-                  text: "\U000F1382"   # compass-rose
-                  text_font: mdi_card20
-                  text_color: 0xA8D8FF
-              - textarea:
-                  id: ta_offset
-                  x: 190
-                  y: 56
-                  width: 90
-                  height: 36
-                  one_line: true
-                  max_length: 4
-                  accepted_chars: "-0123456789"
-                  text_font: mono16
-                  text_color: 0xEEF2FF
-                  bg_color: 0x0E1836
-                  border_color: 0x3A4E86
-                  border_width: 2
-                  pad_all: 6
-                  on_click:
-                    - lvgl.keyboard.update:
-                        id: settings_kb
-                        textarea: ta_offset
-                    - lvgl.widget.show: settings_kb
-              - label:
-                  x: 290
-                  y: 66
-                  text: "deg (mounting angle)"
-                  text_font: mono12
-                  text_color: 0x7E8BB3
-              - label:
-                  x: 16
-                  y: 112
-                  text: "Compass"
-                  text_font: mono16
-              - label:
-                  x: 140
-                  y: 110
-                  text: "\U000F018C"   # compass-outline
-                  text_font: mdi_card20
-                  text_color: 0x9FB2EA
-              - button:
-                  id: btn_cal
-                  x: 190
-                  y: 104
-                  width: 150
-                  height: 36
-                  bg_color: 0x1A2547
-                  shadow_width: 0
-                  widgets:
-                    - label:
-                        id: lbl_cal
-                        align: CENTER
-                        text: "Calibrate"
-                        text_font: mono16
-                  disabled:
-                    bg_color: 0x121A33   # HW-9b: greyed out without a compass
-                  on_click:
-                    - lambda: sat::hw::cal_screen_open(esphome::millis());  // HW-9b guided run
-              - label:
-                  id: lbl_cal_state
-                  x: 350
-                  y: 114
-                  text: ""
-                  text_font: mono12
-                  text_color: 0x7E8BB3
-              - label:
-                  x: 190
-                  y: 144
-                  text: "Turn the display slowly round"
-                  text_font: mono12
-                  text_color: 0x7E8BB3
-              - label:
-                  x: 16
-                  y: 164
+                  y: 6
                   text: "Coordinates"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
                   x: 140
-                  y: 162
+                  y: 4
                   text: "\U000F01A4"   # crosshairs-gps
                   text_font: mdi_card20
                   text_color: 0x7EE0B0
               - label:
                   x: 190
-                  y: 164
+                  y: 6
                   text: "Dec"
                   text_font: mono16
               - switch:
                   id: sw_dms
                   x: 232
-                  y: 158
+                  y: 0
                   width: 56
                   height: 28
                   on_value:
@@ -2877,24 +2762,24 @@ lvgl:
                         sat::settings_set_dms(x);
               - label:
                   x: 298
-                  y: 164
+                  y: 6
                   text: "DMS"
                   text_font: mono16
               - label:
                   x: 16
-                  y: 204
+                  y: 46
                   text: "Latitude"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
                   x: 140
-                  y: 202
+                  y: 44
                   text: "\U000F0F57"   # latitude
                   text_font: mdi_card20
                   text_color: 0x7EE0B0
               - obj:
                   id: box_lat_dd
                   x: 190
-                  y: 196
+                  y: 38
                   width: 284
                   height: 36
                   bg_opa: TRANSP
@@ -2934,7 +2819,7 @@ lvgl:
               - obj:
                   id: box_lat_dms
                   x: 190
-                  y: 196
+                  y: 38
                   width: 284
                   height: 36
                   bg_opa: TRANSP
@@ -3037,19 +2922,19 @@ lvgl:
                           - lambda: sat::settings_toggle_hemi(0);
               - label:
                   x: 16
-                  y: 246
+                  y: 88
                   text: "Longitude"
                   text_font: mono16
               - label:                 # UI-16a: row icon, as on the Celestial tab
                   x: 140
-                  y: 244
+                  y: 86
                   text: "\U000F0F5A"   # longitude
                   text_font: mdi_card20
                   text_color: 0x7EE0B0
               - obj:
                   id: box_lon_dd
                   x: 190
-                  y: 238
+                  y: 80
                   width: 284
                   height: 36
                   bg_opa: TRANSP
@@ -3089,7 +2974,7 @@ lvgl:
               - obj:
                   id: box_lon_dms
                   x: 190
-                  y: 238
+                  y: 80
                   width: 284
                   height: 36
                   bg_opa: TRANSP
@@ -3190,6 +3075,123 @@ lvgl:
                               text_font: mono16
                         on_click:
                           - lambda: sat::settings_toggle_hemi(1);
+              - label:
+                  x: 16
+                  y: 136
+                  text: "Heading"
+                  text_font: mono16
+              - label:                 # UI-16a: row icon, as on the Celestial tab
+                  x: 140
+                  y: 134
+                  text: "\U000F1382"   # compass-rose (heading)
+                  text_font: mdi_card20
+                  text_color: 0xA8D8FF
+              - textarea:
+                  id: ta_heading
+                  x: 190
+                  y: 128
+                  width: 90
+                  height: 36
+                  one_line: true
+                  max_length: 3
+                  accepted_chars: "0123456789"
+                  text_font: mono16
+                  text_color: 0xEEF2FF   # theme default is dark grey
+                  bg_color: 0x0E1836
+                  border_color: 0x3A4E86
+                  border_width: 2
+                  pad_all: 6
+                  on_click:
+                    - lvgl.keyboard.update:
+                        id: settings_kb
+                        textarea: ta_heading
+                    - lvgl.widget.show: settings_kb
+              - label:
+                  x: 290
+                  y: 138
+                  text: "deg (0 = N up)"
+                  text_font: mono12
+                  text_color: 0x7E8BB3
+              # HW-9c: the compass's mounting offset and its calibration, under the heading they steer (both enabled with a compass)
+              - label:
+                  x: 16
+                  y: 184
+                  text: "Offset"
+                  text_font: mono16
+              - label:                 # UI-16a: row icon
+                  x: 140
+                  y: 182
+                  text: "\U000F14C9"   # plus-minus-variant (the offset)
+                  text_font: mdi_card20
+                  text_color: 0xA8D8FF
+              - textarea:
+                  id: ta_offset
+                  x: 190
+                  y: 176
+                  width: 90
+                  height: 36
+                  one_line: true
+                  max_length: 4
+                  accepted_chars: "-0123456789"
+                  text_font: mono16
+                  text_color: 0xEEF2FF
+                  bg_color: 0x0E1836
+                  border_color: 0x3A4E86
+                  border_width: 2
+                  pad_all: 6
+                  on_click:
+                    - lvgl.keyboard.update:
+                        id: settings_kb
+                        textarea: ta_offset
+                    - lvgl.widget.show: settings_kb
+              - label:
+                  x: 290
+                  y: 186
+                  text: "deg (mounting angle)"
+                  text_font: mono12
+                  text_color: 0x7E8BB3
+              - label:
+                  x: 16
+                  y: 232
+                  text: "Compass"
+                  text_font: mono16
+              - label:
+                  x: 140
+                  y: 230
+                  text: "\U000F018C"   # compass-outline
+                  text_font: mdi_card20
+                  text_color: 0x9FB2EA
+              - button:
+                  id: btn_cal
+                  x: 190
+                  y: 224
+                  width: 150
+                  height: 36
+                  bg_color: 0x1A2547
+                  shadow_width: 0
+                  widgets:
+                    - label:
+                        id: lbl_cal
+                        align: CENTER
+                        text: "Calibrate"
+                        text_font: mono16
+                  disabled:
+                    bg_color: 0x121A33   # HW-9b: greyed out without a compass
+                  on_click:
+                    - lambda: sat::hw::cal_screen_open(esphome::millis());  // HW-9b guided run
+              - label:
+                  id: lbl_cal_state
+                  x: 350
+                  y: 234
+                  text: ""
+                  text_font: mono12
+                  text_color: 0x7E8BB3
+              - label:
+                  x: 190
+                  y: 264
+                  text: "Turn the display slowly round"
+                  text_font: mono12
+                  text_color: 0x7E8BB3
         - obj:
             id: pnl_celestial
             x: 0
