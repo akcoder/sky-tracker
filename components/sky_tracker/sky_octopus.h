@@ -42,7 +42,7 @@ constexpr float DUR_S = 10.0f;
 constexpr float SC = 0.75f;  // its size: the screen blit costs ~0.8 us a pixel, so the box it covers (and its fps) is set by this
 constexpr int N = 12;  // segments an arm is kept in
 constexpr uint32_t MIN_GAP_S = 15 * 60, MAX_GAP_S = 35 * 60, FIRST_MIN_S = 8 * 60, FIRST_MAX_S = 15 * 60;
-constexpr uint32_t MODEL_MS = 70;  // the model steps at up to ~14 fps (a step is ~45 ms to paint and ~30 ms to refresh)
+constexpr uint32_t MODEL_MS = 50;  // the model steps at up to ~14 fps (a step is ~45 ms to paint and ~30 ms to refresh)
 constexpr uint32_t C_BODY = 0x80583C, C_BAND = 0xEEE0C0, C_DARK = 0x3C2820, C_ISS_BODY = 0x3E5CA0, C_ISS_BAND = 0xDECC82,
                    C_LION = 0xA04E34, C_SNAKE = 0x2C2630, C_SNAKE_BAND = 0xF4F0E8;
 
@@ -267,7 +267,7 @@ inline void disc(const Rz &r, float cx, float cy, float rad, uint16_t c, uint32_
 // the octopus, onto the composite (everything inside the clip)
 inline void paint_octopus(const Rz &r, const Model &m) {
   const uint16_t dark = c565(C_DARK), body = c565(m.body), band = c565(m.band), sucker = c565(0xF4E8D0);
-  // arms: all the outlines, then all the fills (neighbours do not outline each other); a stamp every ~3 px
+  // arms: all the outlines, then all the fills (neighbours do not outline each other); stamps along each segment
   for (int pass = 0; pass < 2; pass++)
     for (int k = 0; k < 8; k++)
       for (int i = 1; i <= N; i++) {
@@ -278,8 +278,10 @@ inline void paint_octopus(const Rz &r, const Model &m) {
             std::min(ya, yb) - pad > r.cy2)
           continue;
         const uint16_t c = pass == 0 ? dark : (i % 2 ? body : band);
-        for (int s = 0; s < 4; s++) {
-          const float f = s * 0.25f;
+        // a stamp every ~r/2 px along the segment: two where the arm is thick, three or four toward the tip
+        const int ns = rb >= 5.0f ? 2 : rb >= 3.0f ? 3 : 4;
+        for (int s = 0; s < ns; s++) {
+          const float f = (float) s / ns;
           disc(r, xa + (xb - xa) * f, ya + (yb - ya) * f, ra + (rb - ra) * f + (pass == 0 ? 1.8f : 0.0f), c);
         }
         if (i == N)
