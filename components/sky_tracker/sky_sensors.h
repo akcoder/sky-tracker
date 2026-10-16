@@ -12,6 +12,8 @@
 #include <cstring>
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
+#include "esp_log.h"
+#include "esp_rom_sys.h"
 #include "esp_attr.h"
 
 namespace sat {
@@ -56,7 +58,6 @@ struct Bus {
 
 struct Compass {
   Bus bus;
-  bool probe_now = false;  // look for the chip at the next poll (the pins just changed)
   Chip chip = CHIP_NONE;
   uint8_t addr = 0;
   int fails = 0;
@@ -180,10 +181,24 @@ inline int read_raw(float &x, float &y, float &z) {
   }
 }
 
-// HW-9c: the pins the compass is wired to, from the SDA / SCL Pin settings (restored at boot, changeable on the web
-// page and in Home Assistant). Only the board's free header pins are accepted (the rest are the panel, touch, console,
-// GPS, flash and PSRAM): 1 and 2 (the relay pads), 40 and 41. Anything else, or the same pin twice, turns the compass off.
-inline bool pin_allowed(int p) { return p == 1 || p == 2 || p == 40 || p == 41; }
+// HW-9c: the compass's pins are found at run time, never set. Candidates are the board's free header pins (the others
+// are the panel, touch, console, GPS, SPI, flash and PSRAM): 1 and 2 (the relay pads), 40 and 41. Nothing is driven
+// until a pin has shown an external pull-up (which an I2C module has and a relay driver's input does not: it reads low
+// with the internal pull-down on): on a board with relays on those pins nothing ever pulses them. Two pins with
+// pull-ups are tried as SDA/SCL in both orders; the first that answers as a QMC5883L / QMC5883P / HMC5883L is kept.
+constexpr int CAND_PINS[4] = {1, 2, 40, 41};
+inline bool pulled_up(int pin) {
+  gpio_config_t io = {};
+  io.pin_bit_mask = 1ULL << pin;
+  io.mode = GPIO_MODE_INPUT;
+  io.pull_down_en = GPIO_PULLDOWN_ENABLE;  // a 10k pull-up on the module beats this; a bare or relay-driver pin reads low
+  io.pull_up_en = GPIO_PULLUP_DISABLE;
+  gpio_config(&io);
+  esp_rom_delay_us(300);
+  const int level = gpio_get_level((gpio_num_t) pin);
+  gpio_reset_pin((gpio_num_t) pin);
+  return level == 1;
+}
 inline void compass_close_bus() {
   Bus &b = compass.bus;
   for (auto &d : b.dev)
@@ -197,28 +212,18 @@ inline void compass_close_bus() {
   }
   b.sda = b.scl = -1;
 }
-inline void compass_set_pins(int sda, int scl) {
-  compass_close_bus();
-  compass.chip = CHIP_NONE;
-  compass.have = false;
-  compass.calibrating = false;
-  compass.fails = 0;
-  if (!pin_allowed(sda) || !pin_allowed(scl) || sda == scl) {
-    ESP_LOGW(HW_TAG, "compass off: SDA GPIO%d / SCL GPIO%d (the free pins are 1, 2, 40 and 41, and two different ones)", sda, scl);
-    return;
-  }
+inline bool compass_open_bus(int sda, int scl) {
   i2c_master_bus_config_t cfg = {};
   cfg.i2c_port = (i2c_port_num_t) -1;  // any free controller
   cfg.sda_io_num = (gpio_num_t) sda;
   cfg.scl_io_num = (gpio_num_t) scl;
   cfg.clk_source = I2C_CLK_SRC_DEFAULT;
   cfg.glitch_ignore_cnt = 7;
-  cfg.flags.enable_internal_pullup = true;  // (the module has its own pull-ups as well)
+  cfg.flags.enable_internal_pullup = false;  // the module's own pull-ups are what was detected
   Bus &b = compass.bus;
   if (i2c_new_master_bus(&cfg, &b.bus) != ESP_OK) {
     b.bus = nullptr;
-    ESP_LOGW(HW_TAG, "compass: no I2C controller for SDA GPIO%d / SCL GPIO%d", sda, scl);
-    return;
+    return false;
   }
   for (int i = 0; i < Bus::N_DEV; i++) {
     i2c_device_config_t dc = {};
@@ -230,8 +235,33 @@ inline void compass_set_pins(int sda, int scl) {
   }
   b.sda = sda;
   b.scl = scl;
-  compass.probe_now = true;
-  ESP_LOGI(HW_TAG, "compass bus: SDA GPIO%d, SCL GPIO%d", sda, scl);
+  return true;
+}
+// Look for a compass: true when one answers (the bus is then kept). Quiet: the driver logs every NACK as an error.
+inline bool compass_detect() {
+  compass_close_bus();
+  int up[4], n = 0;
+  for (int p : CAND_PINS)
+    if (pulled_up(p))
+      up[n++] = p;
+  if (n < 2)
+    return false;
+  const esp_log_level_t was = esp_log_level_get("i2c.master");
+  esp_log_level_set("i2c.master", ESP_LOG_NONE);
+  bool found = false;
+  for (int i = 0; i < n && !found; i++)
+    for (int j = 0; j < n && !found; j++) {
+      if (i == j || !compass_open_bus(up[i], up[j]))
+        continue;
+      if (probe())
+        found = true;
+      else
+        compass_close_bus();
+    }
+  esp_log_level_set("i2c.master", was);
+  if (found)
+    ESP_LOGI(HW_TAG, "compass bus: SDA GPIO%d, SCL GPIO%d", compass.bus.sda, compass.bus.scl);
+  return found;
 }
 inline void set_calibration(float cx, float cy, float sx, float sy, bool valid) {
   compass.cal = {cx, cy, (sx > 0.05f && sx < 20) ? sx : 1.0f, (sy > 0.05f && sy < 20) ? sy : 1.0f, valid};
@@ -345,13 +375,10 @@ inline void cal_feed(float x, float y, uint32_t now_ms) {
 // Poll at ~5 Hz from the main loop. Handles detection, hot-unplug and smoothing.
 // Returns true while a calibration run has just ended (caller saves the result).
 inline bool compass_poll(uint32_t now_ms) {
-  if (!compass.bus.ok())
-    return false;
   if (compass.chip == CHIP_NONE) {
-    if (compass.probe_now || (int32_t) (now_ms - compass.next_probe_ms) >= 0) {
-      compass.probe_now = false;
-      compass.next_probe_ms = now_ms + 30000;  // look again every 30 s
-      probe();
+    if ((int32_t) (now_ms - compass.next_probe_ms) >= 0) {
+      compass.next_probe_ms = now_ms + 30000;  // look again every 30 s (HW-9c: the pins too)
+      compass_detect();
     }
     return false;
   }
