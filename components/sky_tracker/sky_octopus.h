@@ -124,6 +124,7 @@ struct St {
   float ivx[26], ivy[26], ir[26], ia[26];  // the ink: velocity, size, strength per blob
   float bx = 0, by = 0, bw = 0, bh = 0;    // the bubble now (bw 0: none)
   uint32_t paint_us = 0, paint_max = 0, px = 0;  // what painting cost (the visit's log)
+  uint32_t exit_us = 0, exit_n = 0, exit_px = 0;  // ...of which in the ink and exit (t >= EXIT_T)
 };
 inline St st;
 inline uint32_t min_idle_ms = 20000;  // no touch for this long before a visit starts
@@ -325,21 +326,44 @@ inline void paint_octopus(const Rz &r, const Model &m) {
   }
 }
 
-inline void paint_ink(const Rz &r, float t) {
+// The ink: NI opaque dark blobs that spread from the octopus and shrink away (opaque discs are plain span writes; 26
+// translucent ones, each blended with what is under it, made the exit the slowest part of a visit).
+constexpr int NI = 16;
+inline bool ink_blob(int i, float t, float &x, float &y, float &rad) {
   if (t < EXIT_T)
-    return;
+    return false;
   float ox, oy;
   pos(EXIT_T, ox, oy);
   const float age = t - EXIT_T;
+  x = ox + 10 + st.ivx[i] * age * (0.6f + i / 26.0f);
+  y = oy + 20 + st.ivy[i] * age * 0.6f;
+  const float grow = 0.5f + 1.1f * std::min(1.0f, age / 0.8f);
+  const float fade = 1 - seg(age, 0.9f, 2.0f + st.ia[i] * 0.3f);  // gone by ~2.2 s
+  rad = st.ir[i] * SC * grow * fade;
+  return rad >= 1.5f;
+}
+inline void paint_ink(const Rz &r, float t) {
   const uint16_t c = c565(0x0A0418);
-  for (int i = 0; i < 26; i++) {
-    const float x = ox + 10 + st.ivx[i] * age * (0.6f + i / 40.0f), y = oy + 20 + st.ivy[i] * age * 0.6f;
-    const float rad = st.ir[i] * (0.5f + 1.3f * std::min(1.0f, age / 0.8f));
-    const float a = st.ia[i] * std::max(0.0f, 1 - age / 2.3f);
-    if (a <= 0.03f || x + rad < r.cx1 || x - rad > r.cx2 || y + rad < r.cy1 || y - rad > r.cy2)
+  for (int i = 0; i < NI; i++) {
+    float x, y, rad;
+    if (!ink_blob(i, t, x, y, rad) || x + rad < r.cx1 || x - rad > r.cx2 || y + rad < r.cy1 || y - rad > r.cy2)
       continue;
-    disc(r, x, y, rad, c, (uint32_t) std::min(32.0f, a * 1.4f * 32));
+    disc(r, x, y, rad, c);
   }
+}
+// what the cloud covers now (the redraw box): false when there is none
+inline bool ink_box(float t, int &x1, int &y1, int &x2, int &y2) {
+  bool any = false;
+  x1 = y1 = 100000, x2 = y2 = -100000;
+  for (int i = 0; i < NI; i++) {
+    float x, y, rad;
+    if (!ink_blob(i, t, x, y, rad))
+      continue;
+    any = true;
+    x1 = std::min(x1, (int) (x - rad) - 2), x2 = std::max(x2, (int) (x + rad) + 2);
+    y1 = std::min(y1, (int) (y - rad) - 2), y2 = std::max(y2, (int) (y + rad) + 2);
+  }
+  return any;
 }
 
 // ---- the speech bubble now: its box (the same maths for the painter and the redraw box)
@@ -428,6 +452,10 @@ inline void end_visit() {
              pf.render / 1000.0f / pf.n, pf.render_max / 1000.0f, pf.flush / 1000.0f / pf.n, pf.flush_max / 1000.0f,
              (float) pf.chunks / pf.n, (unsigned) (pf.px / pf.n), (unsigned) pf.px_max);
   const uint32_t ms = rocket::now_ms() - st.t0;
+  if (st.exit_n > 0)
+    ESP_LOGI("octo", "ink and exit: %u frames, painting %.1f ms a frame, %u px a frame; before: %.1f ms", (unsigned) st.exit_n,
+             st.exit_us / 1000.0f / st.exit_n, (unsigned) (st.exit_px / st.exit_n),
+             (st.paint_us - st.exit_us) / 1000.0f / std::max<uint32_t>(1, st.frames - st.exit_n));
   if (st.frames > 1 && ms) {
     rocket::set_last_fps(st.frames * 1000.0f / ms);
     ESP_LOGI("octo", "visit: %u frames in %u ms (%.1f fps), longest gap %u ms; painting %.1f ms a frame (longest %.1f ms), %u px a frame",
@@ -480,8 +508,10 @@ inline void frame() {
     bx1 = std::min(bx1, (int32_t) st.bx - 4), by1 = std::min(by1, (int32_t) st.by - 4);
     bx2 = std::max(bx2, (int32_t) (st.bx + st.bw + 6)), by2 = std::max(by2, (int32_t) (st.by + st.bh + 24));
   }
-  if (t >= EXIT_T) {  // the cloud
-    bx1 = std::min<int32_t>(bx1, 160), bx2 = 479, by1 = std::min<int32_t>(by1, 120), by2 = std::max<int32_t>(by2, 440);
+  {  // the cloud
+    int cx1, cy1, cx2, cy2;
+    if (ink_box(t, cx1, cy1, cx2, cy2))
+      bx1 = std::min<int32_t>(bx1, cx1), by1 = std::min<int32_t>(by1, cy1), bx2 = std::max<int32_t>(bx2, cx2), by2 = std::max<int32_t>(by2, cy2);
   }
   lv_area_t box = {std::max<int32_t>(0, bx1), std::max<int32_t>(0, by1), std::min<int32_t>(479, bx2), std::min<int32_t>(479, by2)};
   // What is drawn on the screen is one RGB565 image (the composite), blitted over the dirty box in a few
@@ -509,6 +539,8 @@ inline void frame() {
   st.paint_us += us;
   st.paint_max = std::max(st.paint_max, us);
   st.px += (uint32_t) ((reg.x2 - reg.x1 + 1) * (reg.y2 - reg.y1 + 1));
+  if (t >= EXIT_T)
+    st.exit_us += us, st.exit_n++, st.exit_px += (uint32_t) ((reg.x2 - reg.x1 + 1) * (reg.y2 - reg.y1 + 1));
   inval(reg);
   st.last_box = box;
 }
@@ -549,7 +581,7 @@ inline bool begin(uint32_t seed) {
   st.say[2] = SAY_INK[rnd() % (sizeof(SAY_INK) / sizeof(*SAY_INK))];
   const uint32_t keep = st.rng;
   st.rng = 0x1234567u;  // the ink is the same every visit
-  for (int i = 0; i < 26; i++) {
+  for (int i = 0; i < 26; i++) {  // (NI of them are used)
     st.ivx[i] = -30 + 100 * rnd01();
     st.ivy[i] = -40 + 100 * rnd01();
     st.ir[i] = 14 + 16 * rnd01();
@@ -566,7 +598,7 @@ inline bool begin(uint32_t seed) {
   lv_obj_add_flag(st.cv, LV_OBJ_FLAG_HIDDEN);
   lv_canvas_set_draw_buf(st.cv, st.comp);
   st.frames = st.max_gap = st.last_frame = 0;
-  st.paint_us = st.paint_max = st.px = 0;
+  st.paint_us = st.paint_max = st.px = st.exit_us = st.exit_n = st.exit_px = 0;
   st.last_box = {0, 0, -1, -1};
   st.bw = 0;
   st.t = 0;
