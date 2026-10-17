@@ -37,7 +37,7 @@ inline const Body &get(int i) {
        "Known since antiquity: the Egyptians called it the Red One. Kepler found the ellipse from its orbit (1609). "
        "Asaph Hall found its moons in 1877.",
        "The Roman god of war (Greek Ares), for its blood-red colour. Its moons are Phobos and Deimos: Fear and Panic.",
-       "Red from iron rust. Day 24 h 37 m, year 687 days. Olympus Mons, 22 km high, is the tallest volcano known. "
+       "Red from iron rust. Day 24 h 37 m, year 687 days. Olympus Mons, {km:22} high, is the tallest volcano known. "
        "Rovers: Sojourner 1997, Curiosity 2012, Perseverance 2021."},
       {"Jupiter",
        "Known since antiquity. In January 1610 Galileo saw four moons circling it: Io, Europa, Ganymede and Callisto, "
@@ -64,7 +64,7 @@ inline const Body &get(int i) {
        "Johann Galle saw it on 23 September 1846 within 1 degree of the spot.",
        "The Roman sea god (Greek Poseidon), for its deep blue. Galileo had drawn it as a star in 1612 without "
        "knowing.",
-       "Winds up to 2,000 km/h. Year 165 years: its first lap since discovery ended in 2011. Triton, found 17 days "
+       "Winds up to {kmh:2,000}. Year 165 years: its first lap since discovery ended in 2011. Triton, found 17 days "
        "after the planet, orbits backwards. Voyager 2 flew by in 1989."},
       {"Pluto",
        "Found by Clyde Tombaugh at Lowell Observatory, Arizona, on 18 February 1930, comparing photographs plate by "
@@ -78,14 +78,14 @@ inline const Body &get(int i) {
        "1868, 27 years before it was found on Earth.",
        "Old English sunne. The Romans' Sol, the Greeks' Helios, Egypt's Ra: the god who crossed the sky each day in a "
        "chariot or a boat.",
-       "A star 1.39 million km across, 99.86% of all the mass in the solar system. Light takes 8 min 20 s to reach us. "
+       "A star {km:1.39 million} across, 99.86% of all the mass in the solar system. Light takes 8 min 20 s to reach us. "
        "5500 C at the surface, 15 million C at the core. This picture is NOAA's SUVI, in ultraviolet."},
       {"Moon",
        "Always known. Galileo's telescope showed its mountains and craters in 1609. Luna 3 photographed the far side in "
        "1959; Armstrong and Aldrin landed on 20 July 1969.",
        "Old English mona. The Roman goddess Luna, the Greek Selene: she drove the Moon's chariot across the night sky. "
        "Monday is Moon day.",
-       "384,400 km away, a quarter of Earth's width. Phases repeat every 29.5 days. The same face always points at us. "
+       "{km:384,400} away, a quarter of Earth's width. Phases repeat every 29.5 days. The same face always points at us. "
        "It drifts away 3.8 cm a year. The picture is NASA's Dial-A-Moon, from LRO."},
   };
   return B[i < 0 ? 0 : i >= N ? N - 1 : i];

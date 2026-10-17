@@ -1246,7 +1246,7 @@ struct Cd {
   const lv_font_t *digits = nullptr, *title = nullptr, *body = nullptr, *small = nullptr;
   lv_obj_t *root = nullptr, *mission = nullptr, *sub = nullptr, *clock = nullptr, *status = nullptr, *when = nullptr,
            *badge = nullptr, *qr = nullptr;
-  char watch[100] = "";       // UI-80: what the webcast's QR code encodes
+  char watch[128] = "";       // UI-80: what the webcast's QR code encodes
   bool qr_ok = false;         // ...and that it fitted
   lv_timer_t *timer = nullptr;
   uint32_t key = 0, dismissed = 0;  // the launch (by name), and the one put away
@@ -1302,7 +1302,7 @@ inline void cd_update() {
   else
     lv_obj_add_flag(cd.badge, LV_OBJ_FLAG_HIDDEN);
   // UI-80: the QR code to the webcast while it is live
-  const bool show_qr = l->webcast && l->watch[0] != 0;
+  const bool show_qr = l->watch[0] != 0;  // UI-80c: its video or info link (the LIVE pill still needs the webcast)
   if (show_qr && strcmp(cd.watch, l->watch) != 0) {
     net::copy_cstr(cd.watch, sizeof(cd.watch), l->watch);
     cd.qr_ok = lv_qrcode_update(cd.qr, cd.watch, (uint32_t) strlen(cd.watch)) == LV_RESULT_OK;

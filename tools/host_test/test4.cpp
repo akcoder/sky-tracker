@@ -1452,7 +1452,7 @@ int main() {
     iso(sat_host_now + 5 * 3600, t1); iso(sat_host_now + 40 * 60, t2); iso(sat_host_now - 3 * 3600, t3);
     snprintf(lj, sizeof(lj), "{\"count\":3,\"results\":["
       "{\"name\":\"Minotaur IV | NROL-174\",\"net\":\"%s\",\"status\":{\"abbrev\":\"Go\"},\"pad\":{\"latitude\":\"57.435\",\"longitude\":\"-152.337\",\"location\":{\"name\":\"Pacific Spaceport Complex, Alaska, USA\"},\"country\":{\"alpha_3_code\":\"USA\"}},\"rocket\":{\"configuration\":{\"name\":\"Minotaur IV\"}},\"mission\":{\"a\":{\"b\":{\"c\":{\"d\":{\"e\":{\"f\":{\"g\":{\"h\":[1]}}}}}}}}},"
-      "{\"name\":\"Falcon 9 | Starlink 12-5\",\"vid_urls\":[{\"priority\":10,\"url\":\"https://example.com/b\"},{\"priority\":2,\"url\":\"https://www.youtube.com/watch?v=abc\"},{\"priority\":1,\"url\":\"http://insecure.example/x\"}],\"net\":\"%s\",\"status\":{\"abbrev\":\"Go\"},\"pad\":{\"latitude\":28.56,\"longitude\":-80.577,\"location\":{\"name\":\"Cape Canaveral SFS, FL, USA\"},\"country\":{\"alpha_3_code\":\"USA\"}},\"rocket\":{\"configuration\":{\"name\":\"Falcon 9\"}}},"
+      "{\"name\":\"Falcon 9 | Starlink 12-5\",\"id\":\"abc-123\",\"net\":\"%s\",\"status\":{\"abbrev\":\"Go\"},\"pad\":{\"latitude\":28.56,\"longitude\":-80.577,\"location\":{\"name\":\"Cape Canaveral SFS, FL, USA\"},\"country\":{\"alpha_3_code\":\"USA\"}},\"rocket\":{\"configuration\":{\"name\":\"Falcon 9\"}}},"
       "{\"name\":\"Electron | Test\",\"net\":\"%s\",\"status\":{\"abbrev\":\"Success\"},\"pad\":{\"latitude\":-39.26,\"longitude\":177.86,\"location\":{\"name\":\"Mahia, NZ\"},\"country\":{\"alpha_3_code\":\"NZL\"}},\"rocket\":{\"configuration\":{\"name\":\"Electron\"}}}]}", t1, t2, t3);
     host_http_bodies["launches/upcoming"] = lj;
     sat::net::wind_next = sat::net::launch_next = 0;
@@ -1465,12 +1465,29 @@ int main() {
     CHECK(fabs(sat::live.wind.bz + 8.0f) < 0.01f && fabs(sat::live.wind.speed - 520) < 0.1f && sat::live.launches.size() == 3,
           "wind/launches");
     CHECK(sat::wind_warning(sat_host_now), "wind warning");
-    {  // UI-80: the webcast link: the best-ranked https one
-      const char *w = "";
-      for (const auto &l : sat::live.launches)
-        if (strstr(l.name, "Falcon 9"))
-          w = l.watch;
-      CHECK(!strcmp(w, "https://www.youtube.com/watch?v=abc"), "launches: webcast link (%s)", w);
+    {  // UI-80c: a launch's links come from its own reply: the best-ranked https video, else the best info page
+      host_http_bodies["/launches/abc-123/"] =
+          "{\"vid_urls\":[{\"priority\":10,\"url\":\"https://example.com/b\"},{\"priority\":2,\"url\":\"https://www.youtube.com/watch?v=abc\"},{\"priority\":1,\"url\":\"http://insecure.example/x\"}],"
+          "\"info_urls\":[{\"priority\":5,\"url\":\"https://www.nasa.gov/page\"}]}";
+      host_http_bodies["/launches/def-456/"] = "{\"vid_urls\":[],\"info_urls\":[{\"priority\":5,\"url\":\"https://www.nasa.gov/page\"}]}";
+      host_http_bodies["/launches/ghi-789/"] = "{\"vid_urls\":[],\"info_urls\":[]}";
+      static char lbuf[8192];
+      sat::pvector<sat::net::LaunchRec> v;
+      const char *ids[3] = {"abc-123", "def-456", "ghi-789"};
+      for (int i = 0; i < 3; i++) {
+        sat::net::LaunchRec r;
+        snprintf(r.id, sizeof(r.id), "%s", ids[i]);
+        snprintf(r.name, sizeof(r.name), "L%d", i);
+        r.net = sat_host_now + (5 + i) * 3600.0;
+        v.push_back(r);
+      }
+      sat::net::launch_links(v, lbuf, sat_host_now);  // (two calls per refresh)
+      CHECK(!strcmp(v[0].watch, "https://www.youtube.com/watch?v=abc"), "launch links: best video (%s)", v[0].watch);
+      CHECK(!strcmp(v[1].watch, "https://www.nasa.gov/page"), "launch links: else the info page (%s)", v[1].watch);
+      CHECK(v[2].watch[0] == 0, "launch links: only two calls a refresh, none for the third yet");
+      sat::net::launch_links(v, lbuf, sat_host_now + 60);
+      CHECK(v[2].watch[0] == 0, "launch links: no video or info link, no QR link");
+      CHECK(!strcmp(v[0].watch, "https://www.youtube.com/watch?v=abc"), "launch links: kept (%s)", v[0].watch);
     }
     sat::Alert al[sat::MAX_ALERTS];
     const int na = sat::collect_alerts(sat_host_now, al, sat::MAX_ALERTS);
@@ -1738,13 +1755,34 @@ int main() {
     CHECK(sat::sv.holds == 0 && sat::sv.n_under == 0 && lv_obj_is_visible(sat::ui.w.sky),
           "PERF-22: the map is back after the finder closes (holds %d, %d objects)", sat::sv.holds, sat::sv.n_under);
       {  // UI-15a: the map follows the compass calmly (no redraw for a press on the screen)
-        CHECK(!sat::heading_update_due(2.0f, 99999, 99999), "heading: under 3 degrees is ignored");
-        CHECK(sat::heading_update_due(4.0f, 99999, 99999), "heading: a real change is applied when idle");
-        CHECK(!sat::heading_update_due(4.0f, 500, 99999), "heading: at most one redraw in 1.5 s");
+        CHECK(!sat::heading_update_due(4.0f, 99999, 99999), "heading: under 5 degrees is ignored");
+        CHECK(sat::heading_update_due(6.0f, 99999, 99999), "heading: a real change is applied when idle");
+        CHECK(!sat::heading_update_due(6.0f, 500, 99999), "heading: at most one redraw in 1.5 s");
         CHECK(!sat::heading_update_due(8.0f, 99999, 200), "heading: not while a finger is on the screen");
         CHECK(sat::heading_update_due(45.0f, 100, 100), "heading: a big swing is followed at once");
         CHECK(sat::heading_update_due(-170.0f, 100, 100), "heading: either way round");
       }
+    {  // UI-29b: fixed texts follow the distance unit
+      const bool was = sat::ui.miles;
+      sat::ui.miles = false;
+      CHECK(!strcmp(sat::units_text("Olympus Mons, {km:22} high; {kmh:2,000}; {km:1.39 million} across; {km2:2,000}"),
+                    "Olympus Mons, 22 km high; 2,000 km/h; 1.39 million km across; 2,000 km2"), "units: km");
+      sat::ui.miles = true;
+      const char *m = sat::units_text("{km:22} {kmh:2,000} {km:1.39 million} {km2:2,000} {km:384,400} {km:280,000}");
+      CHECK(!strcmp(m, "14 mi 1,240 mph 0.86 million mi 772 sq mi 239,000 mi 174,000 mi"), "units: miles (%s)", m);
+      sat::ui.miles = was;
+    }
+    {  // UI-86: a swipe steps along the planets strip (Mercury, Venus, Earth, Mars ... Pluto) and wraps
+      namespace p = sat::planets;
+      const int V = sat::VIEW_PLANET;
+      CHECK(sat::planet_swipe_target(V + p::MERCURY, 1) == V + p::VENUS, "swipe: Mercury -> Venus");
+      CHECK(sat::planet_swipe_target(V + p::VENUS, 1) == sat::net::IMG_EARTH, "swipe: Venus -> Earth");
+      CHECK(sat::planet_swipe_target(sat::net::IMG_EARTH, 1) == V + p::MARS, "swipe: Earth -> Mars");
+      CHECK(sat::planet_swipe_target(V + p::MARS, -1) == sat::net::IMG_EARTH, "swipe: Mars back to Earth");
+      CHECK(sat::planet_swipe_target(V + p::N_PLANETS + 2, 1) == V + p::MERCURY, "swipe: Pluto wraps to Mercury");
+      CHECK(sat::planet_swipe_target(V + p::MERCURY, -1) == V + p::N_PLANETS + 2, "swipe: Mercury wraps back to Pluto");
+      CHECK(sat::planet_swipe_target(sat::net::IMG_SUN, 1) < 0, "swipe: not on the Sun tab");
+    }
     {  // UI-16c: the Settings heading field follows the compass while it owns the heading
       lv_obj_t *ta = lv_textarea_create(lv_screen_active());
       lv_textarea_set_text(ta, "7");
@@ -3154,6 +3192,18 @@ int main() {
     net::decay_next = 0;
     net::status.next_try = 0;
     net::do_decay(sat_host_now);
+    CHECK(net::decay_at_kept == sat_host_now, "re-entries: the download time is kept for a reboot (DATA-12b)");
+    {  // a reboot soon after: no second download
+      const double keep_next = net::decay_next;
+      net::decay_next = 0;  // (a new boot)
+      net::decay_at_kept = sat_host_now - 600;
+      host_http_bodies.erase("SPECIAL=DECAYING");
+      net::do_decay(sat_host_now);
+      CHECK(net::decay_next == sat_host_now - 600 + net::DECAY_EVERY_S, "re-entries: not asked again after a reboot inside 6 h");
+      host_http_bodies["SPECIAL=DECAYING"] = slurp(HOST_DIR "/fixtures/decaying.csv");
+      net::decay_next = keep_next;
+      net::decay_at_kept = sat_host_now;
+    }
     sat::tick();
     bool sorted = true;
     for (size_t i = 1; i < sat::live.decays.size(); i++)
@@ -3271,8 +3321,13 @@ int main() {
       sat_host_now += 61;
       rk::cd_update();
       CHECK(!strcmp(lv_label_get_text(rk::cd.clock), "T-03:59") && !strcmp(lv_label_get_text(rk::cd.status), "HOLD") &&
-                lv_obj_has_flag(rk::cd.badge, LV_OBJ_FLAG_HIDDEN) && lv_obj_has_flag(rk::cd.qr, LV_OBJ_FLAG_HIDDEN),
-            "countdown: a hold");
+                lv_obj_has_flag(rk::cd.badge, LV_OBJ_FLAG_HIDDEN) && !lv_obj_has_flag(rk::cd.qr, LV_OBJ_FLAG_HIDDEN),
+            "countdown: a hold (no LIVE pill; the QR code stays while there is a link, UI-80c)");
+      sat::live.launches[0].watch[0] = 0;
+      rk::cd_update();
+      CHECK(lv_obj_has_flag(rk::cd.qr, LV_OBJ_FLAG_HIDDEN), "countdown: no link, no QR code (UI-80c)");
+      snprintf(sat::live.launches[0].watch, sizeof(l.watch), "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+      rk::cd_update();
       shoot("r21_countdown_hold");
       sat_host_now = l.net + 0.5;
       rk::cd_update();

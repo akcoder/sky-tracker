@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.45"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.46"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -64,6 +64,9 @@ esphome:
       then:                        # (at boot it ran out of memory for a second TLS connection)
         - delay: 3min
         - lambda: sat::upd::check_quiet("boot");
+    - priority: 215                # NET-8: SNTP sets up at 220 and would ask for the time before Wi-Fi is up: stopped at once
+      then:
+        - lambda: sat::sntp_hold();
     - priority: 600                # NET-10: sun tab icon; before web_server's setup (249)
       then:
         - lambda: |-
@@ -232,6 +235,11 @@ esp32:
       # session (sat_net keeps one open) failed every time: "mbedtls_ssl_setup returned
       # -0x7F00" (out of memory). Going through malloc (4.6.4) was not enough.
       CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: y
+      # NET-16: malloc of more than 4 KB comes from PSRAM (default 16 KB). The HTTP client's own 8 KB receive buffer
+      # went to internal RAM (~44 KB free, largest block ~31 KB) and a download failed on unit A: "Failed to allocate
+      # memory for storing decoded data", read failed after 0 bytes, "download was cut short". (Explicit
+      # heap_caps_malloc(INTERNAL) calls, such as the LVGL draw buffer and DMA, are unaffected.)
+      CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL: "4096"
 
 # tracker-common (shared with f1-tracker): the board (panel, touch, backlight, Wi-Fi, time, OTA cards).
 # backlight.yaml: the brightness globals, the Backlight number, the Auto Brightness switch, the light's slider sync,
@@ -325,8 +333,11 @@ web_server:                      # NET-1: built-in web UI on port 80
   local: true                    # bundle the UI so it also works on the AP (no internet)
                                  # NET-1: firmware upload from the web page is ON
   sorting_groups:                # NET-6: sections on the web page (HA is unaffected)
-    - id: grp_sky                # order: Location & Sky, Satellites, Celestial, Alerts, Display, ISS, System
-      name: Location & Sky       # (the OTA upload form is always last)
+    - id: grp_location           # the observer's place and the compass (the Settings > Location tab)
+      name: Location
+      sorting_weight: 5
+    - id: grp_sky                # order: Location, Sky, Satellites, Celestial, Alerts, Display, ISS, System
+      name: Sky                  # (the OTA upload form is always last)
       sorting_weight: 10
     - id: grp_sats
       name: Satellites
@@ -364,6 +375,10 @@ update:
       sorting_group_id: grp_system
 
 # ------------------------------------------------------------------ hardware
+touchscreen:
+  - id: !extend touch
+    update_interval: 16ms          # UI-86: the GT911 was read every 50 ms (the default) against LVGL's 16 ms: most reads moved 0 px, a swipe lost its speed
+
 # (i2c: bus_a, the touch, is the board package's; the compass's own bus is made at run time, HW-9c)
 
 uart:                            # HW-8: optional GPS, receive only (NMEA, 9600 baud)
@@ -739,8 +754,8 @@ sensor:
     id: s_magnetic_declination
     name: Magnetic Declination
     web_server:
-      sorting_group_id: grp_sky
-      sorting_weight: 11
+      sorting_group_id: grp_location
+      sorting_weight: 9
     icon: mdi:magnet
     entity_category: diagnostic
     unit_of_measurement: "°"
@@ -877,8 +892,8 @@ sensor:
     entity_category: diagnostic
     lambda: "return sat::hw::nmea.sats_used < 0 ? NAN : (float) sat::hw::nmea.sats_used;"
     web_server:
-      sorting_group_id: grp_system
-      sorting_weight: 13
+      sorting_group_id: grp_location
+      sorting_weight: 10
   - platform: template
     id: s_gps_altitude
     name: GPS Altitude
@@ -891,8 +906,8 @@ sensor:
     entity_category: diagnostic
     lambda: "return sat::hw::nmea_fix_ok(esphome::millis()) ? sat::hw::nmea.alt : NAN;"
     web_server:
-      sorting_group_id: grp_system
-      sorting_weight: 14
+      sorting_group_id: grp_location
+      sorting_weight: 11
   - platform: template
     id: s_orbital_data_age
     name: Orbital Data Age
@@ -903,8 +918,8 @@ sensor:
     entity_category: diagnostic
     lambda: return sat::data_age_h();
     web_server:
-      sorting_group_id: grp_system
-      sorting_weight: 4
+      sorting_group_id: grp_sats
+      sorting_weight: 90
   - platform: template
     id: s_satellites_tracked
     name: Satellites Tracked
@@ -915,8 +930,8 @@ sensor:
     entity_category: diagnostic
     lambda: return sat::tracked_sats();
     web_server:
-      sorting_group_id: grp_system
-      sorting_weight: 5
+      sorting_group_id: grp_sats
+      sorting_weight: 91
   - platform: template
     id: s_starlink_tracked
     name: Starlink Tracked
@@ -927,8 +942,8 @@ sensor:
     entity_category: diagnostic
     lambda: return sat::tracked_starlink();
     web_server:
-      sorting_group_id: grp_system
-      sorting_weight: 6
+      sorting_group_id: grp_sats
+      sorting_weight: 92
   - platform: template
     id: s_free_internal_ram
     name: Free Internal RAM
@@ -973,8 +988,8 @@ select:
     id: time_zone
     name: Time Zone
     web_server:
-      sorting_group_id: grp_display
-      sorting_weight: 1
+      sorting_group_id: grp_location
+      sorting_weight: 12
     icon: mdi:earth
     optimistic: true
     restore_value: true
@@ -1029,7 +1044,7 @@ number:
     id: map_heading
     name: Map Heading
     web_server:
-      sorting_group_id: grp_sky
+      sorting_group_id: grp_location
       sorting_weight: 3
     icon: mdi:compass-outline
     unit_of_measurement: "°"
@@ -1053,7 +1068,7 @@ number:
     id: obs_lat
     name: Observer Latitude
     web_server:
-      sorting_group_id: grp_sky
+      sorting_group_id: grp_location
       sorting_weight: 1
     icon: mdi:latitude
     unit_of_measurement: "°"
@@ -1075,7 +1090,7 @@ number:
     id: obs_lon
     name: Observer Longitude
     web_server:
-      sorting_group_id: grp_sky
+      sorting_group_id: grp_location
       sorting_weight: 2
     icon: mdi:longitude
     unit_of_measurement: "°"
@@ -1098,8 +1113,8 @@ number:
     id: compass_offset
     name: Compass Offset
     web_server:
-      sorting_group_id: grp_sky
-      sorting_weight: 10
+      sorting_group_id: grp_location
+      sorting_weight: 4
     icon: mdi:compass-rose
     entity_category: config
     unit_of_measurement: "°"
@@ -1116,8 +1131,8 @@ switch:
     id: compass_reverse
     name: Compass Reverse
     web_server:
-      sorting_group_id: grp_sky
-      sorting_weight: 12
+      sorting_group_id: grp_location
+      sorting_weight: 5
     icon: mdi:swap-horizontal
     entity_category: config
     optimistic: true
@@ -1464,8 +1479,8 @@ switch:
     id: launch_anim
     name: Launch Animation
     web_server:
-      sorting_group_id: grp_display
-      sorting_weight: 6
+      sorting_group_id: grp_animations
+      sorting_weight: 1
     icon: mdi:rocket-launch
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -1477,8 +1492,8 @@ switch:
     id: octopus_visits
     name: Octopus Visits
     web_server:
-      sorting_group_id: grp_display
-      sorting_weight: 7
+      sorting_group_id: grp_animations
+      sorting_weight: 2
     icon: mdi:jellyfish
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -1531,8 +1546,8 @@ button:
     id: btn_calibrate_compass
     name: Calibrate Compass
     web_server:
-      sorting_group_id: grp_sky
-      sorting_weight: 13
+      sorting_group_id: grp_location
+      sorting_weight: 6
     icon: mdi:compass-outline
     entity_category: config
     on_press:
@@ -1632,7 +1647,7 @@ text_sensor:
     icon: mdi:crosshairs-gps
     update_interval: never
     web_server:
-      sorting_group_id: grp_sky
+      sorting_group_id: grp_location
       sorting_weight: 8
   - platform: template           # HW-9
     id: heading_source
@@ -1640,8 +1655,8 @@ text_sensor:
     icon: mdi:compass
     update_interval: never
     web_server:
-      sorting_group_id: grp_sky
-      sorting_weight: 9
+      sorting_group_id: grp_location
+      sorting_weight: 7
   - platform: template
     id: ts_next_iss_pass
     name: Next ISS Pass

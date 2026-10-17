@@ -73,7 +73,7 @@ static const Ev EVENTS[] = {
     {6, 16, 1963, "Valentina Tereshkova becomes the first woman in space"},
     {6, 18, 1983, "Sally Ride becomes the first American woman in space"},
     {6, 21, 2004, "SpaceShipOne makes the first private crewed spaceflight"},
-    {6, 30, 1908, "The Tunguska blast flattens 2,000 km2 of Siberian forest"},
+    {6, 30, 1908, "The Tunguska blast flattens {km2:2,000} of Siberian forest"},
     {6, 30, 1971, "The Soyuz 11 crew are lost returning from Salyut 1"},
     {7, 1, 2004, "Cassini enters orbit around Saturn"},
     {7, 4, 1997, "Mars Pathfinder lands; Sojourner rolls off soon after"},
