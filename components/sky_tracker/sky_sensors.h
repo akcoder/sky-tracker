@@ -292,7 +292,8 @@ inline Calibration calibrate_finish() {
   Calibration c;
   compass.calibrating = false;
   const float rx = compass.mxx - compass.mnx, ry = compass.mxy - compass.mny;
-  if (compass.cal_samples < 20 || rx <= 0 || ry <= 0 || rx / ry > 3 || ry / rx > 3) {
+  // HW-9d: a ring of at least 60 counts radius; the noise of a unit that sat still (a range of ~20) is not a calibration
+  if (compass.cal_samples < 20 || rx < 120 || ry < 120 || rx / ry > 3 || ry / rx > 3) {
     ESP_LOGW(HW_TAG, "compass calibration failed (%d samples, ranges %.0f/%.0f)", compass.cal_samples, rx, ry);
     return c;  // invalid
   }
@@ -347,11 +348,21 @@ inline void cal_feed(float x, float y, uint32_t now_ms) {
     const double D = (b1 * (a22 * a33 - a23 * a23) - a12 * (b2 * a33 - a23 * b3) + a13 * (b2 * a23 - a22 * b3)) / det;
     const double E = (a11 * (b2 * a33 - a23 * b3) - b1 * (a12 * a33 - a23 * a13) + a13 * (a12 * b3 - b2 * a13)) / det;
     const float ccx = compass.hx[0] - (float) (D / 2), ccy = compass.hy[0] - (float) (E / 2);
+    // HW-9d: at rest the samples are a blob of noise: the fit still gives some centre and the angles about it fall in
+    // many sectors (80-95% sitting still). Only a real ring counts: a radius of at least 60 counts, and a sample
+    // counts only if it lies within 40% of that radius from the fitted circle.
+    const double F = (b3 - a13 * D - a23 * E) / a33;
+    const double r2 = D * D / 4 + E * E / 4 - F;
+    const float radius = r2 > 0 ? (float) sqrt(r2) : 0.0f;
+    if (radius < 60.0f)
+      return;
     uint64_t bins = 0;
     float turn = 0, prev = NAN;
     for (int i = 0; i < compass.hn; i++) {
-      const float ang = atan2f(compass.hy[i] - ccy, compass.hx[i] - ccx) * 57.29578f;
-      bins |= 1ull << ((int) ((ang + 180.0f) / 10.0f) % 36);
+      const float ox = compass.hx[i] - ccx, oy = compass.hy[i] - ccy;
+      const float ang = atan2f(oy, ox) * 57.29578f;
+      if (fabsf(sqrtf(ox * ox + oy * oy) - radius) < 0.4f * radius)
+        bins |= 1ull << ((int) ((ang + 180.0f) / 10.0f) % 36);
       if (!std::isnan(prev)) {
         float d = ang - prev;
         d -= 360.0f * floorf((d + 180.0f) / 360.0f);
