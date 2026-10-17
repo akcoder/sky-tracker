@@ -1782,6 +1782,11 @@ int main() {
       CHECK(sat::planet_swipe_target(V + p::N_PLANETS + 2, 1) == V + p::MERCURY, "swipe: Pluto wraps to Mercury");
       CHECK(sat::planet_swipe_target(V + p::MERCURY, -1) == V + p::N_PLANETS + 2, "swipe: Mercury wraps back to Pluto");
       CHECK(sat::planet_swipe_target(sat::net::IMG_SUN, 1) < 0, "swipe: not on the Sun tab");
+      {  // UI-86b: the Alaska tab swaps Poker Flat and the NOAA region (only where there is a region)
+        const bool reg = sat::my_region() != nullptr;
+        CHECK(sat::planet_swipe_target(sat::net::IMG_ALLSKY, 1) == (reg ? (int) sat::net::IMG_REGION : -1), "swipe: Poker Flat -> NOAA");
+        CHECK(sat::planet_swipe_target(sat::net::IMG_REGION, -1) == (reg ? (int) sat::net::IMG_ALLSKY : -1), "swipe: NOAA -> Poker Flat");
+      }
     }
     {  // UI-16c: the Settings heading field follows the compass while it owns the heading
       lv_obj_t *ta = lv_textarea_create(lv_screen_active());
