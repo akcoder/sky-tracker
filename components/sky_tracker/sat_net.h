@@ -600,7 +600,10 @@ inline HttpResult http_stream(const char *url, const char *what, const std::func
       c.url = url;
       c.crt_bundle_attach = esp_crt_bundle_attach;
       c.timeout_ms = 15000;
-      c.buffer_size = 8192;  // NET-11: fewer, larger reads
+      // NET-11: fewer, larger reads; NET-16: the client's buffer is plain malloc, i.e. internal RAM (this build
+      // has SPIRAM_USE_CAPS_ALLOC, so the malloc threshold does not apply): size it to the largest free block
+      const size_t blk = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
+      c.buffer_size = blk >= 20000 ? 8192 : blk >= 10000 ? 4096 : 2048;
       c.buffer_size_tx = 1024;
       c.keep_alive_enable = true;
       c.event_handler = http_event;
