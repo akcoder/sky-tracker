@@ -43,12 +43,9 @@ pictures you ask for.
 
   ![Launch animation](docs/renders/launch.gif)
 
-  A mimic octopus also swims across the map two or three times an hour, says
-  something, imitates a lionfish or a sea snake and then the ISS, and squirts
-  ink on its way out (the Octopus Visits switch turns it off; a web and Home
-  Assistant button plays it on demand):
+  Every launch and space event card also has a QR code to its webcast (or info page) to open on a phone:
 
-  ![Octopus](docs/renders/octopus.gif)
+  ![Launch countdown with QR code](docs/renders/r21_countdown.png)
 
   More in [docs/renders](docs/renders/): the docking, undocking and splashdown animations and every screen.
 - **Home Assistant.** ISS overhead, next pass, aurora chance, solar wind and
