@@ -7815,7 +7815,15 @@ inline void scrub_build() {
 
 namespace rocket {
 bool active();  // sky_rocket.h (UI-69): the launch animation is on screen
-}
+void play_now();
+void play_undock_now();
+void play_dock_now();
+void play_splash_now();
+}  // namespace rocket
+namespace octo {
+bool play_now();  // sky_octopus.h
+bool playing();
+}  // namespace octo
 
 // PERF-19: where the time of each LVGL refresh goes. A refresh is REFR_START .. REFR_READY; inside it the page is rendered
 // in strips (RENDER_START .. RENDER_READY: LVGL drawing into its 56 KB buffer) and each strip is flushed (FLUSH_START ..
@@ -7907,7 +7915,9 @@ inline void run(const char *cmd) {
   char what[24] = "";
   int n = -1;
   sscanf(cmd, "%23s %d", what, &n);
-  if (!strcmp(cmd, "perf")) {
+  if (!strcmp(cmd, "mem")) {
+    mem_report("cmd");
+  } else if (!strcmp(cmd, "perf")) {
     perf_report("cmd");
 #ifndef SAT_HOST_TEST
     ESP_LOGI(UI_TAG, "dbg: internal RAM free %u KB, largest block %u KB, PSRAM free %u KB",
@@ -7941,6 +7951,19 @@ inline void run(const char *cmd) {
     }
     ESP_LOGI(UI_TAG, "dbg: list %d rows: STR %d, PL %d, CON %d (stars shown %d, sun el %.1f)", n, str, pl, con, (int) ui.stars_shown,
              (double) ui.view_sun_el);
+  } else if (!strncmp(cmd, "anim ", 5)) {  // the Play ... Animation buttons: launch dock undock splash octopus
+    const char *a = cmd + 5;
+    if (!strcmp(a, "launch"))
+      rocket::play_now();
+    else if (!strcmp(a, "dock"))
+      rocket::play_dock_now();
+    else if (!strcmp(a, "undock"))
+      rocket::play_undock_now();
+    else if (!strcmp(a, "splash"))
+      rocket::play_splash_now();
+    else if (!strcmp(a, "octopus"))
+      ESP_LOGI(UI_TAG, "dbg: octopus %s", octo::play_now() ? "started" : "NOT started");
+    ESP_LOGI(UI_TAG, "dbg: anim %s", a);
   } else if (!strcmp(cmd, "dino")) {
     ESP_LOGI(UI_TAG, "dbg: dino walk %s", dino::walk(lv_tick_get() * 2654435761u + 1) ? "started" : "NOT started");
   } else if (!strcmp(cmd, "state")) {
@@ -8004,6 +8027,9 @@ inline void tick() {
       lv_draw_buf_t *db = d ? lv_display_get_buf_active(d) : nullptr;
       perf_hook();
       perf_report("minute");
+      static int mem_n = 0;
+      if (mem_n++ % 10 == 0)
+        mem_report("10 min");
       ESP_LOGI(UI_TAG, "perf: LVGL draw buffer in %s (%u KB); internal RAM free %u KB, largest block %u KB",
                db && db->data ? (esp_ptr_internal(db->data) ? "internal RAM" : "PSRAM") : "?",
                db ? (unsigned) (db->data_size / 1024) : 0u, (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
