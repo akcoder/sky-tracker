@@ -574,6 +574,7 @@ inline bool begin(uint32_t seed) {
   const size_t need = (rocket::st.snap ? 1 : 2) * 460800u + 32768u;
   if (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) < need) {
     ESP_LOGD("octo", "not enough PSRAM for a visit (%u KB free)", (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
+    mem_report("no octopus");
     return false;
   }
   st.rng = seed ? seed : 0x9E3779B9u;
@@ -688,8 +689,8 @@ void check() {
   if (lv_obj_get_child_count(lv_layer_top()) > 0 || ui.w.sky == nullptr || lv_obj_get_parent(ui.w.sky) != lv_screen_active() ||
       lv_display_get_inactive_time(nullptr) < min_idle_ms || busy_soon())
     return;
-  if (begin(st.rng ^ rocket::now_us()))
-    schedule(false);
+  begin(st.rng ^ rocket::now_us());
+  schedule(false);  // also after a refusal (no PSRAM): the next try is minutes away, not a second
 }
 }  // namespace octo
 }  // namespace sat

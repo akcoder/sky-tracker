@@ -75,6 +75,32 @@ inline double clock_now() {
 #endif
 inline bool clock_valid() { return clock_now() > 1.7e9; }
 
+// Memory instrumentation: bytes held by the PSRAM allocator's vectors and by named long-lived buffers, so "mem" can
+// show what is using the PSRAM and what is left over (LVGL, TLS, the IDF). Plain counters, no heap walk.
+namespace memtrack {
+struct Ent {
+  const char *name;
+  size_t bytes;
+};
+inline Ent ents[24];
+inline size_t vec_bytes = 0, vec_peak = 0;
+inline void set(const char *name, size_t bytes) {  // name is a literal: compared by content, kept by pointer
+  for (auto &e : ents)
+    if (e.name == nullptr || !strcmp(e.name, name)) {
+      e.name = name;
+      e.bytes = bytes;
+      return;
+    }
+}
+inline void add(const char *name, size_t bytes) {
+  for (auto &e : ents)
+    if (e.name == nullptr || !strcmp(e.name, name)) {
+      e.name = name;
+      e.bytes += bytes;
+      return;
+    }
+}
+}  // namespace memtrack
 // ESPHome builds with CONFIG_SPIRAM_USE_CAPS_ALLOC, so plain malloc never reaches
 // PSRAM. Element sets, record lists and marker pools use this allocator (ARCH-8).
 template<class T> struct PsramAlloc {
@@ -87,9 +113,15 @@ template<class T> struct PsramAlloc {
       p = malloc(n * sizeof(T));
     if (p == nullptr)
       abort();
+    memtrack::vec_bytes += n * sizeof(T);
+    if (memtrack::vec_bytes > memtrack::vec_peak)
+      memtrack::vec_peak = memtrack::vec_bytes;
     return static_cast<T *>(p);
   }
-  void deallocate(T *p, size_t) { heap_caps_free(p); }
+  void deallocate(T *p, size_t n) {
+    memtrack::vec_bytes -= n * sizeof(T);
+    heap_caps_free(p);
+  }
   template<class U> bool operator==(const PsramAlloc<U> &) const { return true; }
   template<class U> bool operator!=(const PsramAlloc<U> &) const { return false; }
 };
@@ -2788,6 +2820,8 @@ inline uint16_t *img_work_take() {
     if (!busy) {
       if (img_work_buf == nullptr)
         img_work_buf = (uint16_t *) heap_caps_malloc(IMG_PX * IMG_PX * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      if (img_work_buf)
+        memtrack::set("img_work", IMG_PX * IMG_PX * 2);
       return img_work_buf;
     }
     vTaskDelay(pdMS_TO_TICKS(20));
@@ -2798,17 +2832,33 @@ inline double img_have[IMG_N] = {-1, -1, -1, -1, -1, -1};  // frame already deco
 constexpr size_t IMG_JPG_MAX = 768 * 1024;  // the Moon (~110 KB) and the Earth (~450 KB) JPEGs
 // the box filter's sums (777 KB): one buffer for the Earth, the region and the planets (the
 // net task decodes one picture at a time), taken once and kept, so it cannot be squeezed out
+// PERF-20b: both are taken when a picture job needs them and given back when the net task has nothing queued, so
+// the 1.5 MB is free for the octopus's pictures (and the rest) between downloads. Only the net task uses them.
+inline uint16_t *acc_buf = nullptr;
+inline uint8_t *jpg_buf = nullptr;
 inline uint16_t *fit_acc() {
-  static uint16_t *acc = nullptr;
-  if (acc == nullptr)
-    acc = (uint16_t *) heap_caps_malloc(IMG_PX * IMG_PX * 3 * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  return acc;
+  if (acc_buf == nullptr) {
+    acc_buf = (uint16_t *) heap_caps_malloc(IMG_PX * IMG_PX * 3 * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (acc_buf)
+      memtrack::set("fit_acc", IMG_PX * IMG_PX * 3 * sizeof(uint16_t));
+  }
+  return acc_buf;
 }
 inline uint8_t *img_jpg() {
-  static uint8_t *jpg = nullptr;
-  if (jpg == nullptr)
-    jpg = (uint8_t *) heap_caps_malloc(IMG_JPG_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-  return jpg;
+  if (jpg_buf == nullptr) {
+    jpg_buf = (uint8_t *) heap_caps_malloc(IMG_JPG_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (jpg_buf)
+      memtrack::set("jpg_buf", IMG_JPG_MAX);
+  }
+  return jpg_buf;
+}
+inline void img_scratch_release() {
+  heap_caps_free(acc_buf);
+  heap_caps_free(jpg_buf);
+  acc_buf = nullptr;
+  jpg_buf = nullptr;
+  memtrack::set("fit_acc", 0);
+  memtrack::set("jpg_buf", 0);
 }
 inline bool sun_frame_time(const char *url, double &t) {  // "..._s20260928T190000Z_..."
   const char *p = strstr(url, "_s20");
@@ -4064,11 +4114,6 @@ inline void run_job(uint8_t job) {
 inline std::atomic<uint32_t> queued{0};
 
 inline void task_main(void *) {
-  // the two big picture buffers (768 KB JPEG, 777 KB sums) are taken first, before the orbital
-  // lists, while PSRAM is still in one piece, and kept (4.6.22-4.6.24 took them after reserving
-  // the lists at their caps and every picture failed)
-  if (img_jpg() == nullptr || fit_acc() == nullptr)
-    ESP_LOGW(TAG, "pictures: PSRAM buffers not available");
   cache_load();         // DATA-10
   launch_cache_load();  // UI-54a
   event_cache_load();   // UI-54c
@@ -4087,6 +4132,8 @@ inline void task_main(void *) {
       job_busy = true;
       run_job(job);
       job_busy = false;
+      if (uxQueueMessagesWaiting(queue) == 0)
+        img_scratch_release();  // PERF-20b
     }
   }
 }
@@ -4097,12 +4144,37 @@ inline void task_main(void *) {
 
 inline const Config &config() { return net::cfg; }
 
+// "mem": where the memory is. PSRAM total/free/largest block/lowest free ever, the same for internal RAM, then what
+// the named buffers and vectors hold; "other" is the rest (LVGL, TLS, the IDF, pictures in flight).
+inline void mem_report(const char *why) {
+  const size_t pt = heap_caps_get_total_size(MALLOC_CAP_SPIRAM), pf = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+  size_t tracked = memtrack::vec_bytes;
+  char line[400];
+  int n = 0;
+  for (const auto &e : memtrack::ents)
+    if (e.name && e.bytes) {
+      n += snprintf(line + n, sizeof(line) - n, " %s %u,", e.name, (unsigned) (e.bytes / 1024));
+      tracked += e.bytes;
+      if (n > (int) sizeof(line) - 40)
+        break;
+    }
+  ESP_LOGI(net::TAG, "mem (%s): PSRAM %u KB total, %u free, largest block %u, lowest free %u; internal %u free, largest %u, lowest %u",
+           why, (unsigned) (pt / 1024), (unsigned) (pf / 1024), (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024),
+           (unsigned) (heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM) / 1024), (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+           (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+           (unsigned) (heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024));
+  ESP_LOGI(net::TAG, "mem (%s): KB in PSRAM:%s vectors %u (peak %u); named %u, other %d", why, line, (unsigned) (memtrack::vec_bytes / 1024),
+           (unsigned) (memtrack::vec_peak / 1024), (unsigned) ((tracked - memtrack::vec_bytes) / 1024),
+           (int) ((pt - pf - tracked) / 1024));
+}
 // Called once from on_boot. Returns false if memory or the task could not be had.
 inline bool net_init(const Config &c) {
   net::cfg = c;
   net::queue = xQueueCreate(12, sizeof(uint8_t));
   net::mutex = xSemaphoreCreateMutex();
   net::json_buf = (char *) heap_caps_malloc(net::JSON_BUF, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  if (net::json_buf)
+    memtrack::set("json_buf", net::JSON_BUF);
   if (!net::queue || !net::mutex || !net::json_buf) {
     ESP_LOGE(net::TAG, "init: out of memory");
     return false;
@@ -4255,6 +4327,12 @@ inline uint8_t drain() {
       if (px_new) {
         if (live.img_px[k] == nullptr)
           live.img_px[k] = (uint16_t *) heap_caps_malloc(net::IMG_PX * net::IMG_PX * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        if (live.img_px[k]) {
+          int have = 0;
+          for (int j = 0; j < net::IMG_N; j++)
+            have += live.img_px[j] != nullptr;
+          memtrack::set("img_px", (size_t) have * net::IMG_PX * net::IMG_PX * 2);
+        }
         if (live.img_px[k]) {
           memcpy(live.img_px[k], net::img_work_buf, net::IMG_PX * net::IMG_PX * 2);
           live.img_new[k] = true;
