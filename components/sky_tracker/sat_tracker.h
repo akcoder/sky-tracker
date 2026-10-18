@@ -594,13 +594,13 @@ inline const lv_image_dsc_t *planet_dsc(int p, bool big) {
   }
   return big ? &large[p] : &small[p];
 }
-inline const lv_image_dsc_t *planet_card_dsc(int p) {  // 40 px, for the planet card
+inline const lv_image_dsc_t *planet_card_dsc(int p) {  // 40 px, for the planet card: the planet's own photo (Saturn with its rings)
   static lv_image_dsc_t d[planets::N_PLANETS];
   static bool made = false;
   if (!made) {
     made = true;
     for (int i = 0; i < planets::N_PLANETS; i++)
-      d[i] = make_dsc(picons::CARD_PX[i], picons::CARD, picons::CARD);
+      d[i] = make_dsc(photos::icon(i), picons::CARD, picons::CARD);
   }
   return &d[p];
 }
@@ -6811,6 +6811,8 @@ inline int planet_kind_at(int i) {
   return order[((i % 9) + 9) % 9];
 }
 inline int planet_swipe_target(int kind, int dir) {  // -1: not on the Planets tab
+  if (is_alaska(kind))  // UI-86b: Poker Flat's camera and the NOAA region (when there is one): a swipe either way shows the other
+    return my_region() ? (kind == net::IMG_ALLSKY ? (int) net::IMG_REGION : (int) net::IMG_ALLSKY) : -1;
   if (!(kind >= VIEW_PLANET || kind == net::IMG_EARTH))
     return -1;
   for (int i = 0; i < 9; i++)
@@ -6819,7 +6821,7 @@ inline int planet_swipe_target(int kind, int dir) {  // -1: not on the Planets t
   return -1;
 }
 inline bool swipe_recent() { return sv.swipe_ms != 0 && lv_tick_elaps(sv.swipe_ms) < 400; }
-// UI-86: press and release, not LVGL's gesture (it came after the click: a swipe on the picture opened its facts). The
+// UI-86 (and UI-86b, the Alaska tab): press and release, not LVGL's gesture (it came after the click: a swipe on the picture opened its facts). The
 // release of any drag of 10 px or more is not a tap (swipe_recent); a horizontal one (28 px, at least twice its height,
 // within 700 ms) steps to the next or previous planet. As f1-tracker does (its decision 202).
 inline lv_point_t swipe_from = {0, 0};
@@ -7072,6 +7074,7 @@ inline void img_view_open_now(int kind, int planet) {
       lv_obj_set_style_text_color(nl, lv_color_hex(on ? 0xFF8A1F : 0xC9D3F2), 0);
       lv_label_set_text(nl, chips[i].name);
       lv_obj_align(nl, LV_ALIGN_BOTTOM_MID, 0, -3);
+      lv_obj_add_flag(c, LV_OBJ_FLAG_EVENT_BUBBLE);  // UI-86b
       lv_obj_add_event_cb(c, img_tab_cb, LV_EVENT_CLICKED, (void *) (intptr_t) chips[i].kind);
     }
   }

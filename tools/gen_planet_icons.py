@@ -6,7 +6,7 @@ import io, os, re
 from PIL import Image, ImageDraw
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "components", "sky_tracker")
-NAMES = ["MERCURY", "VENUS", "MARS", "JUPITER"]  # (Saturn keeps its drawn icon: a cut from the photo looked bad)
+NAMES = ["MERCURY", "VENUS", "MARS", "JUPITER"]  # Saturn (ICON_SATURN, index 4) is the photo with its rings, not round
 src = open(os.path.join(ROOT, "sky_photos.h")).read()
 
 
@@ -36,9 +36,23 @@ for n in NAMES:
     out.append(f"static const uint32_t ICON_{n}[40 * 40] = {{")
     out += [",".join(f"0x{v:08X}" for v in px[i:i + 10]) + "," for i in range(0, len(px), 10)]
     out.append("};")
+# Saturn: the real photo cropped to the planet and its rings, 40 px wide, black made transparent (the card's picture)
+sat = photo("SATURN")
+g = sat.convert("L").point(lambda v: 255 if v > 40 else 0).getbbox()
+sat = sat.crop(g)
+h = max(1, round(40 * sat.height / sat.width))
+sat = sat.resize((40, h), Image.LANCZOS)
+al = sat.convert("L").point(lambda v: min(255, v * 5))
+sat.putalpha(al)
+canvas = Image.new("RGBA", (40, 40), (0, 0, 0, 0))
+canvas.paste(sat, (0, (40 - h) // 2))
+px = [(al << 24) | (r << 16) | (g << 8) | b for (r, g, b, al) in canvas.getdata()]
+out.append("static const uint32_t ICON_SATURN[40 * 40] = {")
+out += [",".join(f"0x{v:08X}" for v in px[i:i + 10]) + "," for i in range(0, len(px), 10)]
+out.append("};")
 out.append("inline const uint32_t *icon(int p) {")
-out.append("  static const uint32_t *const I[4] = {" + ", ".join("ICON_" + n for n in NAMES) + "};")
-out.append("  return I[p < 0 ? 0 : p > 3 ? 3 : p];")
+out.append("  static const uint32_t *const I[5] = {" + ", ".join("ICON_" + n for n in NAMES) + ", ICON_SATURN};")
+out.append("  return I[p < 0 ? 0 : p > 4 ? 4 : p];")
 out.append("}")
 out += ["}  // namespace photos", "}  // namespace sat", ""]
 open(os.path.join(ROOT, "sky_photos_icons.h"), "w").write("\n".join(out))
