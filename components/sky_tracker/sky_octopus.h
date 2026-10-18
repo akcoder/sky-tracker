@@ -574,7 +574,7 @@ inline bool begin(uint32_t seed) {
   const size_t need = (rocket::st.snap ? 1 : 2) * 460800u + 32768u;
   if (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) < need) {
     ESP_LOGD("octo", "not enough PSRAM for a visit (%u KB free)", (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024));
-    mem_report("no octopus");
+    mem_report("no octopus", false);
     return false;
   }
   st.rng = seed ? seed : 0x9E3779B9u;

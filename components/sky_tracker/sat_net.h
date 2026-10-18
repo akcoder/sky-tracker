@@ -75,6 +75,44 @@ inline double clock_now() {
 #endif
 inline bool clock_valid() { return clock_now() > 1.7e9; }
 
+// What was running when the display's frame start had to be put right (PERF-16, "display frame start put right ..."): the
+// flash writes (they stall the cache), the HTTP/TLS work and the JPEG decoder (PSRAM bus), recorded as times and read by the
+// resync log line. Plain volatile stores; the numbers are microseconds of esp_timer.
+namespace actx {
+inline volatile int64_t flash_start = 0, flash_end = 0, http_start = 0, http_end = 0;
+inline volatile uint32_t flash_bytes = 0, flash_n = 0;
+inline volatile int http_active = 0, jpg_active = 0;
+inline const char *volatile http_what = "";
+#ifdef SAT_HOST_TEST
+inline int64_t us() { return 0; }
+#else
+inline int64_t us() { return esp_timer_get_time(); }
+#endif
+struct Http {
+  Http(const char *w) { http_what = w; http_start = us(); http_active = http_active + 1; }
+  ~Http() { http_end = us(); http_active = http_active - 1; }
+};
+struct Jpg {
+  Jpg() { jpg_active = jpg_active + 1; }
+  ~Jpg() { jpg_active = jpg_active - 1; }
+};
+}  // namespace actx
+template<class P> inline esp_err_t part_erase(P *p, size_t off, size_t len) {
+  actx::flash_start = actx::us();
+  const esp_err_t r = esp_partition_erase_range(p, off, len);
+  actx::flash_end = actx::us();
+  actx::flash_bytes = (uint32_t) len;
+  actx::flash_n = actx::flash_n + 1;
+  return r;
+}
+template<class P> inline esp_err_t part_write(P *p, size_t off, const void *d, size_t n) {
+  actx::flash_start = actx::us();
+  const esp_err_t r = esp_partition_write(p, off, d, n);
+  actx::flash_end = actx::us();
+  actx::flash_bytes = (uint32_t) n;
+  actx::flash_n = actx::flash_n + 1;
+  return r;
+}
 // Memory instrumentation: bytes held by the PSRAM allocator's vectors and by named long-lived buffers, so "mem" can
 // show what is using the PSRAM and what is left over (LVGL, TLS, the IDF). Plain counters, no heap walk.
 namespace memtrack {
@@ -615,6 +653,7 @@ inline void url_host(const char *url, char *out, size_t n) {
 }
 inline HttpResult http_stream(const char *url, const char *what, const std::function<void(const char *, int)> &sink,
                               const bool *stop = nullptr) {  // stop: set by the sink once it has enough
+  actx::Http mark(what);
   HttpResult res;
   char host[64];
   url_host(url, host, sizeof(host));
@@ -1352,19 +1391,19 @@ inline bool cache_write(uint32_t off, uint32_t max, CacheHdr h,
     return false;
   }
   const uint32_t erase = (len + 0xFFF) & ~0xFFFu;
-  if (esp_partition_erase_range(cache_part, off, erase) != ESP_OK)
+  if (part_erase(cache_part, off, erase) != ESP_OK)
     return false;
   uint32_t pos = off + CACHE_HDR, crc = 0;
   if (!payload(pos, crc))
     return false;
   h.crc = crc;
-  return esp_partition_write(cache_part, off, &h, sizeof(h)) == ESP_OK;
+  return part_write(cache_part, off, &h, sizeof(h)) == ESP_OK;
 }
 inline bool cache_put(uint32_t &pos, uint32_t &crc, const void *d, size_t n) {
   if (n == 0)
     return true;
   crc = esp_rom_crc32_le(crc, (const uint8_t *) d, n);
-  const bool ok = esp_partition_write(cache_part, pos, d, n) == ESP_OK;
+  const bool ok = part_write(cache_part, pos, d, n) == ESP_OK;
   pos += n;
   return ok;
 }
@@ -1478,8 +1517,8 @@ inline void hold_write() {
     return;
   HoldRec h{HOLD_MAGIC, 0, hold_until_kept, decay_at_kept};
   h.crc = hold_crc(h);
-  if (esp_partition_erase_range(cache_part, CACHE_HOLD_OFF, 0x1000) == ESP_OK &&
-      esp_partition_write(cache_part, CACHE_HOLD_OFF, &h, sizeof(h)) == ESP_OK)
+  if (part_erase(cache_part, CACHE_HOLD_OFF, 0x1000) == ESP_OK &&
+      part_write(cache_part, CACHE_HOLD_OFF, &h, sizeof(h)) == ESP_OK)
     ESP_LOGI(TAG, "cache: CelesTrak hold / re-entries time saved");
 }
 inline void hold_save(double until) {
@@ -1995,8 +2034,8 @@ inline void launch_cache_save(const pvector<LaunchRec> &v, double now) {
   for (uint32_t i = 0; i < c->n; i++)
     c->rec[i] = v[i];
   c->crc = launch_crc(*c);
-  if (esp_partition_erase_range(cache_part, CACHE_LAUNCH_OFF, 0x1000) != ESP_OK ||
-      esp_partition_write(cache_part, CACHE_LAUNCH_OFF, c, sizeof(*c)) != ESP_OK)
+  if (part_erase(cache_part, CACHE_LAUNCH_OFF, 0x1000) != ESP_OK ||
+      part_write(cache_part, CACHE_LAUNCH_OFF, c, sizeof(*c)) != ESP_OK)
     ESP_LOGW(TAG, "cache: launches not saved");
   heap_caps_free(c);
 }
@@ -2309,8 +2348,8 @@ inline void event_cache_save(const pvector<EventRec> &v, double now) {
   for (uint32_t i = 0; i < c->n; i++)
     c->rec[i] = v[i];
   c->crc = event_crc(*c);
-  if (esp_partition_erase_range(cache_part, CACHE_EVENT_OFF, 0x1000) != ESP_OK ||
-      esp_partition_write(cache_part, CACHE_EVENT_OFF, c, sizeof(*c)) != ESP_OK)
+  if (part_erase(cache_part, CACHE_EVENT_OFF, 0x1000) != ESP_OK ||
+      part_write(cache_part, CACHE_EVENT_OFF, c, sizeof(*c)) != ESP_OK)
     ESP_LOGW(TAG, "cache: events not saved");
   heap_caps_free(c);
 }
@@ -2918,6 +2957,7 @@ struct JpgStream {
 #endif
   }
   void run(size_t len, bool streaming) {
+    actx::Jpg mark;
     tracker::jpg::Progress st;
     if (streaming) {
       st.have = &have;
@@ -4146,7 +4186,9 @@ inline const Config &config() { return net::cfg; }
 
 // "mem": where the memory is. PSRAM total/free/largest block/lowest free ever, the same for internal RAM, then what
 // the named buffers and vectors hold; "other" is the rest (LVGL, TLS, the IDF, pictures in flight).
-inline void mem_report(const char *why) {
+// walk: also the largest free blocks. That walks the heap with interrupts off (5.5 MB of PSRAM: long enough to make the
+// panel's frame start late and cost a resync, PERF-16b: one every 10 min from the periodic line); only the "mem" command asks.
+inline void mem_report(const char *why, bool walk = true) {
   const size_t pt = heap_caps_get_total_size(MALLOC_CAP_SPIRAM), pf = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
   size_t tracked = memtrack::vec_bytes;
   char line[400];
@@ -4158,10 +4200,10 @@ inline void mem_report(const char *why) {
       if (n > (int) sizeof(line) - 40)
         break;
     }
-  ESP_LOGI(net::TAG, "mem (%s): PSRAM %u KB total, %u free, largest block %u, lowest free %u; internal %u free, largest %u, lowest %u",
-           why, (unsigned) (pt / 1024), (unsigned) (pf / 1024), (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024),
+  ESP_LOGI(net::TAG, "mem (%s): PSRAM %u KB total, %u free, largest block %d, lowest free %u; internal %u free, largest %d, lowest %u",
+           why, (unsigned) (pt / 1024), (unsigned) (pf / 1024), walk ? (int) (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024) : -1,
            (unsigned) (heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM) / 1024), (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
-           (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+           walk ? (int) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024) : -1,
            (unsigned) (heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024));
   ESP_LOGI(net::TAG, "mem (%s): KB in PSRAM:%s vectors %u (peak %u); named %u, other %d", why, line, (unsigned) (memtrack::vec_bytes / 1024),
            (unsigned) (memtrack::vec_peak / 1024), (unsigned) ((tracked - memtrack::vec_bytes) / 1024),
