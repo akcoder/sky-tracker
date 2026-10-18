@@ -1553,7 +1553,8 @@ PERF-16 The display MUST NOT stay shifted: in IDF 5.5.5's RGB driver with bounce
 PERF-16b Each resync's log line carries its context: reason bits (count odd / copy position off), the vsync gap that ended in it and
         the frame period, the last flash write (partition erase/write: ms before, bytes, duration, count; "IN PROGRESS" if one
         is running), the HTTP job (running/idle, its name, ms since it ended), the JPEG decoder, the animation, free PSRAM and
-        internal RAM. UI-15b: the map's N E S W letters use C_TEXT.
+        internal RAM. A heap walk (heap_caps_get_largest_free_block on PSRAM) causes a resync: it must not run periodically (only the
+        "mem" debug command). UI-15b: the map's N E S W letters use C_TEXT.
 PERF-14 Status-line changes are drawn behind the scan: the panel's vsync interrupt (an
        esp_lcd RGB panel callback; ESPHome's mipi_rgb registers none) times each frame, and
        when the status text changes draw_hud waits (at most one frame) until the scan and its

@@ -4186,7 +4186,9 @@ inline const Config &config() { return net::cfg; }
 
 // "mem": where the memory is. PSRAM total/free/largest block/lowest free ever, the same for internal RAM, then what
 // the named buffers and vectors hold; "other" is the rest (LVGL, TLS, the IDF, pictures in flight).
-inline void mem_report(const char *why) {
+// walk: also the largest free blocks. That walks the heap with interrupts off (5.5 MB of PSRAM: long enough to make the
+// panel's frame start late and cost a resync, PERF-16b: one every 10 min from the periodic line); only the "mem" command asks.
+inline void mem_report(const char *why, bool walk = true) {
   const size_t pt = heap_caps_get_total_size(MALLOC_CAP_SPIRAM), pf = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
   size_t tracked = memtrack::vec_bytes;
   char line[400];
@@ -4198,10 +4200,10 @@ inline void mem_report(const char *why) {
       if (n > (int) sizeof(line) - 40)
         break;
     }
-  ESP_LOGI(net::TAG, "mem (%s): PSRAM %u KB total, %u free, largest block %u, lowest free %u; internal %u free, largest %u, lowest %u",
-           why, (unsigned) (pt / 1024), (unsigned) (pf / 1024), (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024),
+  ESP_LOGI(net::TAG, "mem (%s): PSRAM %u KB total, %u free, largest block %d, lowest free %u; internal %u free, largest %d, lowest %u",
+           why, (unsigned) (pt / 1024), (unsigned) (pf / 1024), walk ? (int) (heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM) / 1024) : -1,
            (unsigned) (heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM) / 1024), (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
-           (unsigned) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+           walk ? (int) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024) : -1,
            (unsigned) (heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024));
   ESP_LOGI(net::TAG, "mem (%s): KB in PSRAM:%s vectors %u (peak %u); named %u, other %d", why, line, (unsigned) (memtrack::vec_bytes / 1024),
            (unsigned) (memtrack::vec_peak / 1024), (unsigned) ((tracked - memtrack::vec_bytes) / 1024),

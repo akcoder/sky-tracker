@@ -8040,7 +8040,7 @@ inline void tick() {
       perf_report("minute");
       static int mem_n = 0;
       if (mem_n++ % 10 == 0)
-        mem_report("10 min");
+        mem_report("10 min", false);  // no heap walk: it costs a display resync
       ESP_LOGI(UI_TAG, "perf: LVGL draw buffer in %s (%u KB); internal RAM free %u KB, largest block %u KB",
                db && db->data ? (esp_ptr_internal(db->data) ? "internal RAM" : "PSRAM") : "?",
                db ? (unsigned) (db->data_size / 1024) : 0u, (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
