@@ -413,6 +413,108 @@ inline bool solar_eclipse(double t_new, double lat, double lon, double alt_m, Ec
   }
   return true;
 }
+
+// ---- what an eclipse looks like at time t (the eclipse overlay, UI-87): the same geometry as above, as a picture
+// Solar: as seen from here; x to the right and y up in the sky (azimuth and elevation), Moon relative to the Sun,
+// all in degrees. Lunar: the Moon's disc against the Earth's shadow, north up and east left (as a photograph),
+// the shadow's centre relative to the Moon's; radii of the umbra and penumbra at the Moon's distance.
+struct EclView {
+  bool lunar = false;
+  double x = 0, y = 0;     // solar: Moon's centre from the Sun's; lunar: the shadow's centre from the Moon's
+  double r1 = 0, r2 = 0;   // solar: Sun and Moon radii; lunar: Moon and umbra radii
+  double r3 = 0;           // lunar: penumbra radius
+  double sun_el = 0;       // solar: the Sun's elevation
+  double cover = 0;        // solar: share of the Sun's disc covered (0..1, by area)
+};
+inline double disc_overlap(double r1, double r2, double d) {  // area of the overlap of two discs
+  if (d >= r1 + r2)
+    return 0;
+  if (d <= fabs(r1 - r2))
+    return M_PI * std::min(r1, r2) * std::min(r1, r2);
+  const double a1 = acos((d * d + r1 * r1 - r2 * r2) / (2 * d * r1)), a2 = acos((d * d + r2 * r2 - r1 * r1) / (2 * d * r2));
+  return r1 * r1 * (a1 - sin(2 * a1) / 2) + r2 * r2 * (a2 - sin(2 * a2) / 2);
+}
+inline EclView solar_view(double t, double lat, double lon, double alt_m) {
+  const double j = astro::jd(t);
+  double dk;
+  const astro::Equ m = moon_topo(t, lat, lon, alt_m, &dk);
+  const astro::Equ s = astro::sun(j);
+  const double lst = astro::rad(astro::wrap360(astro::gmst_deg(j) + lon));
+  const auto hs = astro::horizontal(s, lat, lst), hm = astro::horizontal(m, lat, lst);
+  EclView v;
+  double daz = hm.az - hs.az;
+  daz -= 360.0 * floor((daz + 180.0) / 360.0);
+  v.x = daz * cos(astro::rad(hs.el));
+  v.y = hm.el - hs.el;
+  v.r1 = 0.26656 / planets::sun_dist_au(j);
+  v.r2 = asin(1737.4 / dk) * 180.0 / M_PI;
+  v.sun_el = hs.el;
+  const double d = hypot(v.x, v.y);
+  v.cover = std::min(1.0, disc_overlap(v.r1, v.r2, d) / (M_PI * v.r1 * v.r1));
+  return v;
+}
+inline EclView lunar_view(double t) {
+  const double j = astro::jd(t);
+  const MoonPos m = moon_precise(j);
+  const double sl = astro::sun(j).lon_ecl, R = planets::sun_dist_au(j);
+  EclView v;
+  v.lunar = true;
+  double dl = astro::wrap360(sl + 180.0) - m.lon;  // the shadow's longitude from the Moon's: east of it is positive
+  dl -= 360.0 * floor((dl + 180.0) / 360.0);
+  v.x = -dl * cos(astro::rad(m.lat));  // east is left
+  v.y = -m.lat;                          // the shadow's latitude is 0: south of the Moon when the Moon is north
+  const double pim = asin(6378.14 / m.dist_km) * 180.0 / M_PI, pis = 8.794 / 3600.0 / R, ss = 959.63 / 3600.0 / R;
+  v.r1 = asin(1737.4 / m.dist_km) * 180.0 / M_PI;
+  v.r2 = 1.02 * (0.998340 * pim - ss + pis);
+  v.r3 = 1.02 * (0.998340 * pim + ss + pis);
+  return v;
+}
+
+
+// ---- where on the Earth (the eclipse view's map): degrees, lon -180..180
+struct GeoPt {
+  double lat = 0, lon = 0;
+  bool hit = true;  // solar: the shadow axis meets the Earth (else the point nearest to the axis)
+};
+inline GeoPt geo_of(double x, double y, double z, double j) {
+  GeoPt g;
+  g.lat = asin(z / sqrt(x * x + y * y + z * z)) * 180.0 / M_PI;
+  g.lon = atan2(y, x) * 180.0 / M_PI - astro::gmst_deg(j);
+  g.lon -= 360.0 * floor((g.lon + 180.0) / 360.0);
+  return g;
+}
+inline GeoPt moon_subpoint(double t) {  // the Moon overhead
+  const double j = astro::jd(t);
+  const MoonPos m = moon_precise(j);
+  const astro::Equ g = ecl_to_equ(m.lon, m.lat, j);
+  return geo_of(cos(g.dec) * cos(g.ra), cos(g.dec) * sin(g.ra), sin(g.dec), j);
+}
+inline GeoPt shadow_axis_point(double t) {  // where the line from the Sun through the Moon meets the Earth
+  const double j = astro::jd(t);
+  const MoonPos m = moon_precise(j);
+  const astro::Equ g = ecl_to_equ(m.lon, m.lat, j), s = astro::sun(j);
+  const double R = planets::sun_dist_au(j) * 149597870.7, Re = 6378.137;
+  const double mx = m.dist_km * cos(g.dec) * cos(g.ra), my = m.dist_km * cos(g.dec) * sin(g.ra), mz = m.dist_km * sin(g.dec);
+  double dx = mx - R * cos(s.dec) * cos(s.ra), dy = my - R * cos(s.dec) * sin(s.ra), dz = mz - R * sin(s.dec);
+  const double n = sqrt(dx * dx + dy * dy + dz * dz);
+  dx /= n, dy /= n, dz /= n;
+  const double b = mx * dx + my * dy + mz * dz, c = mx * mx + my * my + mz * mz - Re * Re, disc = b * b - c;
+  if (disc >= 0) {
+    const double k = -b - sqrt(disc);
+    GeoPt p = geo_of(mx + k * dx, my + k * dy, mz + k * dz, j);
+    return p;
+  }
+  const double k = -b;  // the axis point nearest the Earth's centre, put on the surface
+  GeoPt p = geo_of(mx + k * dx, my + k * dy, mz + k * dz, j);
+  p.hit = false;
+  return p;
+}
+inline double great_circle_km(double lat1, double lon1, double lat2, double lon2) {
+  const double a = astro::rad(lat1), b = astro::rad(lat2), dl = astro::rad(lon2 - lon1);
+  const double c = sin(a) * sin(b) + cos(a) * cos(b) * cos(dl);
+  return acos(std::max(-1.0, std::min(1.0, c))) * 6371.0;
+}
+
 inline const char *eclipse_name(uint8_t k) {
   switch (k) {
     case ECL_PENUMBRAL: return "Penumbral lunar eclipse";

@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.49"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.50"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -331,6 +331,7 @@ web_server:                      # NET-1: built-in web UI on port 80
   port: 80
   version: 3
   local: true                    # bundle the UI so it also works on the AP (no internet)
+  include_internal: true         # UI-87: the eclipse buttons are web-only (internal: not in the API or Home Assistant)
                                  # NET-1: firmware upload from the web page is ON
   sorting_groups:                # NET-6: sections on the web page (HA is unaffected)
     - id: grp_location           # the observer's place and the compass (the Settings > Location tab)
@@ -1611,6 +1612,26 @@ button:
     icon: mdi:jellyfish
     on_press:
       - lambda: sat::octo::play_now();
+  - platform: template           # UI-87: the solar eclipse view, replayed (the web page only: no API, no Home Assistant)
+    id: btn_play_solar_eclipse
+    name: Play Solar Eclipse Animation
+    internal: true
+    web_server:
+      sorting_group_id: grp_animations
+      sorting_weight: 13
+    icon: mdi:weather-sunny-alert
+    on_press:
+      - lambda: sat::eclipse::open(1, true);
+  - platform: template           # UI-87: the lunar eclipse view, replayed (the web page only)
+    id: btn_play_lunar_eclipse
+    name: Play Lunar Eclipse Animation
+    internal: true
+    web_server:
+      sorting_group_id: grp_animations
+      sorting_weight: 14
+    icon: mdi:moon-waning-crescent
+    on_press:
+      - lambda: sat::eclipse::open(2, true);
   - platform: template           # UI-68b: the Settings Upgrade Check, from the web UI and HA
     id: btn_upgrade_check
     name: Upgrade Check

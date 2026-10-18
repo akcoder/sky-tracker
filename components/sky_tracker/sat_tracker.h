@@ -3821,6 +3821,7 @@ struct SkyEvents {
   // UI-48 the next full Moon
   double full_t = 0, full_next_at = 0;
   const char *full_name = "Full Moon";
+  bool full_blood = false, full_blood_vis = false;  // UI-48b: a total lunar eclipse at this full Moon (and seen from here)
   bool full_super = false;
   // UI-49 the Moon near a planet or bright star, in the next 18 h of dark sky
   double conj_next_at = 0, conj_t = 0;
@@ -3906,6 +3907,13 @@ inline void full_moon_update(double t) {  // UI-48
       if (mo2 == mo)
         name = "Blue Moon";  // the second full Moon in a calendar month
     }
+  }
+  sev.full_blood = sev.full_blood_vis = false;
+  ev::Eclipse be;  // UI-48b: a total lunar eclipse makes it a Blood Moon, wherever on the Earth it is seen from
+  if (ev::eclipse_possible(nf) && ev::lunar_eclipse(nf, config().lat, config().lon, config().alt_m, be) && be.type == ev::ECL_TOTAL_LUNAR) {
+    name = "Blood Moon";
+    sev.full_blood = true;
+    sev.full_blood_vis = be.t0 > 0;
   }
   sev.full_name = name;
   sev.full_super = ev::moon_precise(astro::jd(nf)).dist_km < 360000.0;
@@ -4323,7 +4331,8 @@ inline int collect_alerts(double t, Alert *out, int max) {
     }
   if (ui.sky_alerts || ui.lunar_alerts || ui.solar_alerts) {  // UI-41f/k: the Moon's and Sun's alerts follow Lunar, Solar
     char w[32], h0[16], h1[16];
-    // UI-51 eclipses seen from here (lunar ones follow Lunar, solar ones Solar)
+    // UI-51 eclipses seen from here (lunar ones follow Lunar, solar ones Solar); UI-48b: a total lunar one is a Blood Moon
+    auto ename = [](uint8_t k) { return k == ev::ECL_TOTAL_LUNAR ? "Blood Moon: total lunar eclipse" : ev::eclipse_name(k); };
     if (const ev::Eclipse *e = next_eclipse(t);
         e && e->t0 - t <= SKY_ALERT_S && (ev::is_lunar(e->type) ? ui.lunar_alerts : ui.solar_alerts))
       if (Alert *a = add(C_ECLIPSE, ev::is_lunar(e->type) ? "\xF3\xB0\xBD\xA2" : "\xF3\xB0\x96\x99", nullptr)) {
@@ -4333,13 +4342,13 @@ inline int collect_alerts(double t, Alert *out, int max) {
         local_hm((int64_t) s0, h0, sizeof(h0));
         local_hm((int64_t) s1, h1, sizeof(h1));
         if (t >= e->t0)
-          snprintf(a->text, sizeof(a->text), "%s now - until %s", ev::eclipse_name(e->type), h1);
+          snprintf(a->text, sizeof(a->text), "%s now - until %s", ename(e->type), h1);
         else {
           day_word(t, e->t0, w, sizeof(w));
           if (ev::is_lunar(e->type))
-            snprintf(a->text, sizeof(a->text), "%s %s %s-%s", ev::eclipse_name(e->type), w, h0, h1);
+            snprintf(a->text, sizeof(a->text), "%s %s %s-%s", ename(e->type), w, h0, h1);
           else
-            snprintf(a->text, sizeof(a->text), "%s %s %s, %.0f%%", ev::eclipse_name(e->type), w, h0, e->mag * 100.0f);
+            snprintf(a->text, sizeof(a->text), "%s %s %s, %.0f%%", ename(e->type), w, h0, e->mag * 100.0f);
         }
       }
     // UI-47 meteor showers: from 3 days before the peak to the end of the peak's day
@@ -4360,11 +4369,12 @@ inline int collect_alerts(double t, Alert *out, int max) {
         a->kind = K_MOON;
         day_word(t, sev.full_t, w, sizeof(w));
         local_hm((int64_t) sev.full_t, h0, sizeof(h0));
+        const char *extra = sev.full_blood ? (sev.full_blood_vis ? " - total lunar eclipse" : " - total lunar eclipse, not visible here")
+                                           : sev.full_super ? " - supermoon" : "";
         if (!strcmp(w, "today"))
-          snprintf(a->text, sizeof(a->text), "%s tonight - full at %s%s", sev.full_name, h0,
-                   sev.full_super ? ", supermoon" : "");
+          snprintf(a->text, sizeof(a->text), "%s tonight - full at %s%s", sev.full_name, h0, extra);
         else
-          snprintf(a->text, sizeof(a->text), "%s %s%s", sev.full_name, w, sev.full_super ? " - supermoon" : "");
+          snprintf(a->text, sizeof(a->text), "%s %s%s", sev.full_name, w, extra);
       }
     // UI-49 the Moon near a planet or bright star
     if (ui.lunar_alerts && sev.conj_with)
@@ -7835,6 +7845,10 @@ namespace octo {
 bool play_now();  // sky_octopus.h
 bool playing();
 }  // namespace octo
+namespace eclipse {
+bool open(int which, bool replay);  // sky_eclipse.h (sky_extra.cpp)
+void close();
+}  // namespace eclipse
 
 // PERF-19: where the time of each LVGL refresh goes. A refresh is REFR_START .. REFR_READY; inside it the page is rendered
 // in strips (RENDER_START .. RENDER_READY: LVGL drawing into its 56 KB buffer) and each strip is flushed (FLUSH_START ..
@@ -7975,6 +7989,14 @@ inline void run(const char *cmd) {
     else if (!strcmp(a, "octopus"))
       ESP_LOGI(UI_TAG, "dbg: octopus %s", octo::play_now() ? "started" : "NOT started");
     ESP_LOGI(UI_TAG, "dbg: anim %s", a);
+  } else if (!strncmp(cmd, "eclipse ", 8)) {  // UI-87: the eclipse view, replayed: solar | annular | lunar | close
+    const char *a = cmd + 8;
+    if (!strcmp(a, "close"))
+      eclipse::close();
+    else {
+      const bool ok = eclipse::open(!strcmp(a, "solar") ? 1 : !strcmp(a, "lunar") ? 2 : !strcmp(a, "annular") ? 3 : 0, true);
+      ESP_LOGI(UI_TAG, "dbg: eclipse %s %s", a, ok ? "started" : "NOT started");
+    }
   } else if (!strcmp(cmd, "dino")) {
     ESP_LOGI(UI_TAG, "dbg: dino walk %s", dino::walk(lv_tick_get() * 2654435761u + 1) ? "started" : "NOT started");
   } else if (!strcmp(cmd, "state")) {
