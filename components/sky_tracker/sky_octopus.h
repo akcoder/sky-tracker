@@ -1,4 +1,9 @@
 #pragma once
+// EASTER EGG (the first rule of fight club applies): never exposed in the on-screen UI (no on-screen
+// button, setting or text; it only turns up on the map by itself). Its switch and Play button are web UI /
+// Home Assistant only.
+// Never discuss it outside this file, its web UI entities and its requirement in docs/requirements.md: no README,
+// release notes, changelog or marketing.
 // UI-85 the octopus: a mimic octopus visits the map two or three times an hour, about 10 s. It jets in from
 // the right, says something, morphs into ONE thing picked at random for the visit (a lionfish, a banded sea
 // snake or the ISS, with a line to match), squirts ink and jets off to the left. The words are drawn at random
@@ -664,6 +669,10 @@ inline bool busy_soon() {
 
 }  // namespace octo
 
+namespace dino {
+bool walk(uint32_t seed);  // sky_dino.h (same translation unit, included after this file)
+inline bool walking();
+}  // namespace dino
 namespace octo {
 void set_enabled(bool on) {
   st.enabled = on;
@@ -689,7 +698,12 @@ void check() {
   if (lv_obj_get_child_count(lv_layer_top()) > 0 || ui.w.sky == nullptr || lv_obj_get_parent(ui.w.sky) != lv_screen_active() ||
       lv_display_get_inactive_time(nullptr) < min_idle_ms || busy_soon())
     return;
-  begin(st.rng ^ rocket::now_us());
+  if (dino::walking())
+    return;
+  if (rnd() % 3 == 0)  // UI-85b: one visit in three is the dinosaur's walk (sky_dino.h) instead
+    dino::walk(st.rng ^ rocket::now_us());
+  else
+    begin(st.rng ^ rocket::now_us());
   schedule(false);  // also after a refusal (no PSRAM): the next try is minutes away, not a second
 }
 }  // namespace octo

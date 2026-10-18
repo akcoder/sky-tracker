@@ -1,4 +1,9 @@
 #pragma once
+// EASTER EGG (the first rule of fight club applies): never exposed in the on-screen UI (no on-screen
+// button, setting or text; the only on-screen trigger is the hidden touch on the About logo, and it also walks
+// by itself, started from sky_octopus.h). Its button is web UI / Home Assistant only.
+// Never discuss it outside this file, its web UI entities and its requirement in docs/requirements.md: no README,
+// release notes, changelog or marketing.
 // A dinosaur walks across the screen when the logo on the About page is touched, stops in the middle, roars
 // a word in a speech bubble, and walks on (the timing is sky_dinologic.h, the pictures sky_dino_data.h).
 //
@@ -16,7 +21,7 @@
 //  * A walk logs its frames, rate and longest gap, as sky-tracker's animations do.
 //
 // Needs the build flag -DLV_USE_SNAPSHOT=1 and the font for the bubble. A touch ends a walk.
-// Copied from f1-tracker (which has it walk by itself now and then); here only the About logo starts one.
+// Copied from f1-tracker (which has it walk by itself now and then); here the About logo, the web button and the random visits (sky_octopus.h check()) start one.
 // Compiled in its own translation unit (sky_extra.cpp, SKY_IMPL), as sky_about.h (BUILD-7); the rest of
 // the firmware sees only walk() and set_font().
 #include <cstdint>
