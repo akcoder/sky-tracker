@@ -73,18 +73,24 @@ inline volatile int *bb_pos = nullptr;
 inline volatile uint32_t *bb_eofs = nullptr;
 inline int bb_px = 0;
 inline volatile uint32_t resyncs = 0;  // frames put right
+inline volatile int64_t rs_at = 0, rs_gap = 0;  // the last one: when, and the vsync gap that ended in it
+inline volatile uint8_t rs_why = 0;             // bit 0: the count was odd, bit 1: the copy position was off
 inline bool on_vsync(esp_lcd_panel_handle_t, const esp_lcd_rgb_panel_event_data_t *, void *) {
+  const int64_t n = esp_timer_get_time();
   if (bb_eofs) {
-    bool fixed = (*bb_eofs & 1) != 0;
+    uint8_t why = (*bb_eofs & 1) ? 1 : 0;
     *bb_eofs = 0;
     if (*bb_pos != 2 * bb_px) {
       *bb_pos = 0;
-      fixed = true;
+      why |= 2;
     }
-    if (fixed)
+    if (why) {
+      rs_why = why;
+      rs_at = n;
+      rs_gap = last_us ? n - last_us : 0;
       resyncs = resyncs + 1;
+    }
   }
-  const int64_t n = esp_timer_get_time();
   if (last_us)
     period_us = n - last_us;
   last_us = n;
@@ -879,8 +885,10 @@ inline void ui_build() {
   }
   name_tags_build(sky);
   static const char *const NESW[4] = {"N", "E", "S", "W"};
-  for (int i = 0; i < 4; i++)
+  for (int i = 0; i < 4; i++) {
     ui.compass_tags[i] = tag(sky, NESW[i]);
+    lv_obj_set_style_text_color(ui.compass_tags[i], lv_color_hex(C_TEXT), 0);  // UI-15b: brighter than the dim labels
+  }
   place_compass_tags();
 
   // Sun and Moon (UI-6)
@@ -8084,7 +8092,22 @@ inline void tick() {
     static uint32_t seen = 0;
     const uint32_t n = vs::resyncs;
     if (n != seen) {
+#ifdef SAT_HOST_TEST
       ESP_LOGW(UI_TAG, "display frame start put right (%u in all)", (unsigned) n);
+#else
+      // PERF-16b: what was going on, to find what makes the interrupt late
+      const int64_t at = vs::rs_at;
+      const bool fl = actx::flash_start > actx::flash_end;  // a flash write is in progress
+      ESP_LOGW(UI_TAG,
+               "display frame start put right (%u in all): %s, vsync gap %lld us (frame %lld); flash write %s %lld ms before it (%u bytes, took %lld ms, %u so far); "
+               "http %s '%s' (ended %lld ms before it); jpg decoder %s; animation %s; PSRAM free %u KB, internal %u KB",
+               (unsigned) n, vs::rs_why == 3 ? "count odd and position off" : vs::rs_why == 1 ? "count odd" : "position off", (long long) vs::rs_gap,
+               (long long) vs::period_us, fl ? "IN PROGRESS" : "ended", (long long) ((at - actx::flash_end) / 1000), (unsigned) actx::flash_bytes,
+               (long long) ((actx::flash_end - actx::flash_start) / 1000), (unsigned) actx::flash_n,
+               actx::http_active ? "running" : "idle", (const char *) actx::http_what, (long long) ((at - actx::http_end) / 1000),
+               actx::jpg_active ? "running" : "idle", rocket::active() ? "playing" : "none",
+               (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024), (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
+#endif
       seen = n;
     }
   }
