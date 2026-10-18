@@ -31,6 +31,7 @@ std::string host_last_url;
 #include "sky_update.h"
 #include "sky_rocket.h"
 #include "sky_octopus.h"
+#include "sky_eclipse.h"
 #include "sky_tz.h"
 #include "sky_history.h"
 extern "C" const lv_font_t mono16, mono18, mono24, roboto34, pm14, pm16;  // pm14/pm16: just the plus-minus sign, Roboto Mono  // roboto34: setup_title (Roboto 300, 34 px)
@@ -1377,7 +1378,10 @@ int main() {
     // total lunar eclipse 2028-12-31 16:52 UTC, seen from here (07:16-08:28 local)
     const double ecl = 1861815600;  // 2028-12-30 19:00 UTC
     settle(ecl);
-    CHECK(alerts(ecl, "Total lunar eclipse tomorrow"), "eclipse alert");
+    CHECK(alerts(ecl, "Blood Moon: total lunar eclipse tomorrow"), "eclipse alert (a Blood Moon)");
+    // UI-48b: the full Moon of that eclipse is the Blood Moon, in the full-Moon alert too
+    CHECK(!strcmp(sat::sev.full_name, "Blood Moon") && sat::sev.full_blood && sat::sev.full_blood_vis, "blood moon: %s", sat::sev.full_name);
+    CHECK(alerts(ecl + 86400, "Blood Moon tonight - full at") || alerts(ecl, "Blood Moon tomorrow - total lunar eclipse"), "blood moon alert");
     // full Moon names: 2026-10-26 is the Hunter's Moon
     settle(1792900000);
     printf("full: %s at %.0f super %d\n", sat::sev.full_name, sat::sev.full_t, sat::sev.full_super);
@@ -2182,6 +2186,44 @@ int main() {
       CHECK(strstr(lv_label_get_text(sat::sv.cap1), "94% lit, 17.7 days old, 372,667 km away") && strstr(lv_label_get_text(sat::sv.cap2), "north up"),
             "moon view captions");
       save_ppm(OUT_DIR "/renders/r9_moonview.ppm");
+      {  // UI-87: the eclipse view, at the real geometry of two real eclipses
+        auto utc = [](int y, int mo, int d, int h, int mi) {
+          struct tm tmv = {};
+          tmv.tm_year = y - 1900, tmv.tm_mon = mo - 1, tmv.tm_mday = d, tmv.tm_hour = h, tmv.tm_min = mi;
+          return (double) timegm(&tmv);
+        };
+        const double keep = sat_host_now;
+        namespace ev = sat::ev;
+        // total solar eclipse 12 Aug 2026 at Burgos (Spain), new Moon at 17:37 UTC
+        ev::Eclipse es;
+        const bool okS = ev::solar_eclipse(utc(2026, 8, 12, 17, 37), 42.34, -3.70, 860, es);
+        CHECK(okS && es.type == ev::ECL_TOTAL_SOLAR && es.c0 > 0, "eclipse view: the 2026 total solar eclipse is total at Burgos (type %d)", es.type);
+        // total lunar eclipse 7 Sep 2025 seen from India (80 E)
+        ev::Eclipse el;
+        const bool okL = ev::lunar_eclipse(utc(2025, 9, 7, 18, 11), 13.0, 80.2, 10, el);
+        CHECK(okL && el.type == ev::ECL_TOTAL_LUNAR && el.c0 > 0 && el.t0 > 0, "eclipse view: the 2025 lunar eclipse is total from India (type %d)", el.type);
+        // annular solar eclipse 6 Feb 2027, Argentina
+        ev::Eclipse ea;
+        const bool okA = ev::solar_eclipse(utc(2027, 2, 6, 15, 57), -43.0, -69.0, 100, ea);
+        CHECK(okA && ea.type == ev::ECL_ANNULAR && ea.c0 > 0, "eclipse view: the 2027 annular eclipse is annular in Argentina (type %d)", ea.type);
+        struct Shot { const ev::Eclipse *e; double t; const char *name; double lat, lon; };
+        const Shot shots[] = {{&es, es.t_max - 22 * 60, "r27_eclipse_solar_partial", 42.34, -3.70}, {&es, (es.c0 + es.c1) / 2, "r27_eclipse_solar_total", 42.34, -3.70},
+                              {&ea, (ea.c0 + ea.c1) / 2, "r27_eclipse_solar_annular", -43.0, -69.0},
+                              {&el, el.t_max - 45 * 60, "r27_eclipse_lunar_partial", 13.0, 80.2}, {&el, (el.c0 + el.c1) / 2, "r27_eclipse_lunar_total", 13.0, 80.2}};
+        for (const Shot &sh : shots) {
+          sat_host_now = sh.t;
+          CHECK(sat::eclipse::open_for(*sh.e, false, sh.lat, sh.lon, false), "eclipse view opens (%s)", sh.name);
+          lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
+          char path[160];
+          snprintf(path, sizeof(path), OUT_DIR "/renders/%s.ppm", sh.name);
+          save_ppm(path);
+          printf("%s: %s / %s / %s\n", sh.name, lv_label_get_text(sat::eclipse::st.title), lv_label_get_text(sat::eclipse::st.line1),
+                 lv_label_get_text(sat::eclipse::st.line2));
+          sat::eclipse::close();
+        }
+        CHECK(!sat::eclipse::showing(), "eclipse view closes");
+        sat_host_now = keep;
+      }
       host_last_url.clear();
       sat::net::do_image(IMG_MOON);  // same hour: the JPEG is not fetched again
       CHECK(host_last_url.find("dialamoon") != std::string::npos, "moon repeat skipped (%s)", host_last_url.c_str());
