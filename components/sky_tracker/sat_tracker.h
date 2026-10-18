@@ -594,13 +594,13 @@ inline const lv_image_dsc_t *planet_dsc(int p, bool big) {
   }
   return big ? &large[p] : &small[p];
 }
-inline const lv_image_dsc_t *planet_card_dsc(int p) {  // 40 px, for the planet card
+inline const lv_image_dsc_t *planet_card_dsc(int p) {  // 40 px, for the planet card: the planet's own photo (Saturn with its rings)
   static lv_image_dsc_t d[planets::N_PLANETS];
   static bool made = false;
   if (!made) {
     made = true;
     for (int i = 0; i < planets::N_PLANETS; i++)
-      d[i] = make_dsc(picons::CARD_PX[i], picons::CARD, picons::CARD);
+      d[i] = make_dsc(photos::icon(i), picons::CARD, picons::CARD);
   }
   return &d[p];
 }
