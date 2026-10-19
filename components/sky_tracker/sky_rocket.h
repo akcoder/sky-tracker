@@ -1352,8 +1352,13 @@ inline void cd_open(const net::LaunchRec &l) {
   cd.mission = cd_label(r, cd.title, 0xFFFFFF, 64, mission);
   cd.sub = cd_label(r, cd.body, 0x9AA6C8, 124, sub);
   cd.clock = cd_label(r, cd.digits ? cd.digits : cd.title, 0xFFC46B, 168, "T-10:00");
-  cd.status = cd_label(r, cd.title, 0x7EE0B0, 266, "");
-  cd.when = cd_label(r, cd.body, 0x9AA6C8, 298, "");
+  cd.status = cd_label(r, cd.title, 0x7EE0B0, 252, "");
+  {  // the T- clock centred between the rocket line and the GO line
+    lv_obj_update_layout(r);
+    const int top = 124 + lv_obj_get_height(cd.sub), h = lv_obj_get_height(cd.clock);
+    lv_obj_align(cd.clock, LV_ALIGN_TOP_MID, 0, top + (252 - top - h) / 2);
+  }
+  cd.when = cd_label(r, cd.body, 0x9AA6C8, 278, "");
   cd.badge = lv_obj_create(r);  // UI-76: the webcast is live
   lv_obj_remove_style_all(cd.badge);
   lv_obj_set_size(cd.badge, 72, 30);  // a small red pill in the top right corner, beside the title

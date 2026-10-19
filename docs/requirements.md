@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.55 (released): the T- clock is centred between the rocket line and the GO/HOLD line (UI-80). the launch countdown's GO/HOLD and Liftoff lines sit higher (y 252 and 278, were 266 and 298) so the QR code no longer touches the Liftoff time (UI-80).
 - 4.6.54 (released): internal changes only.
 - 4.6.53 (released): Auto Close switch on the Display tab, web and Home Assistant (UI-72a). the Poker Flat picture is asked for every 10 s (the camera's own rate; was 2 min) and stays up when the screen is untouched for a minute (UI-75). the list's text is 2 pt larger (UI-10e). a launch's countdown in the list spans the EL and HEIGHT columns (UI-10f). swipe the alert on the status line left or right to see the next or previous alert (UI-41m). The picture viewer says when it waits for another download or for memory (UI-41n).
 - 4.6.52 (released): the On this day card shows a picture of the event it is about, downloaded when the card opens (Wikimedia Commons, public domain; UI-77b); downloads no longer stop part-way when internal RAM runs low (Poker Flat's picture: "read failed after 15887 bytes"): the network and astronomy tasks' stacks are smaller (they used 6 KB of 20 and 2 KB of 8), leaving 11 KB more internal RAM for the AES hardware's buffers (NET-16b); the mem command shows internal RAM and each task's stack use. The Earth picture no longer fails with "out of memory": the Planets tab's two 176 KB buffers are given back when the picture viewer closes, and the JPEG buffer falls back to 640 or 512 KB when PSRAM is short (NET-16c).
@@ -827,7 +828,7 @@ UI-79  Re-entry animation: when the clock passes a listed re-entry's estimate (U
 UI-80  Webcast QR code: while the countdown (UI-76) has a live webcast, a QR code centred between the "Liftoff"
        line and "Tap to close" (no caption; 4.6.45) opens the webcast on a phone. The webcast badge is a small red
        "LIVE" pill in the top right corner (it was "WEBCAST LIVE" in the lower middle, where the code now is), and the
-       GO/HOLD and Liftoff lines sit a little higher to make room. The link is the best-ranked https
+       GO/HOLD and Liftoff lines sit higher (4.6.55: at y 252 and 278, a clear gap above the code) to make room. The link is the best-ranked https
        one of the launch's vid_urls (Launch Library 2, lowest priority number; up to 99 chars;
        none: no code). LVGL's QR code (lv_qrcode, CONFIG_LV_USE_QRCODE; error correction M,
        the version picked to fit the link), black on white with its quiet zone, 118 px square.
@@ -849,7 +850,7 @@ UI-85  The octopus: a mimic octopus (brown with cream bands) visits the map 2-3 
        count against the entrance), says a line (a speech bubble above it), morphs into ONE thing chosen at random for the visit, with a
        line to match: a lionfish (arms fanned out, redder), a banded sea snake (two arms stretched out in a wave, the
        rest drawn in, dark with white bands) or the ISS (arms straight out to each side, blue and gold, like the solar
-       arrays), then turns back, squirts a cloud of ink and jets off to the left. Each beat's line is drawn at random from a pool (arrival 5, lionfish 3, sea snake 3, ISS 4, ink 4: the arrival, the morph and the ink). The first
+       arrays), then turns back, squirts a cloud of ink and jets off to the left. Each beat's line is drawn at random from a pool (arrival 24, lionfish 7, sea snake 6, ISS 7, ink 9: the arrival, the morph and the ink; never the line said last time from the same pool). The first
        visit is 8-15 min after the clock is valid, then 15-35 min apart. Drawn over a snapshot of the map (UI-69o),
        painted off-screen: each model step (~11 fps) copies the box's screen from the snapshot into a 480 x 480 RGB565
        composite, paints the octopus on it through an LVGL canvas layer, and invalidates the box, which the backdrop blits
@@ -870,6 +871,19 @@ UI-85c The dinosaur's hunting walk: a third of its random walks (UI-85b) go to a
        and says one of 30 tasty lines, then walks on; the object is back when the walk ends. A line is not repeated
        within the last 12 walks of its kind. sky_dino.h and sky_dinologic.h (the lines, the timing); sky_octopus.h
        dino_hunt picks the target. The debug command `dinoeat` starts one now. Not in the changelog (easter egg).
+UI-85d The octopus's meals: a third of its visits (random, one draw with the Taurus case) it eats a constellation
+       instead of morphing: if Cancer or a fish (Pisces, Piscis Austrinus, Volans, Dorado) is on the map now (its name
+       fits above the horizon inside the disc, Stars layer on, at least two lines of its figure) it jets in to hang
+       over it (a figure too high on the screen for that, with the mantle off the top: beside it, towards the
+       middle of the map, reaching across to pluck it) and says it likes it (a line from a pool: "Ooh, a crab! I love crab." / "Fish! My favorite."). The figure
+       and the name are taken off the map before the visit's backdrop is (the stars stay); the octopus paints the
+       figure's lines itself: from 3.9 s up to five arms reach down and take hold of points of it (the arm tips on
+       the points), the figure is lifted, grown and turns gold, and from 4.9 s the arms pull it in to the beak,
+       shrinking to nothing at 6.1 s (the gulp: the mantle squeezes); it says it was good ("Crab. Perfectly
+       crunchy." / "Fish. Very fresh."). The figure is back on the map when the visit ends. About 1 visit in 100
+       the meal is Taurus (when up): "A bull? Okay, why not." ... "All bull. No shit." With none of them up it is an
+       ordinary visit. The debug command `octoeat [0 crab|1 fish|2 bull]` plays a meal now (nothing, not an ordinary visit, when none of it is up). Render (Taurus):
+       docs/renders/octopus_meal_strip.png (host test with OCTO_EAT_GIF=1).
 UI-84  Fact cards: touching the picture of a planet (Planets tab), the Sun or the Moon (their tabs) opens its card over
        the picture (440 x 352 at 20,52: the tabs and the strip stay): the name, Discovered (who and when), Named for
        (the legend) and Facts, with a dim "Tap to close" at the bottom (as f1-tracker's detail card). Mercury, Venus,

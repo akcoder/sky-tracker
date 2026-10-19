@@ -10,6 +10,10 @@
 // from a pool for each beat. A tap ends it. Off with the Octopus Visits switch; the Play Octopus Animation
 // button shows it on demand.
 //
+// UI-85d: a third of the visits it is a meal instead: it hovers over a constellation on the map that is up and
+// is something it eats (Cancer: crab; Pisces, Piscis Austrinus, Volans, Dorado: fish), says it likes it, eats the
+// figure (gone from the map for the rest of the visit) and says it was good. About 1 visit in 100 the meal is Taurus.
+//
 // How it stays fast and does not tear (the panel has one framebuffer that is scanned out while LVGL writes it):
 //  * the screen as it is, snapshotted, is the backdrop (rocket::back_take, UI-69o); a second RGB565 buffer, the
 //    composite, starts as a copy of it and is what the backdrop blits. Each step (~11 fps) restores the box
@@ -28,6 +32,7 @@ namespace sat {
 namespace octo {
 void set_enabled(bool on);
 bool play_now();  // the button
+bool play_eat(int meal);  // the debug command: a meal (0 crab, 1 fish, 2 bull) if one is up on the map
 bool playing();
 void stop();
 void check();  // every second (sky_rocket.h's timer): a visit that is due
@@ -52,16 +57,35 @@ constexpr uint32_t C_BODY = 0x80583C, C_BAND = 0xEEE0C0, C_DARK = 0x3C2820, C_IS
                    C_LION = 0xA04E34, C_SNAKE = 0x2C2630, C_SNAKE_BAND = 0xF4F0E8;
 
 // ---- the words: one line a beat, drawn at random per visit
-enum Kind { K_LION = 0, K_SNAKE = 1, K_ISS = 2 };
-inline const char *const SAY_ARRIVE[] = {"Mimic octopus.\nIt's a lifestyle.", "Three hearts.\nNine brains.", "Blue blood.\nVery fancy.",
-                                         "I can be anything.\nWatch.", "Just passing\nthrough."};
-inline const char *const SAY_LION[] = {"Lionfish.\nBe afraid.", "I'm a lionfish.\nVenomous.", "Lionfish.\nDon't touch."};
-inline const char *const SAY_SNAKE[] = {"Sea snake.\nSsss.", "Banded sea snake.\nVery toxic.", "Sea snake.\nRespect."};
-inline const char *const SAY_ISS[] = {"ISS.\nObviously.", "Space station\nmode.", "Look up! The\nISS!", "Orbiting.\nPlease hold."};
-inline const char *const SAY_INK[] = {"Ink!", "Oops.", "Bye!", "Poof."};
+enum Kind { K_LION = 0, K_SNAKE = 1, K_ISS = 2, K_MEAL = 3 };
+inline const char *const SAY_ARRIVE[] = {
+    "Mimic octopus.\nIt's a lifestyle.", "Three hearts.\nNine brains.", "Blue blood.\nVery fancy.", "I can be anything.\nWatch.",
+    "Just passing\nthrough.", "Don't mind me.", "Eight arms.\nZero bones.", "I'm not an\nalien. Probably.", "Oh, hello.\nNice sky.",
+    "Squeezed through\na tiny gap.", "Is this the\nright ocean?", "Nice stars.\nI'll take them.", "Octopus.\nNot a squid.", "Hold my\ntentacles.",
+    "Excuse me,\ncoming through.", "I live in\nthe sky now.", "Guess who's\nback?", "No bones about it.", "Ink supply:\nfull.",
+    "Mind the arms.", "Breaking and\nentering.", "Escaped the\naquarium.", "Spotted me?\nBad camouflage.", "Greetings,\nland dwellers."};
+inline const char *const SAY_LION[] = {"Lionfish.\nBe afraid.", "I'm a lionfish.\nVenomous.", "Lionfish.\nDon't touch.", "Spiky.\nSo spiky.",
+                                       "Fancy fins.\nNasty sting.", "Lionfish mode.", "Look, don't touch."};
+inline const char *const SAY_SNAKE[] = {"Sea snake.\nSsss.", "Banded sea snake.\nVery toxic.", "Sea snake.\nRespect.", "Ssssnake.", "Stripes.\nVenom.\nHi.",
+                                        "Slithering\nthrough space."};
+inline const char *const SAY_ISS[] = {"ISS.\nObviously.", "Space station\nmode.", "Look up! The\nISS!", "Orbiting.\nPlease hold.", "Solar panels\nout.",
+                                      "Houston?\nIt's me.", "Sixteen sunrises\na day."};
+inline const char *const SAY_INK[] = {"Ink!", "Oops.", "Bye!", "Poof.", "Smoke bomb!", "Ta-ta!", "See ya!", "Ink and\nrun.", "Splat."};
+// UI-85d meals: the line before (it likes it) and the line after (it was good), by what it eats
+enum Meal { M_NONE = -1, M_CRAB = 0, M_FISH = 1, M_BULL = 2 };
+inline const char *const MEAL_BEFORE[3][6] = {
+    {"Ooh, a crab!\nI love crab.", "Crab!\nMy favorite.", "Is that a crab?\nYum.", "Crab dinner!", "Cancer?\nI'd say crab.", "Crab. Finally."},
+    {"Fish!\nMy favorite.", "Ooh, fish!\nDinner.", "Is that a fish?\nYes please.", "Sushi night!", "Fishies!", "I do love\na fish."},
+    {"A bull?\nOkay, why not.", "Surf and\nturf!", "Taurus.\nBull on the menu.", "Big snack.", "", ""}};
+inline const char *const MEAL_AFTER[3][6] = {
+    {"Crab.\nPerfectly crunchy.", "Delicious\ncrab!", "Crab.\nAlways crab.", "Mmm.\nCrab.", "Eight arms,\nno regrets.", "Needs butter."},
+    {"Delicious\nfish.", "Fish.\nVery fresh.", "Mmm.\nSeafood.", "Sashimi.", "No bones.\nPerfect.", "Catch of\nthe day."},
+    {"All bull.\nNo shit.", "", "", "", "", ""}};
 constexpr int N_BEATS = 3;  // arrival, the morph, the ink
 constexpr float BEAT_A[N_BEATS] = {2.2f, 5.5f, 8.4f}, BEAT_B[N_BEATS] = {4.5f, 7.4f, 9.4f};
-constexpr float EXIT_T = 8.4f;  // the ink, then off to the left
+constexpr float EXIT_T = 8.4f, EAT_T = 6.1f;  // EAT_T: the gulp (a meal: the figure has been pulled into the beak)
+constexpr float REACH0 = 3.9f, REACH1 = 4.8f, PULL0 = 4.9f;  // a meal: the arms reach the figure, grab it, pull it in
+constexpr float MEAL_A[3] = {2.2f, 6.3f, 8.4f}, MEAL_B[3] = {4.4f, 8.1f, 9.4f};  // a meal's lines: before, after, the ink  // the ink, then off to the left
 
 // ---- the timeline (pure: the host test checks it, the painter and the box use it)
 inline float ease(float x) {
@@ -69,18 +93,41 @@ inline float ease(float x) {
   return x * x * (3 - 2 * x);
 }
 inline float seg(float t, float a, float b) { return ease((t - a) / (b - a)); }
+// ---- UI-85d a meal: the constellation's lines, on the screen, which the arms take hold of and pull into the beak
+struct FigSeg {
+  float x0, y0, x1, y1;
+  bool major;
+};
+struct Fig {
+  FigSeg s[48];
+  int n = 0;
+  float px[6], py[6];  // the points the arms hold (screen)
+  int arm[6];          // ...and the arm that holds each
+  int n_anch = 0;
+  float bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;
+};
+inline Fig fig;
+// where a point of the figure is at time t: lifted off the map and grown (held), then drawn in to the beak (mx, my)
+inline void fig_pt(float t, float x, float y, float mx, float my, float &ox, float &oy) {
+  const float held = seg(t, REACH0, PULL0), k = seg(t, PULL0, EAT_T), gx = (fig.bx0 + fig.bx1) / 2, gy = (fig.by0 + fig.by1) / 2, sc = 1 + 1.2f * held;
+  const float x1 = gx + (x - gx) * sc, y1 = gy + (y - gy) * sc;
+  ox = x1 + (mx - x1) * k;
+  oy = y1 + (my - y1) * k;
+}
+inline float hover_x = 260, hover_y = 262;  // where it hovers (a meal: over the constellation)
+inline bool is_meal = false;
 inline void pos(float t, float &x, float &y) {
   if (t < 1.8f) {  // in from beyond the right edge, jetting: fast, then slowing as it arrives (the dinosaur's entrance)
     const float u = 1 - t / 1.8f, k = 1 - u * u * u;
-    x = 640 - 380 * k;
-    y = 262 + 6 * std::sin(t * 5);
+    x = 640 - (640 - hover_x) * k;
+    y = hover_y + 6 * std::sin(t * 5);
   } else if (t < EXIT_T) {  // hovers
-    x = 260 + 10 * std::sin((t - 2.2f) * 0.9f);
-    y = 262 + 9 * std::sin((t - 2.2f) * 1.7f);
+    x = hover_x + 10 * std::sin((t - 2.2f) * 0.9f);
+    y = hover_y + 9 * std::sin((t - 2.2f) * 1.7f);
   } else {  // jets off to the left
     const float k = seg(t, EXIT_T, EXIT_T + 1.5f);
-    x = 260 - 480 * std::pow(k, 1.3f);
-    y = 262 - 40 * k;
+    x = hover_x - (hover_x + 220) * std::pow(k, 1.3f);
+    y = hover_y - 40 * k;
   }
 }
 inline float vel(float t) {
@@ -94,12 +141,16 @@ inline float jet(float t) {
     return std::pow(std::max(0.0f, std::sin(2 * (float) M_PI * 1.5f * t)), 2.0f);
   if (t > EXIT_T)
     return std::pow(std::max(0.0f, std::sin(2 * (float) M_PI * 2.6f * (t - EXIT_T))), 2.0f);
+  if (is_meal && t > EAT_T - 0.3f && t < EAT_T + 0.5f)  // the gulp: it squeezes, once
+    return std::pow(std::sin((t - (EAT_T - 0.3f)) / 0.8f * (float) M_PI), 2.0f);
   return 0.25f * (0.5f + 0.5f * std::sin(t * 2.2f));
 }
 inline float w_morph(float t) { return seg(t, 4.8f, 5.3f) * (1 - seg(t, 7.6f, 8.1f)); }  // 0 octopus .. 1 the thing
+inline float beat_a(int i) { return is_meal ? MEAL_A[i] : BEAT_A[i]; }
+inline float beat_b(int i) { return is_meal ? MEAL_B[i] : BEAT_B[i]; }
 inline int beat_at(float t) {
   for (int i = 0; i < N_BEATS; i++)
-    if (t >= BEAT_A[i] && t <= BEAT_B[i])
+    if (t >= beat_a(i) && t <= beat_b(i))
       return i;
   return -1;
 }
@@ -118,7 +169,9 @@ struct Model {
 struct St {
   bool enabled = true, running = false;
   uint32_t t0 = 0, last_model = 0, last_frame = 0, frames = 0, max_gap = 0, next_ms = 0, rng = 0x9E3779B9u;
-  int kind = K_LION;  // what it morphs into this visit
+  int kind = K_LION;  // what it morphs into this visit (K_MEAL: nothing: it eats)
+  int meal = M_NONE, eat_name = -1;  // UI-85d: what it eats; the constellation (sky::NAMES index)
+  bool ate = false;
   const char *say[N_BEATS] = {};
   lv_obj_t *catcher = nullptr, *cv = nullptr;  // the tap catcher; the (hidden) canvas the bubble is drawn through
   lv_timer_t *timer = nullptr;
@@ -139,6 +192,15 @@ inline uint32_t rnd() {
   return st.rng;
 }
 inline float rnd01() { return (rnd() % 10000) / 10000.0f; }
+// A line from a pool that is not the one said last (per pool: `last`), so a line does not repeat in a row.
+inline const char *pick_line(const char *const *a, uint32_t n, int &last) {
+  uint32_t i = rnd() % n;
+  if (n > 1 && (int) i == last)
+    i = (i + 1 + rnd() % (n - 1)) % n;
+  last = (int) i;
+  return a[i];
+}
+inline int last_arrive = -1, last_lion = -1, last_snake = -1, last_iss = -1, last_ink = -1, last_before[3] = {-1, -1, -1}, last_after[3] = {-1, -1, -1};
 
 inline void build(float t, Model &m) {
   pos(t, m.cx, m.cy);
@@ -190,6 +252,24 @@ inline void build(float t, Model &m) {
     for (int i = 0; i <= N; i++) {  // the whole octopus at SC about its centre
       m.ax[k][i] = m.cx + (m.ax[k][i] - m.cx) * SC;
       m.ay[k][i] = m.cy + (m.ay[k][i] - m.cy) * SC;
+    }
+  }
+  if (is_meal && fig.n_anch > 0) {  // UI-85d: arms reach down to the figure's points, hold them and pull them in to the beak
+    const float wr = seg(t, REACH0, REACH1) * (1 - seg(t, EAT_T, EAT_T + 0.5f));
+    if (wr > 0) {
+      const float mx = m.cx, my = m.cy + 6 * SC;
+      for (int j = 0; j < fig.n_anch; j++) {
+        float tx, ty;
+        fig_pt(t, fig.px[j], fig.py[j], mx, my, tx, ty);
+        const int a = fig.arm[j];
+        const float bx = m.ax[a][0], by = m.ay[a][0], dx = tx - bx, dy = ty - by, len = std::max(1.0f, std::sqrt(dx * dx + dy * dy));
+        for (int i = 1; i <= N; i++) {
+          const float u = (float) i / N, wob = std::sin((float) M_PI * u) * 7.0f * std::sin(t * 7 + a);
+          const float sx = bx + dx * u - dy / len * wob, sy = by + dy * u + dx / len * wob;
+          m.ax[a][i] += (sx - m.ax[a][i]) * wr;
+          m.ay[a][i] += (sy - m.ay[a][i]) * wr;
+        }
+      }
     }
   }
   m.blink = 1;
@@ -388,7 +468,7 @@ inline void bubble_geom(float t, int beat, float &bx, float &by, float &bw, floa
   pos(t, cx, cy);
   bx = std::max(10.0f, std::min(480 - bw - 10, cx - bw / 2 + 30));
   by = beat == N_BEATS - 1 ? std::max(46.0f, cy - 120) : std::max(46.0f, cy - (46 + 66) * SC - bh - 22);
-  const float pop = ease((t - BEAT_A[beat]) / 0.18f);
+  const float pop = ease((t - beat_a(beat)) / 0.18f);
   by += (1 - pop) * 10;
 }
 
@@ -439,6 +519,94 @@ inline void paint_bubble(lv_layer_t *layer) {
   lv_draw_label(layer, &l, &a);
 }
 
+// the meal's figure: its lines (on the screen), the points the arms hold, where it hangs the octopus
+inline void gather_fig() {
+  lv_area_t sb;
+  lv_obj_get_coords(ui.w.sky, &sb);
+  fig.n = 0;
+  for (const auto &g : ui.star_segs)
+    if (g.poly >= ui.eat_lo && g.poly < ui.eat_hi && fig.n < 48)
+      fig.s[fig.n++] = {(float) (sb.x1 + g.x0), (float) (sb.y1 + g.y0), (float) (sb.x1 + g.x1), (float) (sb.y1 + g.y1), g.major};
+  float qx[96], qy[96];
+  int nq = 0;
+  fig.bx0 = fig.by0 = 1e9f, fig.bx1 = fig.by1 = -1e9f;
+  for (int i = 0; i < fig.n; i++)
+    for (int e = 0; e < 2; e++) {
+      const float x = e ? fig.s[i].x1 : fig.s[i].x0, y = e ? fig.s[i].y1 : fig.s[i].y0;
+      fig.bx0 = std::min(fig.bx0, x), fig.bx1 = std::max(fig.bx1, x), fig.by0 = std::min(fig.by0, y), fig.by1 = std::max(fig.by1, y);
+      bool dup = false;
+      for (int k = 0; k < nq && !dup; k++)
+        dup = std::fabs(qx[k] - x) < 4 && std::fabs(qy[k] - y) < 4;
+      if (!dup && nq < 96)
+        qx[nq] = x, qy[nq++] = y;
+    }
+  // the points, left to right (a bubble sort: nq is small), five of them spread out, each held by an arm from 1 to 6
+  for (int a = 0; a < nq; a++)
+    for (int b = a + 1; b < nq; b++)
+      if (qx[b] < qx[a])
+        std::swap(qx[a], qx[b]), std::swap(qy[a], qy[b]);
+  fig.n_anch = std::min(5, nq);
+  for (int j = 0; j < fig.n_anch; j++) {
+    const int k = fig.n_anch == 1 ? nq / 2 : (int) std::lround(j * (nq - 1.0f) / (fig.n_anch - 1));
+    fig.px[j] = qx[k], fig.py[j] = qy[k];
+    fig.arm[j] = fig.n_anch == 1 ? 3 : 1 + (int) std::lround(j * 5.0f / (fig.n_anch - 1));
+  }
+  // it hangs above the figure, arms down to it; a figure too high on the screen for that (the mantle would be off the top)
+  // has it beside the figure, towards the middle of the map, reaching across to pluck it
+  const float gx = (fig.bx0 + fig.bx1) / 2, gy = (fig.by0 + fig.by1) / 2;
+  if (fig.by0 - 65 >= 110) {
+    hover_x = std::max(150.0f, std::min(330.0f, gx));
+    hover_y = std::min(300.0f, fig.by0 - 65);
+  } else {
+    hover_x = std::max(110.0f, std::min(370.0f, gx + (gx < 240 ? 150.0f : -150.0f)));
+    hover_y = std::max(125.0f, std::min(300.0f, gy + 25));
+  }
+}
+inline void undo_meal() {
+  if (st.ate)
+    const_eat(-1);  // the figure is back
+  st.ate = false;
+  st.meal = M_NONE;
+  is_meal = false;
+  hover_x = 260, hover_y = 262;
+  fig.n = fig.n_anch = 0;
+}
+inline void fig_line(const Rz &r, float x0, float y0, float x1, float y1, uint16_t c, bool thick) {
+  const float dx = x1 - x0, dy = y1 - y0;
+  const int n = (int) (std::max(std::fabs(dx), std::fabs(dy)) * 1.5f) + 1;
+  for (int i = 0; i <= n; i++) {
+    const float x = x0 + dx * i / n, y = y0 + dy * i / n;
+    if (thick)
+      disc(r, x, y, 1.0f, c);
+    else
+      px_a(r, (int) std::lround(x), (int) std::lround(y), c, 32);
+  }
+}
+// the figure as the arms have it: lifted and grown, then every point on its way to the beak (gone, shrunk to nothing, by EAT_T)
+inline void paint_fig(const Rz &r, float t, const Model &m) {
+  if (!is_meal || fig.n == 0 || t >= EAT_T)
+    return;
+  const float mx = m.cx, my = m.cy + 6 * SC, held = seg(t, REACH0, PULL0);
+  for (int i = 0; i < fig.n; i++) {
+    const FigSeg &g = fig.s[i];
+    const uint32_t col = mix3(g.major ? sat::C_FIG_MAJOR : sat::C_FIG, 0xFFC857, held);  // it lights up as it is held
+    float x0, y0, x1, y1;
+    fig_pt(t, g.x0, g.y0, mx, my, x0, y0);
+    fig_pt(t, g.x1, g.y1, mx, my, x1, y1);
+    fig_line(r, x0, y0, x1, y1, c565(col), g.major || held > 0.3f);
+  }
+}
+inline void fig_box(float t, const Model &m, int32_t &x1, int32_t &y1, int32_t &x2, int32_t &y2) {  // grows the redraw box over the figure
+  if (!is_meal || fig.n == 0 || t >= EAT_T)
+    return;
+  const float mx = m.cx, my = m.cy + 6 * SC;
+  float ax, ay, bx, by;  // (the transform is a scaling and a pull: the corners are enough)
+  fig_pt(t, fig.bx0, fig.by0, mx, my, ax, ay);
+  fig_pt(t, fig.bx1, fig.by1, mx, my, bx, by);
+  x1 = std::min<int32_t>(x1, (int32_t) std::min(ax, bx) - 5), y1 = std::min<int32_t>(y1, (int32_t) std::min(ay, by) - 5);
+  x2 = std::max<int32_t>(x2, (int32_t) std::max(ax, bx) + 5), y2 = std::max<int32_t>(y2, (int32_t) std::max(ay, by) + 5);
+}
+
 inline void on_refr(lv_event_t *);
 inline void frame();
 
@@ -474,6 +642,7 @@ inline void end_visit() {
       lv_obj_delete(*o);
       *o = nullptr;
     }
+  undo_meal();
   rocket::st.snap = st.clean;  // the backdrop shows the composite meanwhile; rocket::stop() frees the clean one
   if (st.comp)
     lv_draw_buf_destroy(st.comp);
@@ -519,6 +688,7 @@ inline void frame() {
     bx1 = std::min(bx1, (int32_t) st.bx - 4), by1 = std::min(by1, (int32_t) st.by - 4);
     bx2 = std::max(bx2, (int32_t) (st.bx + st.bw + 6)), by2 = std::max(by2, (int32_t) (st.by + st.bh + 24));
   }
+  fig_box(t, st.m, bx1, by1, bx2, by2);
   {  // the cloud
     int cx1, cy1, cx2, cy2;
     if (ink_box(t, cx1, cy1, cx2, cy2))
@@ -548,6 +718,7 @@ inline void frame() {
     memcpy((uint8_t *) st.comp->data + (size_t) y * st.comp->header.stride + (size_t) reg.x1 * 2,
            (const uint8_t *) st.clean->data + (size_t) y * st.clean->header.stride + (size_t) reg.x1 * 2, (size_t) (reg.x2 - reg.x1 + 1) * 2);
   const Rz rz = {(uint8_t *) st.comp->data, st.comp->header.stride, reg.x1, reg.y1, reg.x2, reg.y2};
+  paint_fig(rz, t, st.m);
   paint_octopus(rz, st.m);
   paint_ink(rz, t);
   if (st.bw > 0) {
@@ -571,8 +742,66 @@ inline void on_refr(lv_event_t *) {
   rocket::st.prof.start = rocket::now_us();  // the refresh that follows: its render time, from here to REFR_READY
 }
 
+// UI-85d: what to eat. force -2: the odds (Taurus 1 visit in 100, else seafood 1 in 3); -1 none; 0..2 that meal.
+// Only a constellation whose figure is on the map now (at least two of its lines above the horizon, Stars layer on).
+struct MealName {
+  const char *name;
+  int meal;
+};
+inline int pick_meal(int force) {
+  static const MealName MENU[] = {{"Cancer", M_CRAB}, {"Pisces", M_FISH}, {"Piscis Austrinus", M_FISH}, {"Volans", M_FISH},
+                                  {"Dorado", M_FISH}, {"Taurus", M_BULL}};
+  int want = force;
+  if (force == -2) {
+    const uint32_t r = rnd() % 300;  // 1 in 100 Taurus, 1 in 3 seafood
+    if (r < 3)
+      want = M_BULL;
+    else if (r < 103)
+      want = -3;  // seafood: any
+    else
+      return M_NONE;
+  }
+  if (!ui.stars_shown && force != -2)
+    ESP_LOGI("octo", "meal: the Stars layer is off");
+  if (want == -1 || !ui.stars_shown)
+    return M_NONE;
+  int cand[6], meal_of[6], n = 0;
+  for (const MealName &m : MENU) {
+    int idx = -1;  // the constellation (its name tag may be hidden or not placed: the figure is what matters)
+    for (int k = 0; k < sky::N_NAMES; k++)
+      if (!strcmp(sky::NAMES[k].text, m.name))
+        idx = k;
+    if (idx < 0)
+      continue;
+    int lo = 0;
+    for (int j = 0; j < idx; j++)
+      lo += sky::CFIG[sky::CFIG_OFF[j]];
+    const int hi = lo + sky::CFIG[sky::CFIG_OFF[idx]];
+    int lines = 0;  // its lines on the map (cut at the horizon)
+    for (const auto &g : ui.star_segs)
+      lines += g.poly >= lo && g.poly < hi;
+    if (force != -2)
+      ESP_LOGI("octo", "meal %s: %d figure lines on the map", m.name, lines);
+    if (want == -3 ? m.meal == M_BULL : m.meal != want)
+      continue;
+    if (lines >= 2)
+      cand[n] = idx, meal_of[n++] = m.meal;
+  }
+  if (n == 0)
+    return M_NONE;
+  const int i = (int) (rnd() % (uint32_t) n);
+  st.eat_name = cand[i];
+  return meal_of[i];
+}
+inline int count_lines(const char *const *a, int n) {
+  int c = 0;
+  while (c < n && a[c][0])
+    c++;
+  return c;
+}
+
 // start a visit now; false: no memory for the backdrop, or something else is playing
-inline bool begin(uint32_t seed) {
+inline bool begin(uint32_t seed, int force = -2) {
   if (st.running || rocket::playing() || rocket::st.font == nullptr)
     return false;
   // the backdrop and the composite are 450 KB each: with less PSRAM free there is no visit, quietly
@@ -584,8 +813,23 @@ inline bool begin(uint32_t seed) {
   }
   st.rng = seed ? seed : 0x9E3779B9u;
   rocket::stop();
+  // a meal (UI-85d): chosen first, and its figure and name taken off the map before the backdrop is, so the backdrop
+  // is the map without them (the octopus paints the figure itself, to pull it in)
+  st.ate = false;
+  hover_x = 260, hover_y = 262;
+  st.eat_name = -1;
+  st.meal = pick_meal(force);
+  is_meal = st.meal != M_NONE;
+  if (!is_meal && force != -2)
+    return false;  // a meal was asked for (the debug command) and none is up
+  if (is_meal) {
+    const_eat(st.eat_name);
+    st.ate = true;
+    gather_fig();
+  }
   rocket::back_take();
   if (rocket::st.snap == nullptr) {
+    undo_meal();
     rocket::stop();
     return false;
   }
@@ -594,6 +838,7 @@ inline bool begin(uint32_t seed) {
   st.comp = lv_draw_buf_create(480, 480, LV_COLOR_FORMAT_RGB565, 0);
   if (st.comp == nullptr) {
     ESP_LOGW("octo", "no memory for the composite: no visit");
+    undo_meal();
     st.clean = nullptr;
     rocket::stop();
     return false;
@@ -601,13 +846,18 @@ inline bool begin(uint32_t seed) {
   for (int32_t y = 0; y < 480; y++)
     memcpy((uint8_t *) st.comp->data + (size_t) y * st.comp->header.stride, (const uint8_t *) st.clean->data + (size_t) y * st.clean->header.stride, 480 * 2);
   rocket::st.snap = st.comp;
-  // one thing to morph into, and a line for each beat
+  // a meal (UI-85d), or one thing to morph into, and a line for each beat
   st.kind = (int) (rnd() % 3);
-  st.say[0] = SAY_ARRIVE[rnd() % (sizeof(SAY_ARRIVE) / sizeof(*SAY_ARRIVE))];
-  st.say[1] = st.kind == K_LION    ? SAY_LION[rnd() % (sizeof(SAY_LION) / sizeof(*SAY_LION))]
-              : st.kind == K_SNAKE ? SAY_SNAKE[rnd() % (sizeof(SAY_SNAKE) / sizeof(*SAY_SNAKE))]
-                                   : SAY_ISS[rnd() % (sizeof(SAY_ISS) / sizeof(*SAY_ISS))];
-  st.say[2] = SAY_INK[rnd() % (sizeof(SAY_INK) / sizeof(*SAY_INK))];
+  st.say[0] = pick_line(SAY_ARRIVE, sizeof(SAY_ARRIVE) / sizeof(*SAY_ARRIVE), last_arrive);
+  st.say[1] = st.kind == K_LION    ? pick_line(SAY_LION, sizeof(SAY_LION) / sizeof(*SAY_LION), last_lion)
+              : st.kind == K_SNAKE ? pick_line(SAY_SNAKE, sizeof(SAY_SNAKE) / sizeof(*SAY_SNAKE), last_snake)
+                                   : pick_line(SAY_ISS, sizeof(SAY_ISS) / sizeof(*SAY_ISS), last_iss);
+  st.say[2] = pick_line(SAY_INK, sizeof(SAY_INK) / sizeof(*SAY_INK), last_ink);
+  if (is_meal) {
+    st.kind = K_MEAL;
+    st.say[0] = pick_line(MEAL_BEFORE[st.meal], (uint32_t) count_lines(MEAL_BEFORE[st.meal], 6), last_before[st.meal]);
+    st.say[1] = pick_line(MEAL_AFTER[st.meal], (uint32_t) count_lines(MEAL_AFTER[st.meal], 6), last_after[st.meal]);
+  }
   const uint32_t keep = st.rng;
   st.rng = 0x1234567u;  // the ink is the same every visit
   for (int i = 0; i < 26; i++) {  // (NI of them are used)
@@ -646,7 +896,7 @@ inline bool begin(uint32_t seed) {
       },
       20, nullptr);
   frame();
-  ESP_LOGI("octo", "visit: %s, \"%s\" / \"%s\"", st.kind == K_LION ? "lionfish" : st.kind == K_SNAKE ? "sea snake" : "ISS", st.say[1], st.say[2]);
+  ESP_LOGI("octo", "visit: %s, \"%s\" / \"%s\"", st.kind == K_LION ? "lionfish" : st.kind == K_SNAKE ? "sea snake" : st.kind == K_MEAL ? "a meal" : "ISS", st.say[1], st.say[2]);
   return true;
 }
 
@@ -713,6 +963,7 @@ void set_enabled(bool on) {
 bool playing() { return st.running; }
 void stop() { end_visit(); }
 bool play_now() { return begin(rocket::now_us() * 2654435761u + 12345u); }
+bool play_eat(int meal) { return begin(rocket::now_us() * 2654435761u + 12345u, meal) && st.meal != M_NONE; }
 void check() {
   if (!st.enabled || st.running || rocket::playing() || !clock_valid() || !ui.ready || ui.ota)
     return;
