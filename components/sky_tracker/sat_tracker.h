@@ -8060,6 +8060,7 @@ inline void perf_report(const char *why) {
 namespace dino {
 bool walk(uint32_t seed);  // sky_dino.h (sky_extra.cpp)
 }
+bool dino_hunt(uint32_t seed);  // sky_octopus.h (sky_extra.cpp)
 namespace dbg {
 inline void run(const char *cmd) {
   char what[24] = "";
@@ -8133,6 +8134,8 @@ inline void run(const char *cmd) {
     info_alert = a;
     select_object(K_INFO, 0);
     ESP_LOGI(UI_TAG, "dbg: history card, event %d", (int) a.idx);
+  } else if (!strcmp(cmd, "dinoeat")) {  // UI-85c
+    ESP_LOGI(UI_TAG, "dbg: dino hunting walk %s", dino_hunt(lv_tick_get() * 2654435761u + 1) ? "started" : "NOT started (nothing up, or no memory)");
   } else if (!strcmp(cmd, "dino")) {
     ESP_LOGI(UI_TAG, "dbg: dino walk %s", dino::walk(lv_tick_get() * 2654435761u + 1) ? "started" : "NOT started");
   } else if (!strcmp(cmd, "state")) {
