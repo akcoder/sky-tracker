@@ -399,6 +399,8 @@ struct Ui {
   lv_obj_t *card_flag = nullptr;  // UI-34: owner flag after the country code
   lv_obj_t *card_img_btn = nullptr, *card_img_lbl = nullptr;  // UI-59/60: "Sun image" / "Moon image", bottom left
   lv_obj_t *card_moon = nullptr;  // UI-36: phase picture on the Moon card (UI-46a: or a constellation figure)
+  lv_obj_t *card_pic = nullptr;   // UI-77b: the picture of an On this day event, under its text
+  lv_image_dsc_t card_pic_dsc[2] = {};  // alternated: same pixels, new rows = a fresh source (as the viewer's)
   lv_obj_t *card_qr = nullptr;    // UI-80b: a space event's webcast link, under the text of its card
   char card_qr_text[128] = "";    // what it encodes
   float moon_drawn_k = -1;         // phase last drawn into card_moon (-1: something else is there)
@@ -4066,7 +4068,7 @@ inline void astro_task(void *) {
   }
 }
 inline void astro_start() {
-  if (xTaskCreatePinnedToCore(astro_task, "astro", 8192, nullptr, 1, &astro_handle, 0) != pdPASS)
+  if (xTaskCreatePinnedToCore(astro_task, "astro", 5120, nullptr, 1, &astro_handle, 0) != pdPASS)
     ESP_LOGE(UI_TAG, "astro task not started: no alignment, eclipse or Milky Way");
 }
 #else
@@ -4439,6 +4441,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
       if (Alert *a = add(C_HISTORY, ICON_HISTORY, nullptr)) {
         a->info = AI_HISTORY;
         const hist::Ev &e = *ev[(int64_t) (t / 1800) % ne];
+        a->idx = (int16_t) hist::index_of(&e);  // UI-77b: its card's picture
         snprintf(a->text, sizeof(a->text), "This day in %d: %s", e.y, units_text(e.text));
       }
   }
@@ -4981,6 +4984,9 @@ inline void deselect() {
     lv_obj_invalidate(ui.w.sky);  // UI-46b: its figure goes back to the others
   page_show(ui.card, false);
   page_show(ui.sel_ring, false);
+  if (ui.card_pic)
+    lv_obj_add_flag(ui.card_pic, LV_OBJ_FLAG_HIDDEN);
+  net::hist_pic_release();  // UI-77b
   arc_update(clock_now());
 }
 
@@ -5046,6 +5052,52 @@ inline void card_qr_show(const char *link) {
   }
   if (ui.card_qr_text[0])
     lv_obj_remove_flag(ui.card_qr, LV_OBJ_FLAG_HIDDEN);
+}
+// UI-77b: the picture of the On this day event `idx` under the card's text: asked of the net task when the card opens,
+// shown when it is in, nothing when the event has none or it failed. Returns true while it is still loading.
+inline bool hist_pic_card(int idx) {
+  using namespace net::hpic;
+  if (ui.card_pic == nullptr || hist::pic_path(idx) == nullptr) {
+    if (ui.card_pic)
+      lv_obj_add_flag(ui.card_pic, LV_OBJ_FLAG_HIDDEN);
+    return false;
+  }
+  open = true;
+  if (req != idx || state == 0) {
+    req = idx;
+    state = 1;
+    if (!enqueue(JOB_HISTIMG))
+      state = 0;
+  }
+  uint16_t *p = px.load();
+  const bool arriving = state == 4 && req == idx;  // its rows show as they come
+  if ((state == 2 && have == idx && p) || (arriving && p)) {
+    static int shown_rows = -1, cur = 0;
+    auto &d0 = ui.card_pic_dsc[0];
+    if (d0.data != (const uint8_t *) p || d0.header.w != w || d0.header.h != h) {
+      for (auto &d : ui.card_pic_dsc) {
+        memset(&d, 0, sizeof(d));
+        d.header.magic = LV_IMAGE_HEADER_MAGIC;
+        d.header.cf = LV_COLOR_FORMAT_RGB565;
+        d.header.w = w;
+        d.header.h = h;
+        d.header.stride = w * 2;
+        d.data_size = (uint32_t) w * h * 2;
+        d.data = (const uint8_t *) p;
+      }
+      lv_obj_set_size(ui.card_pic, w, h);  // fixed: an image sizes itself to its content
+      shown_rows = -1;
+    }
+    if (shown_rows != rows || lv_obj_has_flag(ui.card_pic, LV_OBJ_FLAG_HIDDEN)) {
+      shown_rows = rows;
+      cur ^= 1;
+      lv_image_set_src(ui.card_pic, &ui.card_pic_dsc[cur]);
+    }
+    lv_obj_remove_flag(ui.card_pic, LV_OBJ_FLAG_HIDDEN);
+    return false;
+  }
+  lv_obj_add_flag(ui.card_pic, LV_OBJ_FLAG_HIDDEN);
+  return state == 1;
 }
 inline void info_card_update(double t) {
   const Alert &al = info_alert;
@@ -5246,6 +5298,8 @@ inline void info_card_update(double t) {
       for (int i = 0; i < ne && k < (int) sizeof(body) - 2; i++)
         k += snprintf(body + k, sizeof(body) - k, "%s%d, %d years ago\n%s", i ? "\n" : "", ev[i]->y,
                       lt.tm_year + 1900 - ev[i]->y, ev[i]->text);
+      if (hist_pic_card(al.idx) && k < (int) sizeof(body) - 24)  // the picture is for the event the alert showed
+        snprintf(body + k, sizeof(body) - k, "\n\nLoading the picture...");
       break;
     }
     default:
@@ -6199,6 +6253,8 @@ inline bool planet_drawn = false;      // UI-61g: the drawn planet is only a fal
 inline bool planet_phase = true;       // UI-61g: "Tonight's phase" shading on the photo (kept between opens)
 inline bool bm_in_px = false;  // planet_px holds the Blue Marble (the Earth before its first picture is in)
 inline uint16_t *planet_px = nullptr;  // UI-61: the planet shown (photo with tonight's phase, or drawn)
+inline uint16_t *planet_src = nullptr;  // the photo before the phase is drawn on it
+inline int planet_src_of = -1;
 inline int planet_px_of = -1;          // UI-61a: which planet's photo live.img_px[IMG_PLANET] holds
 inline int planet_req_of = -1;         // the planet last asked for
 struct ImgReq {
@@ -6298,6 +6354,16 @@ inline void img_view_close(bool reopening = false) {
   memcpy(sv.tab, none, sizeof(none));
   memcpy(sv.mlab, none, sizeof(none));
   sv.dsc_px = nullptr;
+  if (!reopening && net::img_stage == net::STG_IDLE) {  // NET-16c: the Planets tab's two 176 KB buffers go back (the Earth/region job needs ~1.5 MB)
+    for (int k = 0; k < net::IMG_N; k++)
+      if (net::img_shown[k] == planet_px || net::img_shown[k] == planet_src)
+        net::img_shown[k] = nullptr;
+    heap_caps_free(planet_px);
+    heap_caps_free(planet_src);
+    planet_px = planet_src = nullptr;
+    planet_src_of = -1;
+    bm_in_px = false;
+  }
 }
 inline void img_view_close_cb(lv_event_t *) { img_view_close(); }
 // "46%  -  520 of 1124 KB" (or the stage) for the picture being fetched
@@ -6417,8 +6483,6 @@ inline void planet_marks(const pview::Marks &mk) {
 inline bool outer_view(int p) { return p >= (int) planets::N_PLANETS && p < (int) planets::N_PLANETS + photos::N_OUTER; }
 inline const char *view_name(int p) { return outer_view(p) ? photos::outer(p - planets::N_PLANETS).name : planets::name(p); }
 inline uint8_t ui_jpg_pool[tracker::jpg::POOL_SIZE] __attribute__((aligned(4)));  // the UI's own (not the net task's)
-inline uint16_t *planet_src = nullptr;
-inline int planet_src_of = -1;
 inline bool planet_photo_ready(int p) {
   if (planet_src_of == p && planet_src)
     return true;
@@ -7125,6 +7189,8 @@ inline void select_object(int kind, int32_t id) {
     lv_obj_set_style_text_color(ui.card_icon, lv_color_hex(col), 0);
   if (ui.card_qr)  // UI-80b: only an event's card shows one (info_card_update)
     lv_obj_add_flag(ui.card_qr, LV_OBJ_FLAG_HIDDEN);
+  if (ui.card_pic)  // UI-77b: nor a picture, except On this day's
+    lv_obj_add_flag(ui.card_pic, LV_OBJ_FLAG_HIDDEN);
   lv_obj_remove_flag(ui.card, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(ui.card);
   card_update(ui.sel_since);
@@ -7492,6 +7558,9 @@ inline void card_build() {
   lv_obj_set_style_text_line_space(ui.card_body, 3, 0);
   lv_obj_set_width(ui.card_body, lv_pct(100));  // UI-40a: the planet story wraps
   lv_label_set_long_mode(ui.card_body, LV_LABEL_LONG_WRAP);
+  ui.card_pic = lv_image_create(ui.card);  // UI-77b: filled from the net task's buffer (hist_pic_card)
+  lv_obj_remove_flag(ui.card_pic, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(ui.card_pic, LV_OBJ_FLAG_HIDDEN);
   // UI-80b: the next row of the column, a QR code to a space event's webcast (as the countdown's, UI-80)
   ui.card_qr = lv_qrcode_create(ui.card);
   lv_qrcode_set_size(ui.card_qr, CARD_QR_PX);
@@ -7659,6 +7728,10 @@ inline void setup(const Config &cfg, const Widgets &w) {
 #else
   lv_timer_create(pools_timer_cb, 10, nullptr);  // BOOT-3
   lv_timer_create(img_prog_timer_cb, 250, nullptr);  // UI-59f
+  lv_timer_create([](lv_timer_t *) {  // UI-77b: the On this day picture's rows, as they arrive
+    if (net::hpic::state == 4 && ui.sel_kind == K_INFO && info_alert.info == AI_HISTORY)
+      hist_pic_card(info_alert.idx);
+  }, 150, nullptr);
   astro_start();                                 // PERF-15
 #endif
   const double t = clock_now();
@@ -7997,6 +8070,17 @@ inline void run(const char *cmd) {
       const bool ok = eclipse::open(!strcmp(a, "solar") ? 1 : !strcmp(a, "lunar") ? 2 : !strcmp(a, "annular") ? 3 : 0, true);
       ESP_LOGI(UI_TAG, "dbg: eclipse %s %s", a, ok ? "started" : "NOT started");
     }
+  } else if (!strncmp(cmd, "hist ", 5)) {  // UI-77b: the On this day card with event N's picture
+    Alert a = {};
+    a.col = C_HISTORY;
+    a.glyph = ICON_HISTORY;
+    a.kind = -1;
+    a.info = AI_HISTORY;
+    a.idx = (int16_t) atoi(cmd + 5);
+    snprintf(a.text, sizeof(a.text), "This day: event %d", (int) a.idx);
+    info_alert = a;
+    select_object(K_INFO, 0);
+    ESP_LOGI(UI_TAG, "dbg: history card, event %d", (int) a.idx);
   } else if (!strcmp(cmd, "dino")) {
     ESP_LOGI(UI_TAG, "dbg: dino walk %s", dino::walk(lv_tick_get() * 2654435761u + 1) ? "started" : "NOT started");
   } else if (!strcmp(cmd, "state")) {

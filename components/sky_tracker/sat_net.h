@@ -46,6 +46,7 @@
 #include <ArduinoJson.h>
 
 #include "sky_math.h"
+#include "sky_history.h"  // UI-77b: the picture of an event (declarations only here)
 #include "esphome/components/tracker_common/tracker_png.h"  // shared with f1-tracker
 #include "esphome/components/tracker_common/tracker_jpg.h"  // shared with f1-tracker
 #include "sgp4.h"
@@ -225,7 +226,7 @@ template<class T, class A> inline bool room_for(std::vector<T, A> &v, size_t n, 
 
 enum Layer : uint8_t { L_SAT = 1, L_STARLINK = 2, L_ISS = 4, L_PASS = 8, L_STATUS = 16, L_GEO = 32, L_KP = 64, L_EXTRA = 128 };  // L_EXTRA: solar wind, launches
 enum Job : uint8_t { JOB_ABOVE = 0, JOB_STARLINK = 1, JOB_ISS = 2, JOB_PASS = 3, JOB_ELEMENTS = 4, JOB_SUNIMG = 5, JOB_MOONIMG = 6, JOB_EARTHIMG = 7, JOB_REGIONIMG = 8, JOB_PLANETIMG = 9, JOB_ALLSKYIMG = 10,
-                     JOB_SD = 11, JOB_SDFLASH = 12, JOB_DROP = 13 };  // UI-66 (sky_sdfw.h, through extra_job)
+                     JOB_SD = 11, JOB_SDFLASH = 12, JOB_DROP = 13, JOB_HISTIMG = 14 };  // UI-66 (sky_sdfw.h, through extra_job)
 inline void (*extra_job)(uint8_t job) = nullptr;  // UI-66: jobs served by headers included later
 enum Kind : uint8_t { K_SAT = 0, K_STARLINK = 1, K_ISS = 2, K_GEO = 3 };
 // UI-52: China's space station (Tianhe core; the docked modules share its orbit)
@@ -321,7 +322,7 @@ constexpr size_t MEO_CAP = 200;                  // UI-28: GNSS lists, ~130 toda
 constexpr size_t GEO_CAP = 740;                  // geosynchronous, ~560 today (cache region D)          // ~11,000 today
 constexpr size_t STARLINK_PUB_CAP = 700;        // DATA-3: published per scan (whole sky)
 constexpr float RISING_EL = -2.0f;              // publish slightly below the horizon so risers appear promptly
-constexpr uint32_t STACK = 20480;               // ARCH-8, internal RAM (TLS + SGP4 locals)
+constexpr uint32_t STACK = 12288;               // ARCH-8, internal RAM (TLS is in PSRAM; 6 KB used at most, measured by `mem`)
 
 inline Config cfg;  // written only by the loop, under `mutex`
 inline Config jc;   // task-only snapshot of cfg, taken under `mutex` at the start of each job
@@ -678,7 +679,7 @@ inline HttpResult http_stream(const char *url, const char *what, const std::func
       c.buffer_size_tx = 1024;
       c.keep_alive_enable = true;
       c.event_handler = http_event;
-      c.user_agent = "SkyTracker/4.5 (ESPHome display)";  // Wikimedia asks for a descriptive agent
+      c.user_agent = "SkyTracker/4.6 (https://github.com/akcoder/sky-tracker; ESPHome firmware)";  // Wikimedia asks for an agent with a contact (UI-77b)
       kept.h = esp_http_client_init(&c);
       if (kept.h == nullptr) {
         ESP_LOGW(TAG, "%s: client init failed (%s)", what, url);
@@ -2869,6 +2870,7 @@ inline uint16_t *img_work_take() {
 }
 inline double img_have[IMG_N] = {-1, -1, -1, -1, -1, -1};  // frame already decoded (a repeat is skipped)
 constexpr size_t IMG_JPG_MAX = 768 * 1024;  // the Moon (~110 KB) and the Earth (~450 KB) JPEGs
+inline size_t jpg_cap = IMG_JPG_MAX;        // what the buffer really holds: 768, else 640 or 512 KB when PSRAM is short
 // the box filter's sums (777 KB): one buffer for the Earth, the region and the planets (the
 // net task decodes one picture at a time), taken once and kept, so it cannot be squeezed out
 // PERF-20b: both are taken when a picture job needs them and given back when the net task has nothing queued, so
@@ -2885,9 +2887,14 @@ inline uint16_t *fit_acc() {
 }
 inline uint8_t *img_jpg() {
   if (jpg_buf == nullptr) {
-    jpg_buf = (uint8_t *) heap_caps_malloc(IMG_JPG_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-    if (jpg_buf)
-      memtrack::set("jpg_buf", IMG_JPG_MAX);
+    for (size_t kb : {768u, 640u, 512u}) {  // NET-16c: the Earth JPEG is ~450 KB; a smaller buffer beats no picture
+      jpg_buf = (uint8_t *) heap_caps_malloc(kb * 1024, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      if (jpg_buf) {
+        jpg_cap = kb * 1024;
+        memtrack::set("jpg_buf", jpg_cap);
+        break;
+      }
+    }
   }
   return jpg_buf;
 }
@@ -2938,6 +2945,8 @@ struct JpgStream {
   float keep = 1.0f;     // decode_fit's keep
   float r0 = 0, r1 = 0;  // round_mask radii (0: none), for IMG_PX: scaled by dim / IMG_PX
   int dim = IMG_PX;      // the picture's size in the buffer (compact, dim x dim)
+  int dimh = 0;          // its height when not square (0: dim)
+  volatile int *rows_out = nullptr;  // else-where than the viewer: rows finished so far (UI-77b)
   bool show = false;     // report rows to the viewer (img_prog_rows)
   volatile size_t have = 0;
   volatile bool eof = false, done = false;
@@ -2951,6 +2960,8 @@ struct JpgStream {
         round_mask_row(j->work + (size_t) j->masked * j->dim, j->masked, j->dim, j->r0 * j->dim / IMG_PX, j->r1 * j->dim / IMG_PX);
     if (j->show)
       img_prog_rows = upto;
+    if (j->rows_out)
+      *j->rows_out = upto;
 #ifndef SAT_HOST_TEST
     if (j->started)
       vTaskDelay(1);  // PERF-15a: a breath per row of blocks for the PSRAM bus
@@ -2967,12 +2978,12 @@ struct JpgStream {
     st.ctx = this;
     masked = 0;
     err = half ? tracker::jpg::decode_half(jpg, len, work, dim, dim, &st, &w, &h, jpg_pool)
-               : tracker::jpg::decode_fit(jpg, len, work, dim, dim, acc, &st, &w, &h, keep, 0, false, jpg_pool);
+               : tracker::jpg::decode_fit(jpg, len, work, dim, dimh ? dimh : dim, acc, &st, &w, &h, keep, 0, false, jpg_pool);
     done = true;
   }
 #ifndef SAT_HOST_TEST
   static void task(void *a) {
-    ((JpgStream *) a)->run(IMG_JPG_MAX, true);
+    ((JpgStream *) a)->run(jpg_cap, true);
     vTaskDelete(nullptr);  // (nothing of the job is touched after done)
   }
   // the first bytes are in and look like a JPEG: decode alongside the rest of the download
@@ -3004,6 +3015,8 @@ struct JpgStream {
     half = false;
     keep = 1.0f;
     dim = IMG_PX;
+    dimh = 0;
+    rows_out = nullptr;
     r0 = r1 = 0;
     show = false;
     have = 0;
@@ -3200,7 +3213,7 @@ inline const char *moon_image(ImageInfo &info, uint16_t *work, double now, char 
   img_stage = STG_DOWNLOAD;
   dl_track = true;
   const HttpResult r = http_stream(url, "Moon image", [&](const char *dd, int k) {
-    if (n + k > IMG_JPG_MAX) {
+    if (n + k > jpg_cap) {
       big = true;
       return;
     }
@@ -3285,7 +3298,7 @@ inline const char *earth_image(ImageInfo &info, uint16_t *work, char *e, size_t 
     img_stage = STG_DOWNLOAD;
     dl_track = true;
     r = http_stream(url, regional ? "Region image" : "Earth image", [&](const char *d, int k) {
-      if (n + k > IMG_JPG_MAX) {
+      if (n + k > jpg_cap) {
         big = true;
         return;
       }
@@ -3424,7 +3437,7 @@ inline const char *allsky_image(ImageInfo &info, uint16_t *work, char *e, size_t
   char url[200];
   snprintf(url, sizeof(url), "%s%s", ALLSKY_BASE, path);
   const HttpResult r = http_stream(url, "all-sky image", [&](const char *d, int k) {
-    if (n + k > IMG_JPG_MAX) {
+    if (n + k > jpg_cap) {
       big = true;
       return;
     }
@@ -3446,6 +3459,137 @@ inline const char *allsky_image(ImageInfo &info, uint16_t *work, char *e, size_t
   img_have[IMG_ALLSKY] = key;
   info.fresh = true;
   return nullptr;
+}
+// UI-77b: the picture of an "On this day" event, downloaded when its card is open (Wikimedia Commons thumbnail, a
+// baseline JPEG of at most 150 KB), box-filtered into a PSRAM buffer of at most 240 x 160. The JPEG and the filter's
+// sums are taken for the job and given back; the picture stays until the card closes (hist_pic_release).
+namespace hpic {
+constexpr int MAXW = 240, MAXH = 160;
+constexpr size_t JPG_MAX = 150 * 1024;
+inline std::atomic<uint16_t *> px{nullptr};
+inline volatile int8_t state = 0;   // 0 nothing, 1 loading, 2 ready, 3 none / failed, 4 arriving
+inline volatile int req = -1, have = -1, rows = 0;  // state 4: arriving, w x h known, `rows` finished (shown as it comes)
+inline volatile bool open = false;  // the card is up: keep the picture
+inline int w = 0, h = 0;
+}  // namespace hpic
+inline void hist_pic_release() {
+  hpic::open = false;
+  if (hpic::state == 1)
+    return;  // the job frees it when it ends
+  heap_caps_free(hpic::px.exchange(nullptr));
+  hpic::state = 0;
+  hpic::have = -1;
+}
+// the first SOF marker's size: 1 baseline (w, h set), -1 another kind of JPEG, 0 not in the bytes yet
+inline int jpeg_size(const uint8_t *d, size_t n, int &w, int &h) {
+  size_t i = 2;
+  while (i + 9 < n) {
+    if (d[i] != 0xFF) {
+      i++;
+      continue;
+    }
+    const uint8_t m = d[i + 1];
+    if (m == 0xFF) {  // fill byte
+      i++;
+      continue;
+    }
+    if (m == 0x00 || m == 0x01 || (m >= 0xD0 && m <= 0xD8)) {  // no length
+      i += 2;
+      continue;
+    }
+    if (m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC) {
+      h = d[i + 5] << 8 | d[i + 6];
+      w = d[i + 7] << 8 | d[i + 8];
+      return m == 0xC0 || m == 0xC1 ? 1 : -1;
+    }
+    i += 2 + (d[i + 2] << 8 | d[i + 3]);
+  }
+  return 0;
+}
+inline void do_histpic() {
+  using namespace hpic;
+  const int idx = req;
+  const char *path = idx >= 0 ? hist::pic_path(idx) : nullptr;
+  if (path == nullptr || path[0] == 0) {
+    state = 3;
+    return;
+  }
+  if (have == idx && px.load())
+    return (void) (state = 2);
+  state = 1;
+  have = -1;
+  rows = 0;
+  uint8_t *jpg = (uint8_t *) heap_caps_malloc(JPG_MAX, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  uint16_t *acc = (uint16_t *) heap_caps_malloc((size_t) MAXW * MAXH * 3 * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  uint16_t *dst = px.load();
+  if (dst == nullptr)
+    px = dst = (uint16_t *) heap_caps_malloc(MAXW * MAXH * 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+  bool ok = false;
+  if (jpg && acc && dst) {
+    char url[240];
+    snprintf(url, sizeof(url), "https://upload.wikimedia.org/wikipedia/commons/thumb/%s", path);
+    JpgStream js;  // the picture is decoded alongside the download and shown row by row (UI-59f's way)
+    size_t n = 0;
+    bool big = false, bad = false;
+    int sized = 0;
+    HttpResult r;
+    for (int attempt = 0; attempt < 3; attempt++) {  // Wikimedia answers 429 (slow down) now and then: wait and ask again
+      n = 0;
+      big = bad = false;
+      sized = 0;
+      js.reset();
+      r = http_stream(url, "event picture", [&](const char *d, int k) {
+        if (n + k > JPG_MAX) {
+          big = true;
+          return;
+        }
+        memcpy(jpg + n, d, k);
+        n += k;
+        int sw = 0, sh = 0;
+        if (!sized && !bad && n >= 64 && (sized = jpeg_size(jpg, n, sw, sh)) != 0) {
+          if (sized < 0 || sw <= 0 || sh <= 0) {
+            bad = true;
+            return;
+          }
+          int tw = MAXW, th = (int) ((int64_t) tw * sh / sw);
+          if (th > MAXH)
+            th = MAXH, tw = (int) ((int64_t) th * sw / sh);
+          tw = std::max(tw & ~1, 16), th = std::max(th & ~1, 16);
+          js.jpg = jpg, js.work = dst, js.acc = acc, js.dim = tw, js.dimh = th, js.rows_out = &rows;
+          for (int q = 0; q < tw * th; q++)
+            dst[q] = 0x0841;  // dark until its rows arrive
+          w = tw, h = th, rows = 0;
+          state = 4;
+        }
+        if (sized > 0)
+          js.feed(n);
+      });
+      if (r.status != 429)
+        break;
+      js.abandon();
+      vTaskDelay(pdMS_TO_TICKS(4000 * (attempt + 1)));
+    }
+    if (!r.ok || big || bad || sized <= 0) {
+      js.abandon();
+      ESP_LOGW(TAG, "event picture %d: %s (HTTP %d, %u bytes)", idx, big ? "larger than expected" : bad || sized < 0 ? "not a baseline JPEG" : "no picture",
+               r.status, (unsigned) n);
+    } else if (const char *de = js.finish(n)) {
+      ESP_LOGW(TAG, "event picture %d: %s", idx, de);
+    } else {
+      rows = h;
+      ok = true;
+    }
+  }
+  heap_caps_free(jpg);
+  heap_caps_free(acc);
+  if (ok)
+    have = idx;
+  state = ok ? 2 : 3;
+  if (!open) {  // the card closed while it loaded
+    heap_caps_free(px.exchange(nullptr));
+    state = 0;
+    have = -1;
+  }
 }
 inline void do_image(uint8_t kind) {
   ImageInfo info;
@@ -4139,6 +4283,12 @@ inline void run_job(uint8_t job) {
                  : job == JOB_ALLSKYIMG ? IMG_ALLSKY
                                         : IMG_PLANET);
       break;
+    case JOB_HISTIMG:  // UI-77b
+      if (link_up)
+        do_histpic();
+      else
+        hpic::state = 3;
+      break;
     case JOB_DROP:  // NET-14: only wakes the task so it drops its kept connection (task_main)
       break;
     default:
@@ -4205,6 +4355,21 @@ inline void mem_report(const char *why, bool walk = true) {
            (unsigned) (heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM) / 1024), (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
            walk ? (int) (heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024) : -1,
            (unsigned) (heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024));
+#ifndef SAT_HOST_TEST
+  {  // internal RAM: what the heap holds in all, and how much of each task's stack was ever used (the stacks are internal)
+    char st[200];
+    int m = snprintf(st, sizeof(st), "internal total %u KB, DMA-capable free %u KB; stack used/size KB:",
+                     (unsigned) (heap_caps_get_total_size(MALLOC_CAP_INTERNAL) / 1024),
+                     (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) / 1024));
+    static const struct { const char *name; unsigned size; } T[] = {{"sat_net", (unsigned) net::STACK}, {"astro", 5120}, {"jpgdec", 6144},
+                                                                  {"loopTask", 8192}, {"async_tcp", 0}, {"mdns", 0}, {"tiT", 0}, {"wifi", 0}};
+    for (const auto &t : T)
+      if (TaskHandle_t h = xTaskGetHandle(t.name))
+        m += snprintf(st + m, sizeof(st) - m, " %s %u/%u,", t.name, t.size ? (unsigned) ((t.size - uxTaskGetStackHighWaterMark(h)) / 1024) : 0u,
+                      t.size / 1024);
+    ESP_LOGI(net::TAG, "mem (%s): %s", why, st);
+  }
+#endif
   ESP_LOGI(net::TAG, "mem (%s): KB in PSRAM:%s vectors %u (peak %u); named %u, other %d", why, line, (unsigned) (memtrack::vec_bytes / 1024),
            (unsigned) (memtrack::vec_peak / 1024), (unsigned) ((tracked - memtrack::vec_bytes) / 1024),
            (int) ((pt - pf - tracked) / 1024));
