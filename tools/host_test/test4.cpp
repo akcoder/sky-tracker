@@ -3126,6 +3126,92 @@ int main() {
       }
       CHECK(!oc::playing() && !rk::active() && lv_obj_get_child_count(lv_layer_top()) == 0 && rk::st.snap == nullptr && frames > 150,
             "the visit ends and cleans up (%d frames)", frames);
+      {  // UI-85d: a meal: the arms hold the constellation's figure and pull it into the beak
+        const bool meal_gif = getenv("OCTO_EAT_GIF") != nullptr;
+        CHECK(oc::pick_meal(-1) == oc::M_NONE, "no meal when none is wanted");
+        auto meal_run = [&](const char *name, int meal, const char *dir, bool odds) {
+          sat::Ui::NameTag *cn = nullptr;
+          for (auto &nt : sat::ui.names)
+            if (!strcmp(sat::sky::NAMES[nt.idx].text, name))
+              cn = &nt;
+          CHECK(cn != nullptr, "the %s name tag exists", name);
+          if (!cn)
+            return;
+          int lo = 0;
+          for (int j = 0; j < cn->idx; j++)
+            lo += sat::sky::CFIG[sat::sky::CFIG_OFF[j]];
+          const int hi = lo + sat::sky::CFIG[sat::sky::CFIG_OFF[cn->idx]];
+          // a time at which the constellation is up and its figure is biggest on the map
+          const double t_keep = sat_host_now;
+          sat::ui.stars_shown = true;
+          double t_best = t_keep;
+          int best = 0;
+          for (double dt = 0; dt < 86400; dt += 600) {
+            sat_host_now = t_keep + dt;
+            sat::ui.star_next = 0;
+            sat::update_starmap(sat_host_now);
+            int n = 0, x0 = 999, x1 = -999, y0 = 999, y1 = -999;
+            for (const auto &g : sat::ui.star_segs)
+              if (g.poly >= lo && g.poly < hi)
+                n++, x0 = std::min<int>(x0, std::min(g.x0, g.x1)), x1 = std::max<int>(x1, std::max(g.x0, g.x1)), y0 = std::min<int>(y0, std::min(g.y0, g.y1)),
+                y1 = std::max<int>(y1, std::max(g.y0, g.y1));
+            if (cn->fits && n >= 4 && (x1 - x0) + (y1 - y0) > best)
+              best = (x1 - x0) + (y1 - y0), t_best = sat_host_now;
+          }
+          sat_host_now = t_best;
+          sat::ui.star_next = 0;
+          sat::update_starmap(sat_host_now);
+          if (cn->fits)
+            sat::set_shown(cn->l, cn->shown, true);
+          printf("%s: tag fits %d, figure %d px across\n", name, (int) cn->fits, best);
+          CHECK(oc::pick_meal(meal) == meal && oc::st.eat_name == cn->idx, "%s is a meal", name);
+          if (meal_gif)
+            system((std::string("rm -rf " OUT_DIR "/") + dir + " && mkdir -p " OUT_DIR "/" + dir).c_str());
+          CHECK(oc::play_eat(meal) && oc::st.meal == meal && oc::st.kind == oc::K_MEAL, "a %s meal plays", name);
+          printf("meal lines: \"%s\" / \"%s\"\n", oc::st.say[0], oc::st.say[1]);
+          const bool held = oc::fig.n >= 2 && oc::fig.n_anch >= 2 && sat::ui.const_eaten == cn->idx && !cn->shown;
+          bool reached = false, pulled = false;
+          for (int f = 0; oc::playing() && f < 500; f++) {
+            sat_host_now += 0.033;
+            lv_refr_now(disp);
+            if (!oc::playing())
+              break;
+            if (oc::st.t > oc::REACH1 && oc::st.t < oc::PULL0 + 0.1f) {  // an arm tip is on the figure's point it holds
+              oc::Model m;
+              oc::build(oc::st.t, m);
+              const int a = oc::fig.arm[0];
+              float tx, ty;
+              oc::fig_pt(oc::st.t, oc::fig.px[0], oc::fig.py[0], m.cx, m.cy + 6 * oc::SC, tx, ty);
+              reached |= std::fabs(m.ax[a][oc::N] - tx) < 6 && std::fabs(m.ay[a][oc::N] - ty) < 6;
+            }
+            if (oc::st.t > oc::EAT_T - 0.1f && oc::st.t < oc::EAT_T) {  // the arm tip is at the beak
+              oc::Model m;
+              oc::build(oc::st.t, m);
+              const int a = oc::fig.arm[0];
+              pulled |= std::fabs(m.ax[a][oc::N] - m.cx) < 14 && std::fabs(m.ay[a][oc::N] - m.cy) < 16;
+            }
+            if (meal_gif) {
+              char fn[80];
+              snprintf(fn, sizeof(fn), OUT_DIR "/%s/f%03d.ppm", dir, f);
+              save_ppm(fn);
+            }
+          }
+          CHECK(held, "%s's figure is taken off the map and held by the octopus (%d lines, %d arms)", name, oc::fig.n, oc::fig.n_anch);
+          CHECK(reached && pulled, "an arm reaches %s's point, holds it and pulls it to the beak (%d %d)", name, (int) reached, (int) pulled);
+          CHECK(!oc::playing() && sat::ui.const_eaten < 0, "the figure is back when the visit ends");
+          if (odds) {  // over many visits about a third are seafood meals when it is up
+            int crab = 0, n = 3000;
+            for (int i = 0; i < n; i++)
+              crab += oc::pick_meal(-2) != oc::M_NONE;
+            CHECK(crab > n / 3 - 150 && crab < n / 3 + 150, "about a third of the visits are a seafood meal when it is up (%d of %d)", crab, n);
+          }
+          sat_host_now = t_keep;
+          sat::ui.star_next = 0;
+          sat::update_starmap(sat_host_now);
+        };
+        meal_run("Cancer", oc::M_CRAB, "egif", true);
+        meal_run("Taurus", oc::M_BULL, "tgif", false);
+      }
       // the schedule: the first visit 8-15 min after the first check, then 15-35 min apart; it waits for a quiet map
       oc::st.next_ms = 0;
       oc::check();
@@ -3147,7 +3233,10 @@ int main() {
       oc::check();
       CHECK(!oc::playing(), "it waits while an ISS docking is near");
       sat::live.events.clear();
-      oc::check();
+      for (int i = 0; i < 30 && !oc::playing(); i++) {  // (a visit in three is the dinosaur's walk, which the host does not have)
+        oc::st.next_ms = rk::now_ms() - 1;
+        oc::check();
+      }
       CHECK(oc::playing(), "it plays when due and the map is quiet");
       const uint32_t gap = oc::st.next_ms - rk::now_ms();
       CHECK(gap >= 15 * 60 * 1000u && gap <= 35 * 60 * 1000u + 1000, "the next one is 15-35 min later (%u s)", gap / 1000);

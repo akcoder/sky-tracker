@@ -404,6 +404,8 @@ struct Ui {
   lv_obj_t *card_qr = nullptr;    // UI-80b: a space event's webcast link, under the text of its card
   char card_qr_text[128] = "";    // what it encodes
   float moon_drawn_k = -1;         // phase last drawn into card_moon (-1: something else is there)
+  int const_eaten = -1;            // UI-85d: the constellation (index into sky::NAMES) the octopus has eaten: no figure, no name
+  int eat_lo = 0, eat_hi = 0;      // ...its sky::FIG polylines
   int fig_drawn = -1;              // UI-46a: constellation figure last drawn into card_moon
   float decl = 0, maglat = 0;     // HW-9a declination, UI-37 geomagnetic latitude (degrees)
   lv_obj_t *aurora_icon = nullptr;  // UI-38: beside the status-line notice
@@ -703,6 +705,25 @@ inline void star_layer_build(lv_obj_t *sky) {
   }
 }
 
+// UI-85d: the octopus eats a constellation: its figure and its name are not drawn until const_eat(-1). The stars stay.
+inline void const_eat(int idx) {
+  ui.const_eaten = idx;
+  if (idx >= 0 && idx < sky::N_NAMES) {
+    int lo = 0;
+    for (int j = 0; j < idx; j++)
+      lo += sky::CFIG[sky::CFIG_OFF[j]];
+    ui.eat_lo = lo;
+    ui.eat_hi = lo + sky::CFIG[sky::CFIG_OFF[idx]];
+  }
+  for (auto &nt : ui.names) {
+    if (idx >= 0 && nt.idx == idx)
+      set_shown(nt.l, nt.shown, false);
+    else if (idx < 0 && ui.stars_shown && nt.fits)
+      set_shown(nt.l, nt.shown, true);  // (the next placement pass sorts out any clash with a satellite)
+  }
+  if (ui.w.sky)
+    lv_obj_invalidate(ui.w.sky);
+}
 inline void name_tags_build(lv_obj_t *sky) {
   ui.names.clear();
   for (int i = 0; i < sky::N_NAMES; i++) {
@@ -1194,7 +1215,7 @@ inline void declutter_labels() {
   }
   // UI-21: constellation names give way to satellites (their dots and shown tags)
   for (auto &nt : ui.names) {
-    bool keep = ui.stars_shown && nt.fits;
+    bool keep = ui.stars_shown && nt.fits && nt.idx != ui.const_eaten;
     const Box nb{nt.x, nt.y, nt.x + nt.w, nt.y + nt.h};
     for (size_t j = 0; j < placed.size() && keep; j++) {
       const Box &o = placed[j];
@@ -2003,7 +2024,7 @@ inline void fig_draw_cb(lv_event_t *e) {
     d.round_start = d.round_end = pass;
     d.opa = LV_OPA_COVER;
     for (const auto &g : ui.star_segs) {
-      if (g.major != (pass == 1))
+      if (g.major != (pass == 1) || (ui.const_eaten >= 0 && g.poly >= ui.eat_lo && g.poly < ui.eat_hi))
         continue;
       const int x0 = ox + std::min(g.x0, g.x1) - 2, x1 = ox + std::max(g.x0, g.x1) + 2;
       const int y0 = oy + std::min(g.y0, g.y1) - 2, y1 = oy + std::max(g.y0, g.y1) + 2;
@@ -8061,6 +8082,9 @@ namespace dino {
 bool walk(uint32_t seed);  // sky_dino.h (sky_extra.cpp)
 }
 bool dino_hunt(uint32_t seed);  // sky_octopus.h (sky_extra.cpp)
+namespace octo {
+bool play_eat(int meal);
+}
 namespace dbg {
 inline void run(const char *cmd) {
   char what[24] = "";
@@ -8134,6 +8158,8 @@ inline void run(const char *cmd) {
     info_alert = a;
     select_object(K_INFO, 0);
     ESP_LOGI(UI_TAG, "dbg: history card, event %d", (int) a.idx);
+  } else if (!strcmp(what, "octoeat")) {  // UI-85d: octoeat [0 crab | 1 fish | 2 bull]; without a number any seafood
+    ESP_LOGI(UI_TAG, "dbg: octopus meal %s", octo::play_eat(n < 0 ? -3 : n) ? "started" : "NOT started (none of it up on the map, or no memory)");
   } else if (!strcmp(cmd, "dinoeat")) {  // UI-85c
     ESP_LOGI(UI_TAG, "dbg: dino hunting walk %s", dino_hunt(lv_tick_get() * 2654435761u + 1) ? "started" : "NOT started (nothing up, or no memory)");
   } else if (!strcmp(cmd, "dino")) {
