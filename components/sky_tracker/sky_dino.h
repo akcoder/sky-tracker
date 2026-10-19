@@ -20,6 +20,10 @@
 //    in PSRAM, for that walk. The bubble is drawn once, when it appears.
 //  * A walk logs its frames, rate and longest gap, as sky-tracker's animations do.
 //
+// A third of the random walks are hunting walks (UI-85c, from sky_octopus.h dino_hunt): to a Sun, Moon or planet that is
+// up on the map, saying one of 30 hungry lines, chewing (the object is hidden and the backdrop taken again without it),
+// then one of 30 tasty lines; no line is repeated within 12 walks.
+//
 // Needs the build flag -DLV_USE_SNAPSHOT=1 and the font for the bubble. A touch ends a walk.
 // Copied from f1-tracker (which has it walk by itself now and then); here the About logo, the web button and the random visits (sky_octopus.h check()) start one.
 // Compiled in its own translation unit (sky_extra.cpp, SKY_IMPL), as sky_about.h (BUILD-7); the rest of
@@ -30,6 +34,9 @@ namespace sat {
 namespace dino {
 void set_font(const lv_font_t *f);
 bool walk(uint32_t seed);
+// A hunting walk (UI-85c): to the object centred at (x, y) with radius r on the screen, named `name` ("The Sun", "Mars");
+// the objects in hide[0..n) are hidden when it is eaten (and shown again when the walk ends).
+bool walk_eat(uint32_t seed, int x, int y, int r, const char *name, lv_obj_t *const *hide, int n);
 }  // namespace dino
 }  // namespace sat
 #elif defined(USE_ESP32) && !defined(SAT_HOST_TEST)
@@ -64,8 +71,12 @@ struct St {
   lv_image_dsc_t tail_dsc;
   uint8_t *tail_mirror = nullptr;
   int pose = -1, x = -99999, y = -99999;
-  bool bubble_on = false;
+  int bubble_on = 0;
   uint32_t frames = 0, max_gap = 0;
+  char text[3][48] = {"", "", ""};            // the bubble's words: 1 the roar or hungry line, 2 the tasty line
+  lv_obj_t *hide[4] = {};                     // a hunting walk: what it eats
+  int n_hide = 0;
+  bool ate = false;
 };
 inline St st;
 inline constexpr size_t POSE_BYTES = (size_t) DATA_W * DATA_H * 3, TAIL_BYTES = (size_t) TAIL_W * TAIL_H * 3;
@@ -128,16 +139,27 @@ inline void frame() {
     st.y = f.y;
     lv_obj_set_pos(st.img, f.x, f.y);
   }
+  if (f.eaten && !st.ate && st.n_hide > 0) {   // the target is gone: the backdrop is taken again without it
+    st.ate = true;
+    for (int i = 0; i < st.n_hide; i++) lv_obj_add_flag(st.hide[i], LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(st.root, LV_OBJ_FLAG_HIDDEN);
+    lv_snapshot_take_to_draw_buf(lv_obj_get_parent(st.root), LV_COLOR_FORMAT_RGB565, st.snap);
+    lv_obj_remove_flag(st.root, LV_OBJ_FLAG_HIDDEN);
+    lv_image_cache_drop(st.snap);
+    lv_obj_invalidate(st.root);
+  }
   if (f.bubble != st.bubble_on) {
     st.bubble_on = f.bubble;
     if (f.bubble) {
+      lv_label_set_text(st.label, st.text[f.bubble]);
       lv_obj_update_layout(st.bubble);
       const int bw = lv_obj_get_width(st.bubble), bh = lv_obj_get_height(st.bubble);
       // over the head: right edge to the sprite's right edge going right, left edge to its left edge going left
       int bx = st.w.flip ? f.x - 6 : f.x + DATA_W + 6 - bw;
       if (bx < 4) bx = 4;
       if (bx + bw > SCREEN_W - 4) bx = SCREEN_W - 4 - bw;
-      const int by = f.y - bh - TAIL_H + 4;
+      int by = f.y - bh - TAIL_H + 4;
+      if (by < 2) by = 2;
       lv_obj_set_pos(st.bubble, bx, by);
       lv_obj_set_pos(st.tail, st.w.flip ? bx + 14 : bx + bw - TAIL_W - 14, by + bh - 2);
       lv_obj_remove_flag(st.bubble, LV_OBJ_FLAG_HIDDEN);
@@ -159,6 +181,9 @@ inline void end_walk() {
   const uint32_t ms = lv_tick_get() - st.start;
   if (st.root) lv_obj_delete(st.root);                         // and its children
   st.root = st.img = st.bubble = st.label = st.tail = nullptr;
+  for (int i = 0; i < st.n_hide; i++)
+    if (st.ate) lv_obj_remove_flag(st.hide[i], LV_OBJ_FLAG_HIDDEN);    // the page as it was
+  st.n_hide = 0;
   if (st.snap) lv_draw_buf_destroy(st.snap);
   st.snap = nullptr;
   big_free(st.mirror);
@@ -171,11 +196,38 @@ inline void end_walk() {
   st.done = false;
 }
 
-// Start a walk now (the seed picks it). False: no walk (no memory).
-inline bool begin_walk(uint32_t seed) {
+// Pick a line not among the last few said (HUNGRY and TASTY have 30 each: no repetition for a long while).
+inline int fresh_line(int want, int n, int *recent, int &next) {
+  constexpr int KEEP = 12;
+  for (int tries = 0; tries < n; tries++) {
+    bool seen = false;
+    for (int i = 0; i < KEEP; i++) seen |= recent[i] == want;
+    if (!seen) break;
+    want = (want + 1) % n;
+  }
+  recent[next] = want;
+  next = (next + 1) % KEEP;
+  return want;
+}
+inline int recent_hungry[12] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, next_hungry = 0;
+inline int recent_tasty[12] = {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1}, next_tasty = 0;
+
+// Start a walk now (the seed picks it; tg: a hunting walk at that target, name its name, hide what is eaten).
+// False: no walk (no memory).
+inline bool begin_walk(uint32_t seed, const Target *tg = nullptr, const char *name = "", lv_obj_t *const *hide = nullptr, int n_hide = 0) {
   if (st.running || bubble_font == nullptr) return false;
   lv_obj_t *scr = lv_screen_active();
-  st.w = make_walk(seed);
+  st.w = make_walk(seed, tg);
+  st.ate = false;
+  st.n_hide = 0;
+  std::snprintf(st.text[1], sizeof(st.text[1]), "%s", WORDS[st.w.word]);
+  if (tg) {
+    st.w.hungry = fresh_line(st.w.hungry, N_HUNGRY, recent_hungry, next_hungry);
+    st.w.tasty = fresh_line(st.w.tasty, N_TASTY, recent_tasty, next_tasty);
+    std::snprintf(st.text[1], sizeof(st.text[1]), HUNGRY[st.w.hungry], name);
+    std::snprintf(st.text[2], sizeof(st.text[2]), TASTY[st.w.tasty], name);
+    for (int i = 0; i < n_hide && i < 4; i++) st.hide[st.n_hide++] = hide[i];
+  }
   // the screen as it is, as the opaque backdrop
   st.snap = lv_snapshot_take(scr, LV_COLOR_FORMAT_RGB565);
   if (st.snap == nullptr) {
@@ -227,7 +279,7 @@ inline bool begin_walk(uint32_t seed) {
   st.label = lv_label_create(st.bubble);
   lv_obj_set_style_text_font(st.label, bubble_font, 0);
   lv_obj_set_style_text_color(st.label, lv_color_hex(0x101420), 0);
-  lv_label_set_text(st.label, WORDS[st.w.word]);
+  lv_label_set_text(st.label, st.text[1]);
   lv_obj_add_flag(st.bubble, LV_OBJ_FLAG_HIDDEN);
 
   st.tail = lv_image_create(st.root);
@@ -237,7 +289,7 @@ inline bool begin_walk(uint32_t seed) {
 
   st.pose = -1;
   st.x = st.y = -99999;
-  st.bubble_on = false;
+  st.bubble_on = 0;
   st.frames = st.max_gap = st.last_frame = 0;
   st.done = false;
   st.running = true;
@@ -258,6 +310,11 @@ inline bool walking() { return st.running; }
 
 void set_font(const lv_font_t *f) { bubble_font = f; }
 bool walk(uint32_t seed) { return begin_walk(seed); }
+bool walk_eat(uint32_t seed, int x, int y, int r, const char *name, lv_obj_t *const *hide, int n) {
+  Target tg;
+  tg.x = x, tg.y = y, tg.r = r;
+  return begin_walk(seed, &tg, name, hide, n);
+}
 
 }  // namespace dino
 }  // namespace sat

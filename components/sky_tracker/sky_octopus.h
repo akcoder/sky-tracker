@@ -672,12 +672,36 @@ inline bool busy_soon() {
 namespace dino {
 #ifdef SAT_HOST_TEST  // no dinosaur on the desktop
 inline bool walk(uint32_t) { return false; }
+inline bool walk_eat(uint32_t, int, int, int, const char *, lv_obj_t *const *, int) { return false; }
 inline bool walking() { return false; }
 #else
 bool walk(uint32_t seed);  // sky_dino.h (same translation unit, included after this file)
+bool walk_eat(uint32_t seed, int x, int y, int r, const char *name, lv_obj_t *const *hide, int n);
 inline bool walking();
 #endif
 }  // namespace dino
+// UI-85c: a third of the dinosaur's walks go to a Sun, Moon or planet that is up on the map and eat it. False: none is up
+// (or no memory): the caller walks as usual.
+bool dino_hunt(uint32_t seed) {
+  lv_obj_t *obj[2 + planets::N_PLANETS], *lbl[2 + planets::N_PLANETS];
+  const char *name[2 + planets::N_PLANETS];
+  int n = 0;
+  auto up = [&](lv_obj_t *o) { return o != nullptr && !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN); };
+  if (up(ui.sun))
+    obj[n] = ui.sun, lbl[n] = nullptr, name[n++] = "The Sun";
+  if (up(ui.moon))
+    obj[n] = ui.moon, lbl[n] = nullptr, name[n++] = "The Moon";
+  for (int p = 0; p < planets::N_PLANETS; p++)
+    if (up(ui.planet_img[p]))
+      obj[n] = ui.planet_img[p], lbl[n] = ui.planet_lbl[p], name[n++] = planets::name(p);
+  if (n == 0)
+    return false;
+  const int i = (int) ((seed >> 7) % (uint32_t) n);
+  lv_area_t a;
+  lv_obj_get_coords(obj[i], &a);
+  lv_obj_t *hide[2] = {obj[i], lbl[i]};
+  return dino::walk_eat(seed, (a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2, (a.x2 - a.x1 + 1) / 2, name[i], hide, lbl[i] ? 2 : 1);
+}
 namespace octo {
 void set_enabled(bool on) {
   st.enabled = on;
@@ -705,8 +729,11 @@ void check() {
     return;
   if (dino::walking())
     return;
-  if (rnd() % 3 == 0)  // UI-85b: one visit in three is the dinosaur's walk (sky_dino.h) instead
-    dino::walk(st.rng ^ rocket::now_us());
+  if (rnd() % 3 == 0) {  // UI-85b: one visit in three is the dinosaur's walk (sky_dino.h) instead
+    const uint32_t seed = st.rng ^ rocket::now_us();
+    if (rnd() % 3 != 0 || !dino_hunt(seed))  // UI-85c: and a third of those is a hunting walk
+      dino::walk(seed);
+  }
   else
     begin(st.rng ^ rocket::now_us());
   schedule(false);  // also after a refusal (no PSRAM): the next try is minutes away, not a second

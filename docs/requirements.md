@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.54 (released): internal changes only.
 - 4.6.53 (released): Auto Close switch on the Display tab, web and Home Assistant (UI-72a). the Poker Flat picture is asked for every 10 s (the camera's own rate; was 2 min) and stays up when the screen is untouched for a minute (UI-75). the list's text is 2 pt larger (UI-10e). a launch's countdown in the list spans the EL and HEIGHT columns (UI-10f). swipe the alert on the status line left or right to see the next or previous alert (UI-41m). The picture viewer says when it waits for another download or for memory (UI-41n).
 - 4.6.52 (released): the On this day card shows a picture of the event it is about, downloaded when the card opens (Wikimedia Commons, public domain; UI-77b); downloads no longer stop part-way when internal RAM runs low (Poker Flat's picture: "read failed after 15887 bytes"): the network and astronomy tasks' stacks are smaller (they used 6 KB of 20 and 2 KB of 8), leaving 11 KB more internal RAM for the AES hardware's buffers (NET-16b); the mem command shows internal RAM and each task's stack use. The Earth picture no longer fails with "out of memory": the Planets tab's two 176 KB buffers are given back when the picture viewer closes, and the JPEG buffer falls back to 640 or 512 KB when PSRAM is short (NET-16c).
 - 4.6.51 (released): internal changes only.
@@ -862,6 +863,13 @@ UI-85  The octopus: a mimic octopus (brown with cream bands) visits the map 2-3 
        splashdown animation, or a touch, ends it. No snapshot memory: no visit. The Octopus Visits switch (web,
        HA, restored, on by default) turns the visits off; the Play Octopus Animation button (web Animations group, HA)
        plays one now. sky_octopus.h, compiled in sky_extra.cpp (BUILD-7); it reports its frame rate as Last Animation FPS.
+UI-85c The dinosaur's hunting walk: a third of its random walks (UI-85b) go to a Sun, Moon or planet that is up
+       on the map (chosen at random; with none up it walks as usual). It enters from the side nearer the target,
+       stops with its snout at the object, says one of 30 hungry lines (some name the object: "The Moon", "Mars"),
+       chews for 1.8 s (the object disappears in the middle of it: the walk's backdrop is taken again without it)
+       and says one of 30 tasty lines, then walks on; the object is back when the walk ends. A line is not repeated
+       within the last 12 walks of its kind. sky_dino.h and sky_dinologic.h (the lines, the timing); sky_octopus.h
+       dino_hunt picks the target. The debug command `dinoeat` starts one now. Not in the changelog (easter egg).
 UI-84  Fact cards: touching the picture of a planet (Planets tab), the Sun or the Moon (their tabs) opens its card over
        the picture (440 x 352 at 20,52: the tabs and the strip stay): the name, Discovered (who and when), Named for
        (the legend) and Facts, with a dim "Tap to close" at the bottom (as f1-tracker's detail card). Mercury, Venus,
