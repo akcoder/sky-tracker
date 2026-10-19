@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.53 (released): Auto Close switch on the Display tab, web and Home Assistant (UI-72a). the Poker Flat picture is asked for every 10 s (the camera's own rate; was 2 min) and stays up when the screen is untouched for a minute (UI-75). the list's text is 2 pt larger (UI-10e). a launch's countdown in the list spans the EL and HEIGHT columns (UI-10f). swipe the alert on the status line left or right to see the next or previous alert (UI-41m). The picture viewer says when it waits for another download or for memory (UI-41n).
 - 4.6.52 (released): the On this day card shows a picture of the event it is about, downloaded when the card opens (Wikimedia Commons, public domain; UI-77b); downloads no longer stop part-way when internal RAM runs low (Poker Flat's picture: "read failed after 15887 bytes"): the network and astronomy tasks' stacks are smaller (they used 6 KB of 20 and 2 KB of 8), leaving 11 KB more internal RAM for the AES hardware's buffers (NET-16b); the mem command shows internal RAM and each task's stack use. The Earth picture no longer fails with "out of memory": the Planets tab's two 176 KB buffers are given back when the picture viewer closes, and the JPEG buffer falls back to 640 or 512 KB when PSRAM is short (NET-16c).
 - 4.6.51 (released): internal changes only.
 - 4.6.50 (released): the eclipse view (UI-87): a full-screen picture of an eclipse as it really is now, from the same Sun/Moon/shadow geometry the eclipse alerts use, with a world map of where it is happening (coastlines from Natural Earth, public domain; the Moon's shadow path for a solar eclipse; where the Moon is overhead and who can see it for a lunar one; you marked), your distance from it, and a timeline of first contact, maximum and last contact. Solar: the Sun and the Moon's black disc as seen from here, the corona at totality, the ring of fire at annularity. Lunar: a picture of the full Moon (NASA SVS Dial-A-Moon, public domain, built in: an eclipse is always at full Moon, whatever today's phase) with the Earth's umbra and penumbra over it. Two web-page-only buttons (not in the API or Home Assistant), Play Solar Eclipse Animation and Play Lunar Eclipse Animation, replay the next eclipse seen from here in 30 s (an example total, annular or lunar one when none is coming); debug command "eclipse solar|annular|lunar|close". A total lunar eclipse is a Blood Moon: the full Moon alert and the eclipse alert say so, also when it cannot be seen from here (UI-48b).
@@ -428,6 +429,15 @@ UI-10c The list page has a title row like the other pages: "List" in orange at t
        button (96x36 at 376,4, back to the map). The list scrolls in its own box (0,44, 480x436) under
        it, so scrolled rows are clipped at the box and never run under Close or the title. A tap in the box
        still flips the page (the box bubbles its clicks), a tap on Close goes to the map.
+UI-10e The list's text is mono14 (2 pt over mono12), cells padded 4 px at the sides; the columns are
+       26 (icon), 134, 42, 36, 78, 60 and 78 px (the widest cell of each fits: 15 characters of name,
+       "NNW 345°", "12345 mi").
+UI-72a Auto Close (switch on the Display tab under Night mode, with the timer icon; web Display group and
+       Home Assistant "Auto Close"; on by default, kept across reboots): off, UI-72's idle close does nothing -
+       Settings, the pages, the picture viewer, cards, an update or SD offer all stay until closed. The
+       Poker Flat camera (UI-75) is never closed by it, on or off.
+UI-10f A launch row's countdown ("T-1h 20m") sits in the EL column and spans the EL and HEIGHT columns
+       (merged cells), the room it needs; the direction stays in DIR.
 UI-10d The row lines are each row's TOP border, not the bottom: LVGL draws a BOTTOM border one pixel below
        its cell, outside the area it invalidates when the cell's text changes, so every changed cell erased
        its width of the line under the row above ("horizontal lines partially missing randomly", worst
@@ -771,7 +781,7 @@ UI-75  All-sky camera: the University of Alaska Fairbanks Geophysical Institute'
        fills the top square of the 514x600 JPEG: decoded as it arrives (UI-59f) with a 176/180 px
        round edge; frames over 2:1 are halved by TJpgDec first. The picture viewer's fourth tab
        ("UAF", when no planet tab) and a "Sky cam" button on the aurora, solar wind and space
-       weather cards; refreshed every 2 min while open. Caption "UAF Poker Flat all-sky camera,
+       weather cards; refreshed every 10 s while open (the feed's own rate), and it is not closed by the 60 s idle close (UI-72). Caption "UAF Poker Flat all-sky camera,
        Alaska"; by day "Off until dark".
 UI-76  Launch countdown (sky_rocket.h): from T-10 min to liftoff a full-screen card on the top
        layer: "Launch countdown", the mission (mono18), rocket and pad (mono16), T-MM:SS in mono72
@@ -884,6 +894,13 @@ UI-29b Fixed texts write their lengths as {km:22}, {km:1.39 million}, {kmh:2,000
        physical unit, as NOAA gives it), GPS altitude in metres, and the GPS speed on the debug page in km/h.
 UI-41k Solar Alerts (on by default; mdi:weather-sunny, HA "Solar Alerts", web Celestial after
        Lunar): solar eclipses seen from here (UI-51) and solstices and equinoxes (UI-41b).
+UI-41m Swiping the alert (the tap zone of UI-41d) left shows the next alert, right the one before
+       (28 px, at least twice as far across as up or down, within 700 ms; wraps). The rotation goes on
+       from there, each alert for a minute. The touch that ends a swipe is not a tap.
+UI-41n The picture viewer logs the free PSRAM and internal RAM when it opens. While another picture is
+       downloading it says so ("Waiting for another picture to finish downloading") instead of
+       showing a bare page, and a picture that failed for lack of memory is asked for again after
+       10 s (not 90 s) with "Not enough memory just now".
 UI-41g Comet Alerts (on by default): a comet bright enough to see (UI-63). The Comets map layer
        (Celestial) must be on too: a comet not on the map raises no alert.
 UI-72  After 60 s untouched (lv_display_get_inactive_time), checked every 2 s: Settings closes as

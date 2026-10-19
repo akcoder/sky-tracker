@@ -3380,7 +3380,9 @@ inline const char *planet_image(ImageInfo &info, uint16_t *work, char *e, size_t
 }
 // UI-75: the University of Alaska Fairbanks Geophysical Institute's all-sky camera at Poker
 // Flat (allsky.gi.alaska.edu): its live feed (an event stream) names the current picture,
-// "images/...jpg" (a "not dark yet" card by day, saying when it runs); the fisheye circle fills
+// "PKR/tagged_cam/PKR_yymmddhhmmss.jpg", under the site's base address (a "notdark" card by day, saying when it
+// runs; the feed asks to be polled every 10 s - "retry: 10000" - and a new frame lands every 7 to 15 s, with no
+// Cache-Control or Expires on the frames, so the name is the only freshness signal); the fisheye circle fills
 // the top square of the 514x600 frame, decoded as it arrives (UI-59f) with a round edge.
 constexpr const char *ALLSKY_BASE = "https://allsky.gi.alaska.edu/";
 inline const char *allsky_image(ImageInfo &info, uint16_t *work, char *e, size_t en) {

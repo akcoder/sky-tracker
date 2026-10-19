@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.52"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.53"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -691,10 +691,10 @@ interval:
     then:
       - lambda: sat::tick();
       - lambda: |-
-          // UI-72: a minute untouched closes whatever is open and goes back to the map: Settings
+          // UI-72 (when the Auto Close switch is on, UI-72a): a minute untouched closes whatever is open and goes back to the map: Settings
           // as Cancel (nothing saved), the other pages, and what is open over the map. Not the
           // boot / Wi-Fi page, an animation, or an install in progress.
-          if (lv_display_get_inactive_time(nullptr) >= 60000 && !sat::rocket::active() && !id(wifi_page)->is_showing()) {
+          if (id(auto_close).state && lv_display_get_inactive_time(nullptr) >= 60000 && !sat::rocket::active() && !id(wifi_page)->is_showing()) {
             if (id(settings_page)->is_showing())
               lv_obj_send_event(id(btn_settings_cancel), LV_EVENT_CLICKED, nullptr);
             else if (id(list_page)->is_showing() || id(debug_page)->is_showing() || id(debug2_page)->is_showing() ||
@@ -1476,6 +1476,15 @@ switch:
       - lambda: sat::set_night(true);
     on_turn_off:
       - lambda: sat::set_night(false);
+  - platform: template           # UI-72a: close what is open after a minute untouched
+    id: auto_close
+    name: Auto Close
+    web_server:
+      sorting_group_id: grp_display
+      sorting_weight: 6
+    icon: mdi:timer-outline
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
   - platform: template           # UI-69: rocket across the screen at a launch's T-0
     id: launch_anim
     name: Launch Animation
@@ -2187,10 +2196,13 @@ lvgl:
                   pad_all: 0
                   clickable: false
                   items:
-                    text_font: mono12
+                    text_font: mono14      # UI-10e: +2 pt over mono12; columns re-fitted in sat::list_build
                     text_color: 0xC9D3F2
                     bg_opa: TRANSP
-                    pad_all: 5
+                    pad_top: 5
+                    pad_bottom: 5
+                    pad_left: 4
+                    pad_right: 4
                     border_width: 1
                     border_side: TOP       # UI-10d: not BOTTOM: LVGL draws that line 1 px below the cell, outside what a changed cell redraws
                     border_color: 0x22305A
@@ -2338,6 +2350,7 @@ lvgl:
             set(id(sw_planets), id(show_planets).state);  // UI-40
             set(id(sw_autob), id(auto_bright).state);     // UI-44
             set(id(sw_night), id(night_mode).state);      // UI-45
+            set(id(sw_autoclose), id(auto_close).state);  // UI-72a
             sat::settings_planet_icon(id(pnl_celestial), 130, 62, id(pnl_alerts), 130, 62);
             set(id(sw_aur_alerts), id(aurora_alerts).state);  // UI-41a
             set(id(sw_pl_alerts), id(planet_alerts).state);
@@ -2467,6 +2480,7 @@ lvgl:
                         sw(id(sw_comets), id(show_comets));        // UI-63
                         sw(id(sw_autob), id(auto_bright));
                         sw(id(sw_night), id(night_mode));
+                        sw(id(sw_autoclose), id(auto_close));  // UI-72a
                         // UI-39: LEO cone, 5° steps
                         id(leo_cone).make_call().set_value(sat::cone_snap(lv_slider_get_value(id(sl_cone)))).perform();
                     - lvgl.page.show: sky_page
@@ -2758,6 +2772,29 @@ lvgl:
                   x: 298
                   y: 228
                   text: "red after dusk"
+                  text_font: mono12
+                  text_color: 0x7E8BB3
+              - label:                 # UI-72a
+                  x: 16
+                  y: 268
+                  text: "Auto close"
+                  text_font: mono16
+              - label:
+                  x: 140
+                  y: 266
+                  text: "\U000F051B"   # timer-outline
+                  text_font: mdi_card20
+                  text_color: 0xFF6B6B
+              - switch:
+                  id: sw_autoclose
+                  x: 232
+                  y: 262
+                  width: 56
+                  height: 28
+              - label:
+                  x: 298
+                  y: 270
+                  text: "after 1 min idle"
                   text_font: mono12
                   text_color: 0x7E8BB3
         - obj:
