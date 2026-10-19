@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.52 (released): the On this day card shows a picture of the event it is about, downloaded when the card opens (Wikimedia Commons, public domain; UI-77b); downloads no longer stop part-way when internal RAM runs low (Poker Flat's picture: "read failed after 15887 bytes"): the network and astronomy tasks' stacks are smaller (they used 6 KB of 20 and 2 KB of 8), leaving 11 KB more internal RAM for the AES hardware's buffers (NET-16b); the mem command shows internal RAM and each task's stack use. The Earth picture no longer fails with "out of memory": the Planets tab's two 176 KB buffers are given back when the picture viewer closes, and the JPEG buffer falls back to 640 or 512 KB when PSRAM is short (NET-16c).
 - 4.6.51 (released): internal changes only.
 - 4.6.50 (released): the eclipse view (UI-87): a full-screen picture of an eclipse as it really is now, from the same Sun/Moon/shadow geometry the eclipse alerts use, with a world map of where it is happening (coastlines from Natural Earth, public domain; the Moon's shadow path for a solar eclipse; where the Moon is overhead and who can see it for a lunar one; you marked), your distance from it, and a timeline of first contact, maximum and last contact. Solar: the Sun and the Moon's black disc as seen from here, the corona at totality, the ring of fire at annularity. Lunar: a picture of the full Moon (NASA SVS Dial-A-Moon, public domain, built in: an eclipse is always at full Moon, whatever today's phase) with the Earth's umbra and penumbra over it. Two web-page-only buttons (not in the API or Home Assistant), Play Solar Eclipse Animation and Play Lunar Eclipse Animation, replay the next eclipse seen from here in 30 s (an example total, annular or lunar one when none is coming); debug command "eclipse solar|annular|lunar|close". A total lunar eclipse is a Blood Moon: the full Moon alert and the eclipse alert say so, also when it cannot be seen from here (UI-48b).
 - 4.6.49 (released): the N, E, S and W letters on the map are in the normal text colour, not the dim label colour, so they are easier to tell apart (UI-15b). The log line for a display frame start put right says what was going on: the reason (odd count, position off), the vsync gap, the last flash write (when, size, how long it took, how many so far), whether an HTTP download and the JPEG decoder were running, an animation, the free memory (PERF-16b).
@@ -243,7 +244,7 @@ ARCH-7 Dead-reckoning history (each satellite's last sighting) belongs to the
        task alone, and only the task reads or writes it. Every published satellite
        record carries its own motion: unit position vector at the fix, fix time,
        rotation axis, angular rate, altitude rate, and a has-velocity flag.
-ARCH-8 The task's stack is 16 KB in internal RAM. Response buffers, JSON documents,
+ARCH-8 The task's stack is 12 KB in internal RAM (6 KB used at most; the astro task's is 5 KB, 2 KB used; both measured by the mem command, NET-16b). Response buffers, JSON documents,
        record lists, dead-reckoning history and marker pools live in PSRAM. ESPHome
        builds with CONFIG_SPIRAM_USE_CAPS_ALLOC, so plain malloc/new NEVER reaches
        PSRAM: these MUST use heap_caps allocation (PsramAlloc in sat_net.h).
@@ -787,6 +788,16 @@ UI-77  On this day (sky_history.h, 108 built-in events, in sky_extra.cpp): the e
        date, shown in the alert rotation for 10 minutes in every 30 ("This day in 1957: Sputnik 1,
        the first artificial satellite, is launched"), mdi:calendar-star in 0xC5B3F0; its card
        lists the day's events with how many years ago. Switch On This Day (on).
+UI-77b A picture on the On this day card: when the card opens, the event the alert showed has its picture fetched (job JOB_HISTIMG)
+       from Wikimedia Commons (https://upload.wikimedia.org/wikipedia/commons/thumb/..., a 330 px baseline JPEG of at most
+       150 KB, public domain or CC0, one chosen for each of the 108 events by tools/gen_hist_pics.py, listed in
+       sky_hist_pics.h; 106 of the 108 have one, an event with none shows the text alone). It is decoded alongside the download
+       (UI-59f's way) and box-filtered to at most 240 x 160 into a PSRAM buffer (77 KB at most; the JPEG and the filter's sums,
+       ~380 KB, are taken for the job and freed), shown under the text row by row as it arrives ("Loading the picture..." until
+       the first rows), and freed when the card closes. Every downloaded picture (Sun, Moon, Earth, region, Alaska, this one)
+       is shown progressively; the planets' are built in. A 429 reply is retried after 4 and 8 s. The user agent names the
+       project's address (Wikimedia's policy). Nothing is stored in flash but the 108 paths (~9 KB). tools/hist_queries.txt,
+       hist_overrides.txt, gen_hist_pics.py and hist_emit.py find and list them (public domain or CC0 only, baseline JPEG).
 UI-78  Glyphs: the text fonts (*glyphs) hold printable ASCII except ^ ` { } \, plus ° · ±; the icon
        fonts hold the MDI icons listed with them. Every string the firmware writes uses only these
        (checked across the sources and the YAML's labels). Text from the feeds is folded as it is
@@ -1710,6 +1721,15 @@ NET-16 The HTTP client's receive buffer is plain malloc, i.e. internal RAM (this
        sdkconfig malloc threshold does not move it to PSRAM). Its size follows the largest free internal block: 8 KB from
        20 KB, 4 KB from 10 KB, else 2 KB. An 8 KB buffer failed to allocate ("download was cut short") on a unit with
        ~12-25 KB free and a 7 KB largest block.
+NET-16b The AES hardware takes an internal-RAM DMA buffer for each TLS record (the TLS buffers are in PSRAM). With ~22 KB internal
+       free, a 7 KB largest block and lows of 9 KB it failed ("esp-aes: Failed to allocate memory"), cutting the Poker Flat
+       download after 15887 bytes. Hardware crypto stays; internal RAM is freed instead: the sat_net stack 20 -> 12 KB and the astro
+       stack 8 -> 5 KB (measured peaks 6 and 2 KB: the mem command prints each task's use). Nothing is moved to PSRAM that the panel's
+       scan-out would compete with.
+NET-16c The Earth and region downloads need ~1.5 MB of PSRAM at once (JPEG buffer + the box filter's sums). PSRAM free had shrunk to
+       ~1.2 MB ("picture 2: out of memory"), 360 KB of it the Planets tab's picture buffers kept after the viewer closed. They are
+       freed when the viewer closes (unless a picture job is running); the JPEG buffer is 768 KB, else 640 or 512 KB (the Earth
+       picture is ~450 KB) when the 768 KB block is not there.
 UI-80c Launch and event QR codes: the link is the best-ranked https video link, else the best info page; none, no QR.
        A launch's links come from its own reply (/launches/<id>/, 48 KB): the list has none. At most two such calls per list
        refresh, only when no launch is inside 120 min of its time, a link kept per id for 6 h (and in the flash cache).

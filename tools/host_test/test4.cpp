@@ -3396,7 +3396,28 @@ int main() {
       net::parse_epoch("2026-10-04T18:05:00", t4);  // Sputnik's day, in a "now and then" window
       sat_host_now = floor(t4 / 1800) * 1800 + 60;
       sat::set_history_alerts(true);
+      auto fake_pic = [&](int mo, int d) {  // UI-77b: the picture as the net task leaves it (colour bars, 240 x 160)
+        const sat::hist::Ev *e2[4];
+        const int k = sat::hist::on(mo, d, e2, 4);
+        const int idx = sat::hist::index_of(e2[(int64_t) (sat_host_now / 1800) % k]);
+        auto &hp = net::hpic::px;
+        uint16_t *buf = (uint16_t *) malloc(net::hpic::MAXW * net::hpic::MAXH * 2);
+        for (int y = 0; y < net::hpic::MAXH; y++)
+          for (int x = 0; x < net::hpic::MAXW; x++)
+            buf[y * net::hpic::MAXW + x] = (uint16_t) (((x * 31 / net::hpic::MAXW) << 11) | ((y * 63 / net::hpic::MAXH) << 5) | 12);
+        hp = buf;
+        net::hpic::w = net::hpic::MAXW, net::hpic::h = net::hpic::MAXH;
+        net::hpic::req = net::hpic::have = idx;
+        net::hpic::state = 2;
+        net::hpic::open = true;
+      };
+      fake_pic(10, 4);
       alert_and_card(sat::AI_HISTORY, "r24_history_alert", "r24_history_card", "Sputnik 1");
+      CHECK(net::hpic::px.load() == nullptr && net::hpic::state == 0, "on this day: closing the card frees its picture");
+      net::parse_epoch("2026-05-25T18:05:00", t4);  // three events: the tallest card
+      sat_host_now = floor(t4 / 1800) * 1800 + 60;
+      fake_pic(5, 25);
+      alert_and_card(sat::AI_HISTORY, "r24_history3_alert", "r24_history3_card", "Kennedy");
     }
     sat::live.status = st0;
     sat_host_now = save_now;

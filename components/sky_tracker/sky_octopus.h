@@ -670,8 +670,13 @@ inline bool busy_soon() {
 }  // namespace octo
 
 namespace dino {
+#ifdef SAT_HOST_TEST  // no dinosaur on the desktop
+inline bool walk(uint32_t) { return false; }
+inline bool walking() { return false; }
+#else
 bool walk(uint32_t seed);  // sky_dino.h (same translation unit, included after this file)
 inline bool walking();
+#endif
 }  // namespace dino
 namespace octo {
 void set_enabled(bool on) {
