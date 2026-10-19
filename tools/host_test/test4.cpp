@@ -226,7 +226,8 @@ int main() {
   w.list = lv_table_create(list_box);
   lv_obj_set_pos(w.list, 10, 0);
   lv_obj_set_style_text_font(w.list, f12, LV_PART_ITEMS);
-  lv_obj_set_style_pad_all(w.list, 5, LV_PART_ITEMS);
+  lv_obj_set_style_pad_hor(w.list, 4, LV_PART_ITEMS);  // UI-10e
+  lv_obj_set_style_pad_ver(w.list, 5, LV_PART_ITEMS);
   lv_obj_set_style_bg_opa(w.list, LV_OPA_TRANSP, 0);
   lv_obj_set_style_bg_opa(w.list, LV_OPA_TRANSP, LV_PART_ITEMS);
   lv_obj_set_style_border_width(w.list, 0, 0);
@@ -601,11 +602,12 @@ int main() {
         const int r = (c >> 11) << 3, g = ((c >> 5) & 63) << 2, b = (c & 31) << 3;
         return std::abs(r - 0x22) < 16 && std::abs(g - 0x30) < 16 && std::abs(b - 0x5A) < 24;
       };
-      // a x inside the EL column (6th of 7): 10 + 24 + 128 + 46 + 42 + 82 = 332 .. 394
+      // a x inside the EL column (6th of 7; 300 .. 360 without the icon font): 10 + 0/26 + 134 + 42 + 36 + 78
       int line_y = -1;  // the line between the header and the first row: whichever of the two rows' edges carries it
-      for (int dy = -2; dy <= 2 && line_y < 0; dy++)
-        if (line_px(360, ta.y1 + rowh + dy))
-          line_y = ta.y1 + rowh + dy;
+      (void) rowh;  // (rows can wrap in the host's wider font: the header's line is the first one below its text)
+      for (int y = ta.y1 + 8; y < ta.y1 + 60 && line_y < 0; y++)
+        if (line_px(330, y))
+          line_y = y;
       CHECK(line_y >= 0, "the line under the header is drawn before a cell changes");
       char cur[24];
       snprintf(cur, sizeof(cur), "%s", lv_table_get_cell_value(sat::ui.w.list, 1, 5));
@@ -613,7 +615,7 @@ int main() {
         lv_table_set_cell_value(sat::ui.w.list, 1, 5, k % 2 ? "-12.3\xC2\xB0" : "7.7\xC2\xB0");
         lv_refr_now(disp);
       }
-      CHECK(line_y >= 0 && line_px(360, line_y) && line_px(340, line_y) && line_px(390, line_y),
+      CHECK(line_y >= 0 && line_px(330, line_y) && line_px(315, line_y) && line_px(355, line_y),
             "the line under the header survives a change of the cell below it (y %d)", line_y);
       lv_table_set_cell_value(sat::ui.w.list, 1, 5, cur);
       lv_refr_now(disp);

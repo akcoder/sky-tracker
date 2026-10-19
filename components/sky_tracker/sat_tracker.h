@@ -2332,6 +2332,10 @@ inline Alert info_alert;           // the one whose details card is open (K_INFO
 inline lv_obj_t *alert_zone = nullptr;  // the alert's tap zone (UI-41d)
 inline lv_obj_t *card_find_btn = nullptr;  // the card's Find button (hidden on K_INFO)
 inline void alert_click_cb(lv_event_t *e);
+inline void alert_press_cb(lv_event_t *e);
+inline void alert_release_cb(lv_event_t *e);
+inline int alert_skip = 0;  // UI-41m: alerts a swipe has stepped past the minute's turn
+inline uint32_t alert_swipe_ms = 0;  // when the last swipe was seen (the touch that ends it is not a tap)
 constexpr int MAX_ALERTS = 12;
 constexpr int ALERT_DY = -1;  // UI-41i: alerts sit this much below the status line (was 3; 4 px up for two lines)
 constexpr int ALERT_LINE_SPACE = -3;  // UI-41i: two alert lines 17 px apart (mono15: 20), clear of the disc
@@ -2386,7 +2390,7 @@ inline void draw_hud(double t) {
   aurora_update(t);
   Alert alerts[MAX_ALERTS];
   const int n_alerts = (clock_valid() && col == C_OK && !(notice_text[0] && t < notice_until)) ? collect_alerts(t, alerts, MAX_ALERTS) : 0;
-  const Alert *al = n_alerts ? &alerts[(int64_t) (t / ALERT_ROTATE_S) % n_alerts] : nullptr;
+  const Alert *al = n_alerts ? &alerts[(((int64_t) (t / ALERT_ROTATE_S) + alert_skip) % n_alerts + n_alerts) % n_alerts] : nullptr;
   if (alert_override)
     al = alert_override, col = C_OK;
   if (al) {
@@ -2412,6 +2416,8 @@ inline void draw_hud(double t) {
       lv_obj_add_flag(zone, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_EVENT_BUBBLE));
       lv_obj_remove_flag(zone, LV_OBJ_FLAG_SCROLLABLE);
       lv_obj_add_event_cb(zone, alert_click_cb, LV_EVENT_CLICKED, nullptr);
+      lv_obj_add_event_cb(zone, alert_press_cb, LV_EVENT_PRESSED, nullptr);  // UI-41m: swipe through the alerts
+      lv_obj_add_event_cb(zone, alert_release_cb, LV_EVENT_RELEASED, nullptr);
     }
     lv_obj_t *parent = lv_obj_get_parent(ui.w.status);
     if (ui.aurora_icon == nullptr && ui.w.card_icon_font) {  // glyph slot (aurora, ISS)
@@ -2631,7 +2637,7 @@ inline void list_build() {
     return;
   lv_table_set_column_count(t, 7);
   // UI-10 + UI-28 class column + UI-30 icon column (none without the icon font)
-  const int w[7] = {ui.w.icon_font ? 24 : 0, 128, 46, 42, 82, 62, 80};
+  const int w[7] = {ui.w.icon_font ? 26 : 0, 134, 42, 36, 78, 60, 78};  // UI-10e: mono14 (8.4 px a character), 4 px side padding
   for (int i = 0; i < 7; i++)
     lv_table_set_column_width(t, i, w[i]);
   lv_obj_add_flag(t, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
@@ -2778,7 +2784,7 @@ inline void draw_list(double t) {
         snprintf(d, sizeof(d), "%s %.0f\xC2\xB0", compass(brg), brg);
       else
         d[0] = 0;
-      add(RK_LAUNCH, "\xF3\xB1\x93\x9E", nm, "", "RKT", d, "", alt, K_INFO, li);
+      add(RK_LAUNCH, "\xF3\xB1\x93\x9E", nm, "", "RKT", d, alt, "", K_INFO, li);  // UI-10f: the countdown spans EL and HEIGHT
       n++;
     }
   }
@@ -2887,6 +2893,16 @@ inline void draw_list(double t) {
       if (cur == nullptr || strcmp(cur, rows[r].c[c]) != 0)
         lv_table_set_cell_value(tb, r, c, rows[r].c[c]);
     }
+  for (size_t r = 0; r < rows.size(); r++) {  // UI-10f: a launch's countdown spans the EL and HEIGHT columns
+    const bool want = kinds[r] == RK_LAUNCH;
+    if (want != lv_table_has_cell_ctrl(tb, r, 5, LV_TABLE_CELL_CTRL_MERGE_RIGHT)) {
+      if (want)
+        lv_table_set_cell_ctrl(tb, r, 5, LV_TABLE_CELL_CTRL_MERGE_RIGHT);
+      else
+        lv_table_clear_cell_ctrl(tb, r, 5, LV_TABLE_CELL_CTRL_MERGE_RIGHT);
+      lv_obj_invalidate(tb);
+    }
+  }
   ui.row_sel_kind = sel_kind;
   ui.row_sel_id = sel_id;
   if (kinds != ui.row_kind) {
@@ -5341,9 +5357,37 @@ inline void info_card_update(double t) {
   lv_obj_set_pos(ui.card, box.x1 + ui.cx - cw / 2, box.y1 + std::max(0, std::min(ui.size - ch, 16)));
   arc_update(t);
 }
+// UI-41m: a horizontal swipe on the alert (28 px, at least twice its height, within 700 ms) shows the next
+// alert (swipe left) or the one before (swipe right); like the planet swipe (UI-86) it is press and release.
+inline lv_point_t alert_from = {0, 0};
+inline uint32_t alert_t0 = 0;
+inline void alert_press_cb(lv_event_t *) {
+  lv_indev_t *in = lv_indev_active();
+  if (in)
+    lv_indev_get_point(in, &alert_from);
+  alert_t0 = lv_tick_get();
+}
+inline void alert_release_cb(lv_event_t *) {
+  lv_indev_t *in = lv_indev_active();
+  if (in == nullptr)
+    return;
+  lv_point_t p;
+  lv_indev_get_point(in, &p);
+  const int dx = p.x - alert_from.x, dy = p.y - alert_from.y;
+  if (dx * dx + dy * dy >= 100)
+    alert_swipe_ms = lv_tick_get();
+  if (!shown_alert_ok || std::abs(dx) < 28 || std::abs(dx) < 2 * std::abs(dy) || lv_tick_elaps(alert_t0) > 700)
+    return;
+  alert_skip += dx < 0 ? 1 : -1;
+  draw_hud(clock_now());
+}
 inline void alert_click_cb(lv_event_t *e) {
   if (!shown_alert_ok)
     return;  // no alert: the tap goes on to the page
+  if (alert_swipe_ms != 0 && lv_tick_elaps(alert_swipe_ms) < 400) {
+    lv_event_stop_bubbling(e);  // the touch that ended a swipe: not a tap for the page either
+    return;
+  }
   lv_event_stop_bubbling(e);
   const Alert &a = shown_alert;
   if (a.kind >= 0) {
@@ -6263,14 +6307,14 @@ struct ImgReq {
   bool asked = false;
 };
 inline ImgReq img_req[net::IMG_N];
-constexpr double IMG_REFRESH_S = 600, IMG_RETRY_S = 90, ALLSKY_REFRESH_S = 120;
+constexpr double IMG_REFRESH_S = 600, IMG_RETRY_S = 90, ALLSKY_REFRESH_S = 10;
 inline bool img_view_open() { return sv.root != nullptr; }
 inline bool img_loading(int k) { return img_req[k].asked && live.img[k].seq == img_req[k].seq; }
 inline void img_request(int k, double t) {
   ImgReq &q = img_req[k];
   if (!net::link_up || img_loading(k))
     return;
-  const double wait = q.asked && !live.img[k].ok ? IMG_RETRY_S
+  const double wait = q.asked && !live.img[k].ok ? (!strcmp(live.img[k].err, "out of memory") ? 10.0 : IMG_RETRY_S)
                      : k == net::IMG_ALLSKY            ? ALLSKY_REFRESH_S  // UI-75: a new frame every minute or two
                                                        : IMG_REFRESH_S;
   if (q.asked && t - q.at < wait)
@@ -6710,9 +6754,13 @@ inline void img_view_update(double t) {
   const int pc = loading ? img_progress(k, prog, sizeof(prog)) : -1;
   char m[128] = "";
   if (!have) {
-    if (loading)
+    if (loading && net::img_stage != net::STG_IDLE && net::img_stage_kind != k)  // UI-41n: queued behind another picture
+      snprintf(m, sizeof(m), "Waiting for another picture\nto finish downloading");
+    else if (loading)
       snprintf(m, sizeof(m), "Downloading the latest picture\nfrom %s\n\n%s", k == net::IMG_MOON ? "NASA" : "NOAA",
                prog);
+    else if (!strcmp(in.err, "out of memory"))
+      snprintf(m, sizeof(m), "Not enough memory just now\nTrying again shortly");
     else
       snprintf(m, sizeof(m), "%s", !net::link_up ? "No network" : in.err[0] ? in.err : "Waiting for the picture...");
   }
@@ -6935,6 +6983,10 @@ inline void img_view_open_now(int kind, int planet) {
   if (planet == -2)
     planet = kind >= VIEW_PLANET ? kind - VIEW_PLANET : -1;
   const bool reopening = sv.root != nullptr;  // its hold on the page carries over
+  ESP_LOGI("sat_ui", "picture viewer %d: PSRAM free %u KB, internal free %u KB, download stage %u (kind %u)", kind,
+           (unsigned) (heap_caps_get_free_size(MALLOC_CAP_SPIRAM) / 1024),
+           (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024), (unsigned) net::img_stage,
+           (unsigned) net::img_stage_kind);  // no heap walk (FAIL-9)
   img_view_close(true);
   finder_close();
   if (!reopening)
@@ -7204,7 +7256,7 @@ inline bool finder_open();
 inline bool img_view_open();
 inline void scrub_close();
 inline void idle_close() {
-  if (img_view_open())
+  if (img_view_open() && sv.kind != net::IMG_ALLSKY)  // UI-72: the Poker Flat camera stays up (UI-75)
     img_view_close();
   if (finder_open())
     finder_close();
