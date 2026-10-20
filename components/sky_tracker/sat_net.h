@@ -2040,6 +2040,22 @@ inline void launch_cache_save(const pvector<LaunchRec> &v, double now) {
     ESP_LOGW(TAG, "cache: launches not saved");
   heap_caps_free(c);
 }
+// When the list read at `now` is to be read again. UI-76: in the last 90 min before a launch every 15 min, from 30 min
+// before to 10 min after every 5, so the countdown and the T-0 scene follow holds, scrubs and a T-0 moved inside the
+// window (SpaceX picks a Starlink T-0 minutes before: a 22 min move was missed at 10-min polling). 12 calls an hour of
+// Launch Library's 15. And a look just before that window opens, so a launch that slipped since the last list does
+// not open a countdown on its old time.
+inline double launch_poll_at(const pvector<LaunchRec> &out, double now) {
+  double next = now + LAUNCH_EVERY_S;
+  for (const LaunchRec &l : out) {
+    const double dt = l.net - now;
+    if (dt > -20 * 60.0 && dt < 90 * 60.0)
+      next = std::min(next, now + (dt > -10 * 60.0 && dt < 30 * 60.0 ? 300.0 : 900.0));
+    else if (dt >= 90 * 60.0)
+      next = std::min(next, l.net - 85 * 60.0);
+  }
+  return next;
+}
 // at task start: the saved list, and no download until it is LAUNCH_EVERY_S old
 inline void launch_cache_load() {
   if (cache_part == nullptr)
@@ -2056,7 +2072,7 @@ inline void launch_cache_load() {
       fold_text(l.rocket);
       fold_text(l.where);
     }
-    launch_next = c->saved + LAUNCH_EVERY_S;
+    launch_next = launch_poll_at(out, c->saved);  // (the time it was read: the clock may not be set yet)
     ESP_LOGI(TAG, "cache: loaded %u launches", (unsigned) out.size());
     xSemaphoreTake(mutex, portMAX_DELAY);
     std::swap(pending.launches, out);
@@ -2090,17 +2106,7 @@ inline void launches_publish(pvector<LaunchRec> &out, double now, const char *sr
     fold_text(l.where);
   }
   std::sort(out.begin(), out.end(), [](const LaunchRec &a, const LaunchRec &b) { return a.net < b.net; });
-  launch_next = now + LAUNCH_EVERY_S;
-  // UI-76: in the last 90 min before a launch every 15 min, from 30 min before to 10 min after every 5, so the
-  // countdown and the T-0 scene follow holds, scrubs and a T-0 moved inside the window (SpaceX picks a Starlink
-  // T-0 minutes before: a 22 min move was missed at 10-min polling). 12 calls an hour of Launch Library's 15.
-  for (const LaunchRec &l : out) {  // (not when it was refused and the backup filled in)
-    if (strcmp(src, "Launch Library") != 0)
-      break;
-    const double dt = l.net - now;
-    if (dt > -20 * 60.0 && dt < 90 * 60.0)
-      launch_next = std::min(launch_next, now + (dt > -10 * 60.0 && dt < 30 * 60.0 ? 300.0 : 900.0));
-  }
+  launch_next = strcmp(src, "Launch Library") == 0 ? launch_poll_at(out, now) : now + LAUNCH_EVERY_S;  // (not when it was refused and the backup filled in)
   ESP_LOGI(TAG, "launches: %u upcoming (%s)", (unsigned) out.size(), src);
   launch_cache_save(out, now);
   xSemaphoreTake(mutex, portMAX_DELAY);

@@ -5373,7 +5373,19 @@ inline void info_card_update(double t) {
   lv_area_t box;
   lv_obj_get_coords(ui.w.sky, &box);
   card_pad_update();
+  // a card taller than the sky view (the re-entries list) is cut to it and scrolls
+  const int keep_y = lv_obj_get_scroll_y(ui.card);  // (this runs every second: the reading position stays)
+  lv_obj_set_height(ui.card, LV_SIZE_CONTENT);
   lv_obj_update_layout(ui.card);
+  if (lv_obj_get_height(ui.card) > ui.size - 32) {
+    lv_obj_set_height(ui.card, ui.size - 32);
+    lv_obj_add_flag(ui.card, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scroll_dir(ui.card, LV_DIR_VER);
+    lv_obj_update_layout(ui.card);
+    lv_obj_scroll_to_y(ui.card, keep_y, LV_ANIM_OFF);
+  } else {
+    lv_obj_remove_flag(ui.card, LV_OBJ_FLAG_SCROLLABLE);
+  }
   const int ch = lv_obj_get_height(ui.card), cw = lv_obj_get_width(ui.card);
   lv_obj_set_pos(ui.card, box.x1 + ui.cx - cw / 2, box.y1 + std::max(0, std::min(ui.size - ch, 16)));
   arc_update(t);
@@ -7264,6 +7276,9 @@ inline void select_object(int kind, int32_t id) {
     lv_obj_add_flag(ui.card_qr, LV_OBJ_FLAG_HIDDEN);
   if (ui.card_pic)  // UI-77b: nor a picture, except On this day's
     lv_obj_add_flag(ui.card_pic, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_set_height(ui.card, LV_SIZE_CONTENT);  // (an alert card may have been cut to the view and scrolled)
+  lv_obj_remove_flag(ui.card, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_scroll_to_y(ui.card, 0, LV_ANIM_OFF);
   lv_obj_remove_flag(ui.card, LV_OBJ_FLAG_HIDDEN);
   lv_obj_move_foreground(ui.card);
   card_update(ui.sel_since);

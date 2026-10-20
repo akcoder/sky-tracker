@@ -1041,7 +1041,8 @@ int main() {
     status.next_try = 0; hold_save(sat_host_now + 7200); status.next_try = 0; cache_load();
     CHECK(status.next_try == sat_host_now + 7200, "hold not carried over: %f", status.next_try);
     status.next_try = 0;
-    // UI-54a: the launch list survives a reboot, and holds off the next download
+    // UI-54a: the launch list survives a reboot, and holds off the next download (UI-76: a launch inside 90 min of
+    // when it was saved is read again every 15/5 min, one further out just before that window)
     {
       const double ln0 = launch_next;
       sat::pvector<LaunchRec> lv(3);
@@ -1053,7 +1054,14 @@ int main() {
       launch_next = 0;
       launch_cache_load();
       CHECK(pending.launches.size() == 3 && !strcmp(pending.launches[0].name, "Falcon Heavy | NROL-97") &&
-            launch_next == sat_host_now - 600 + LAUNCH_EVERY_S, "launch cache (%zu)", pending.launches.size());
+            launch_next == sat_host_now - 600 + 900, "launch cache: read again by the near-launch schedule (%zu)", pending.launches.size());
+      {  // a launch 4 h out: the next read is just before its 90-minute window, not 3 h on (it may slip meanwhile)
+        sat::pvector<LaunchRec> far(1);
+        far[0].net = sat_host_now + 4 * 3600.0;
+        CHECK(launch_poll_at(far, sat_host_now) == far[0].net - 85 * 60.0 &&
+              launch_poll_at(far, far[0].net - 3600) == far[0].net - 3600 + 900,
+              "launch poll: before the window, then every 15 min");
+      }
       host_flash[CACHE_LAUNCH_OFF + 40] ^= 0x55;
       pending.launches.clear();
       launch_cache_load();
@@ -3355,6 +3363,10 @@ int main() {
     sat::set_reentry_alerts(true);
     if (sat::reentry_top(sat_host_now)) {
       alert_and_card(sat::AI_REENTRY, "r23_reentry_alert", "r23_reentry_card", "Estimated from how fast");
+      CHECK(lv_obj_get_height(sat::ui.card) <= sat::ui.size - 32 &&
+                (lv_obj_get_scroll_bottom(sat::ui.card) > 0) == lv_obj_has_flag(sat::ui.card, LV_OBJ_FLAG_SCROLLABLE),
+            "re-entry card: cut to the view, scrolls when the text is longer (h %d, view %d)",
+            (int) lv_obj_get_height(sat::ui.card), (int) sat::ui.size);
       // the uncertainty is written with the plus-minus sign (U+00B1), which the text fonts hold, not "+/-"
       char line[96];
       net::DecayRec nd = *sat::reentry_top(sat_host_now);
