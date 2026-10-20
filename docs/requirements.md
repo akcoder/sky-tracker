@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.56 (released): a launch's list is also read just before the 90-minute window opens (at 85 min before T-0), and a list loaded from flash is read again by the same schedule from the time it was saved, so a launch that slipped since the last list no longer opens a countdown on its old time (UI-76). an alert's details card taller than the sky view (the re-entries list) is cut to the view and scrolls with a finger drag (UI-74).
 - 4.6.55 (released): the T- clock is centred between the rocket line and the GO/HOLD line (UI-80). the launch countdown's GO/HOLD and Liftoff lines sit higher (y 252 and 278, were 266 and 298) so the QR code no longer touches the Liftoff time (UI-80).
 - 4.6.54 (released): internal changes only.
 - 4.6.53 (released): Auto Close switch on the Display tab, web and Home Assistant (UI-72a). the Poker Flat picture is asked for every 10 s (the camera's own rate; was 2 min) and stays up when the screen is untouched for a minute (UI-75). the list's text is 2 pt larger (UI-10e). a launch's countdown in the list spans the EL and HEIGHT columns (UI-10f). swipe the alert on the status line left or right to see the next or previous alert (UI-41m). The picture viewer says when it waits for another download or for memory (UI-41n).
@@ -777,6 +778,7 @@ UI-74  Re-entries (CelesTrak SPECIAL=DECAYING CSV, ~17 KB, every 6 h, after the 
        up to five (debris too), each with its launch year (from the international designator), and
        says how rough the estimates are. Switch Re-entry Alerts (on).
        (The Aerospace Corporation refuses automated requests; ESA's predictions need an account.)
+       The card is at most the sky view's height less 32 px; a longer list scrolls vertically (4.6.56).
 UI-75  All-sky camera: the University of Alaska Fairbanks Geophysical Institute's Poker Flat camera
        (allsky.gi.alaska.edu): its live feed (src/checkLive.php?cam=poker-flat, an event stream: the
        first event, view "1") names the picture; by day a card saying when it runs. The fisheye
