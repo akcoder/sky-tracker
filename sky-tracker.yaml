@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.56"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.57"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -449,7 +449,7 @@ font:
     # monitor, map-marker, weather-night (UI-16a settings tabs); star-shooting, star-four-points,
     # weather-sunset-down (UI-33 Sat Trails, Stars, After dusk)
     # moon-full (UI-48/49 alerts, 4.5.15)
-    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F1BB9", "\U000F0379", "\U000F034E", "\U000F0594", "\U000F1741", "\U000F0AE2", "\U000F059B", "\U000F0F62", "\U000F018C", "\U000F14DE", "\U000F0629", "\U000F00B8", "\U000F0150", "\U000F00DF", "\U000F00E1", "\U000F08F0", "\U000F0F57", "\U000F0F5A", "\U000F1382", "\U000F009E", "\U000F1616", "\U000F0937", "\U000F0CB4", "\U000F17FE", "\U000F15D7", "\U000F09D3", "\U000F051B", "\U000F14C9"]  # moon-full, compass-outline, rocket-launch, meteor (UI-63), blur-radial (UI-64); settings row icons (UI-16a, 4.5.38): clock-outline, brightness-6, brightness-auto, map-marker-distance; latitude, longitude, compass-rose; sun-wireless, fire-alert, calendar-star, timer-outline (UI-73/74/77/76)
+    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F1BB9", "\U000F0379", "\U000F034E", "\U000F0594", "\U000F1741", "\U000F0AE2", "\U000F059B", "\U000F0F62", "\U000F018C", "\U000F14DE", "\U000F0629", "\U000F00B8", "\U000F0150", "\U000F00DF", "\U000F00E1", "\U000F08F0", "\U000F0F57", "\U000F0F5A", "\U000F1382", "\U000F009E", "\U000F1616", "\U000F0937", "\U000F0CB4", "\U000F17FE", "\U000F15D7", "\U000F09D3", "\U000F051B", "\U000F14C9", "\U000F0026", "\U000F0028"]  # moon-full, compass-outline, rocket-launch, meteor (UI-63), blur-radial (UI-64); settings row icons (UI-16a, 4.5.38): clock-outline, brightness-6, brightness-auto, map-marker-distance; latitude, longitude, compass-rose; sun-wireless, fire-alert, calendar-star, timer-outline (UI-73/74/77/76)
   - file:
       type: web
       url: https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/fonts/materialdesignicons-webfont.ttf
@@ -458,7 +458,7 @@ font:
     bpp: 4
     # UI-30 (4.5.5): details-card icons at the Moon picture's size: space-station, satellite-uplink,
     # satellite-variant, earth, crosshairs-gps, trash-can, weather-sunny, star-four-points
-    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F0AE2", "\U000F1741", "\U000F0629", "\U000F14DE", "\U000F1BB9", "\U000F0F62", "\U000F0CB4", "\U000F17FE", "\U000F15D7", "\U000F09D3"]  # + star-shooting (UI-47 shower card), meteor (UI-63 comet card), rocket-launch, aurora, moon-full (UI-41d alert cards); sun-wireless, fire-alert, calendar-star (UI-73/74/77 cards)
+    glyphs: ["\U000F1383", "\U000F0909", "\U000F0471", "\U000F01E7", "\U000F01A4", "\U000F0A79", "\U000F0599", "\U000F0AE2", "\U000F1741", "\U000F0629", "\U000F14DE", "\U000F1BB9", "\U000F0F62", "\U000F0CB4", "\U000F17FE", "\U000F15D7", "\U000F09D3", "\U000F0026", "\U000F0028"]  # + star-shooting (UI-47 shower card), meteor (UI-63 comet card), rocket-launch, aurora, moon-full (UI-41d alert cards); sun-wireless, fire-alert, calendar-star (UI-73/74/77 cards); alert, alert-circle (UI-41o data warning and error)
   - file: "gfonts://Roboto@300"
     id: setup_title
     size: 34

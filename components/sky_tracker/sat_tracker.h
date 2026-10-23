@@ -206,6 +206,8 @@ constexpr uint32_t C_REENTRY = 0xFF8A65; // UI-74 re-entries
 constexpr uint32_t C_HISTORY = 0xC5B3F0; // UI-77 on this day
 #define ICON_SWX "\xF3\xB1\x9F\xBE"      // sun-wireless
 #define ICON_REENTRY "\xF3\xB1\x97\x97"  // fire-alert
+#define ICON_WARN "\xF3\xB0\x80\xA6"     // alert (UI-41o: the data status line when it warns)
+#define ICON_ERR "\xF3\xB0\x80\xA8"      // alert-circle (... and when it is an error)
 #define ICON_HISTORY "\xF3\xB0\xA7\x93"  // calendar-star
 constexpr uint32_t C_LAUNCH = 0xFFC46B;  // UI-54 rocket launches
 constexpr uint32_t C_EVENT = 0x8FD3FF;   // UI-54c dockings, undockings, EVAs
@@ -2346,7 +2348,7 @@ inline bool is_splashdown(const net::EventRec &e) {
   return strstr(e.type, "Landing") != nullptr && (strstr(e.name, "plashdown") || strstr(e.name, "plash Down"));
 }
 enum AlertInfo : uint8_t { AI_NONE, AI_ISS_PASS, AI_CSS_PASS, AI_AURORA, AI_WIND, AI_LAUNCH, AI_EVENT, AI_CONJ, AI_PARADE,
-                           AI_ECLIPSE, AI_SEASON, AI_SWX, AI_REENTRY, AI_HISTORY };
+                           AI_ECLIPSE, AI_SEASON, AI_SWX, AI_REENTRY, AI_HISTORY, AI_STATUS };
 inline Alert shown_alert;          // UI-41d the alert on the status line now
 inline bool shown_alert_ok = false;
 inline Alert info_alert;           // the one whose details card is open (K_INFO)
@@ -2419,6 +2421,16 @@ inline void draw_hud(double t) {
     col = al->col;
     shown_alert = *al;  // UI-41d: what a tap on the status line opens
   }
+  Alert err = {};  // UI-41o: a data warning or error on the line is tappable too: an icon, and a card with the detail
+  if (al == nullptr && clock_valid() && col != C_OK && b[0] && !(notice_text[0] && t < notice_until)) {
+    err.col = col;
+    err.glyph = col == C_BAD ? ICON_ERR : ICON_WARN;
+    err.kind = -1;
+    err.info = AI_STATUS;
+    al = &err;
+    shown_alert = err;
+  }
+  const bool real_alert = al != nullptr && al != &err;  // (an error keeps the status line's own font and place)
   shown_alert_ok = al != nullptr;
   if (ui.w.status) {
     static int base_x = INT_MIN, base_y = INT_MIN;
@@ -2476,10 +2488,10 @@ inline void draw_hud(double t) {
       // UI-41: every alert in one font (mono15; mono14 without it), ALERT_DY lower than
       // the status line, which keeps its own font
       const lv_font_t *af = ui.w.alert_font ? ui.w.alert_font : ui.w.card_font;
-      const lv_font_t *want = al && af ? af : status_font;
+      const lv_font_t *want = real_alert && af ? af : status_font;
       lv_obj_set_style_text_font(ui.w.status, want, 0);
-      lv_obj_set_style_text_line_space(ui.w.status, al && af ? ALERT_LINE_SPACE : 0, 0);
-      lv_obj_set_y(ui.w.status, base_y + (al && af ? ALERT_DY : 0));
+      lv_obj_set_style_text_line_space(ui.w.status, real_alert && af ? ALERT_LINE_SPACE : 0, 0);
+      lv_obj_set_y(ui.w.status, base_y + (real_alert && af ? ALERT_DY : 0));
     }
   }
   // PERF-14: a new status line is drawn as the scan leaves it (see the end of draw_hud)
@@ -5320,6 +5332,30 @@ inline void info_card_update(double t) {
       else if (k < (int) sizeof(body))
         snprintf(body + k, sizeof(body) - k, "\nEstimated from how fast each orbit is decaying: the real time "
                                              "can differ by hours, the place by thousands of km.");
+      break;
+    }
+    case AI_STATUS: {  // UI-41o: the data status line's warning or error, in full
+      const DataStatus &ds = live.status;
+      snprintf(title, sizeof(title), "%s", al.col == C_BAD ? "Data error" : "Data warning");
+      char st[160];
+      status_text(t, st, sizeof(st));
+      int k = snprintf(body, sizeof(body), "%s", st);
+      if (ds.data_time > 0) {
+        char age[24];
+        fmt_age(t - ds.data_time, age, sizeof(age));
+        k += snprintf(body + k, sizeof(body) - k, "\n\nLast good download: %s ago", age);
+      }
+      const char *why = nullptr;
+      if (strstr(ds.error, "403"))
+        why = "CelesTrak refuses a list asked for twice within 2 hours. The unit waits 2 hours, then asks again.";
+      else if (strstr(ds.error, "503") || strstr(ds.error, "502") || strstr(ds.error, "504"))
+        why = "CelesTrak's server is busy or down. Nothing is wrong with the unit; it asks again in 10 minutes.";
+      else if (strstr(ds.error, "reach"))
+        why = "No answer from CelesTrak. Check the Wi-Fi and the internet; the unit retries every 10 minutes.";
+      else if (strstr(ds.error, "cut short"))
+        why = "The download stopped part way (a weak Wi-Fi signal or a busy server). It retries every 10 minutes.";
+      if (why && k < (int) sizeof(body))
+        snprintf(body + k, sizeof(body) - k, "\n%s\nPositions use the last data meanwhile.", why);
       break;
     }
     case AI_HISTORY: {  // UI-77

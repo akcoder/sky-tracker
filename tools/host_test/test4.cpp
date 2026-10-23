@@ -1445,6 +1445,16 @@ int main() {
     const bool fb = sat::net::stations_fallback(sat_host_now);
     printf("fallback: %d, ISS epoch %.0f -> %.0f\n", fb, iss_ep, sat::net::iss.epoch);
     CHECK(sat::net::iss.epoch >= iss_ep && sat::net::iss_loaded == sat_host_now, "SatNOGS fallback");
+    {  // DATA-13: SatNOGS filled in: a failed ISS download is not a warning on the screen; a failed list still is
+      snprintf(sat::net::status.error, sizeof(sat::net::status.error), "CelesTrak ISS download failed (HTTP 503)");
+      sat::net::finish_fallback();
+      CHECK(sat::net::status.error[0] == 0, "ISS 503 with SatNOGS: no error shown (%s)", sat::net::status.error);
+      snprintf(sat::net::status.error, sizeof(sat::net::status.error), "CelesTrak refused the visual download (HTTP 403)");
+      sat::net::finish_fallback();
+      CHECK(strstr(sat::net::status.error, "visual") && strstr(sat::net::status.error, "SatNOGS"),
+            "a failed satellite list still shows (%s)", sat::net::status.error);
+      sat::net::status.error[0] = 0;
+    }
     // UI-55 solar wind: newest first, an inactive source mixed in
     std::string mag = "[", wind = "[";
     for (int i = 0; i < 40; i++) {
@@ -3301,6 +3311,28 @@ int main() {
       sat::alert_override = nullptr;
       sat::draw_hud(sat_host_now);
     };
+    {  // UI-41o: a data error on the status line has an icon, and a tap opens a card with the detail
+      const double ok_time = sat::live.status.data_time;
+      snprintf(sat::live.status.error, sizeof(sat::live.status.error), "CelesTrak ISS download failed (HTTP 503)");
+      sat::live.status.next_try = sat_host_now + 600;
+      sat::draw_hud(sat_host_now);
+      shoot("r23_error_alert");
+      CHECK(sat::shown_alert_ok && !lv_obj_has_flag(sat::ui.aurora_icon, LV_OBJ_FLAG_HIDDEN) &&
+                !strcmp(lv_label_get_text(sat::ui.aurora_icon), ICON_WARN),
+            "data warning: icon on the status line");
+      lv_obj_send_event(sat::alert_zone, LV_EVENT_CLICKED, nullptr);
+      sat::card_update(sat_host_now);
+      printf("  card: %s\n%s\n", lv_label_get_text(sat::ui.card_title), lv_label_get_text(sat::ui.card_body));
+      CHECK(sat::ui.sel_kind == sat::K_INFO && !strcmp(lv_label_get_text(sat::ui.card_title), "Data warning") &&
+                strstr(lv_label_get_text(sat::ui.card_body), "busy or down"),
+            "data warning: a tap opens its card");
+      shoot("r23_error_card");
+      sat::deselect();
+      sat::live.status.error[0] = 0;
+      sat::draw_hud(sat_host_now);
+      CHECK(!strstr(lv_label_get_text(sat::ui.w.status), "HTTP 503"), "error gone: its line is gone");
+      (void) ok_time;
+    }
     {  // UI-78: feed text the fonts can't draw is folded
       char t1[96] = "Andøya Spaceport \xE2\x80\x93 \xE2\x80\x9CTest\xE2\x80\x9D Łódź\xE2\x80\xA6 ~5\xC2\xB0 \xF0\x9F\x9A\x80";
       net::fold_text(t1);
