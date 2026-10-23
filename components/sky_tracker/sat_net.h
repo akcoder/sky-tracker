@@ -3650,6 +3650,12 @@ inline void do_image(uint8_t kind) {
 inline void do_pass();
 // DATA-13: new station elements from SatNOGS: say so, save them and recompute passes
 inline void finish_fallback() {
+  // DATA-13: SatNOGS has filled in the ISS (and Tiangong): a failed ISS or Tiangong download is then no warning on the
+  // screen (only in the log); a failed satellite list (which SatNOGS does not replace) still is
+  if ((strstr(status.error, "ISS download") || strstr(status.error, "Tiangong download")) && !strstr(status.error, "visual")) {
+    ESP_LOGW(TAG, "%s (the stations come from SatNOGS: not shown)", status.error);
+    status.error[0] = 0;
+  }
   const size_t k = strlen(status.error);
   if (k && !strstr(status.error, "SatNOGS") && k + 20 < sizeof(status.error))
     snprintf(status.error + k, sizeof(status.error) - k, "; ISS via SatNOGS");

@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.57 (released): a failed ISS or Tiangong download that SatNOGS has filled in is no longer shown as a warning (logged only; DATA-13). a data warning or error on the status line (a CelesTrak download that failed, stale orbital data) has an icon (a triangle for a warning, a circle for an error) and a tap on it opens a details card: the full text, when the last good download was and what the failure means (UI-41o).
 - 4.6.56 (released): a launch's list is also read just before the 90-minute window opens (at 85 min before T-0), and a list loaded from flash is read again by the same schedule from the time it was saved, so a launch that slipped since the last list no longer opens a countdown on its old time (UI-76). an alert's details card taller than the sky view (the re-entries list) is cut to the view and scrolls with a finger drag (UI-74).
 - 4.6.55 (released): the T- clock is centred between the rocket line and the GO/HOLD line (UI-80). the launch countdown's GO/HOLD and Liftoff lines sit higher (y 252 and 278, were 266 and 298) so the QR code no longer touches the Liftoff time (UI-80).
 - 4.6.54 (released): internal changes only.
@@ -921,6 +922,11 @@ UI-41k Solar Alerts (on by default; mdi:weather-sunny, HA "Solar Alerts", web Ce
 UI-41m Swiping the alert (the tap zone of UI-41d) left shows the next alert, right the one before
        (28 px, at least twice as far across as up or down, within 700 ms; wraps). The rotation goes on
        from there, each alert for a minute. The touch that ends a swipe is not a tap.
+UI-41o Data status card: the status line's warnings and errors (status_text: a download that failed, orbital data
+       stale) show an icon at the left like an alert (mdi alert, amber, for a warning; alert-circle, red, for an error)
+       and a tap on the line opens a card, "Data warning" or "Data error": the full status text, the age of the last good
+       download and, for HTTP 403, 502/503/504, an unreachable server or a cut-short download, a sentence on what it means.
+       The line keeps its own font and place (the text is longer than an alert's). Only when no alert is showing.
 UI-41n The picture viewer logs the free PSRAM and internal RAM when it opens. While another picture is
        downloading it says so ("Waiting for another picture to finish downloading") instead of
        showing a bare page, and a picture that failed for lack of memory is asked for again after
@@ -1714,7 +1720,9 @@ HW-9b  Guided compass calibration (sky_sensors.h): each fresh sample during a ru
        The Location-tab button is disabled while no compass is detected.
 DATA-13 SatNOGS fallback: while CelesTrak refuses (a failed pass or its 2 h hold), the ISS
        and Tiangong elements come from db.satnogs.org (TLE from Space-Track; tle_to_omm, at
-       most hourly); the status line adds "ISS via SatNOGS" and passes are recomputed.
+       most hourly); the status line adds "ISS via SatNOGS" and passes are recomputed. When SatNOGS has
+       filled in, a failed ISS or Tiangong download is not shown (no warning, no icon, UI-41o) and is only logged;
+       a failed satellite list still is (4.6.57).
 NET-9  Diagnostic entities (entity_category diagnostic; web group System):
        Uptime, Wi-Fi Signal, IP Address, Wi-Fi Network, Firmware Version
        (a template: "ESPHome <version> · Sky Tracker <fw_version>", no hash or
