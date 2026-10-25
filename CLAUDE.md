@@ -15,7 +15,7 @@ Sun maths come from the `tracker_common` component (pinned tag, `tracker_common_
   `build-local.yaml` silently flashes old YAML; regenerate it after every change to `sky-tracker.yaml`. `esphome upload` after a
   failed compile uploads the previous binary: check "Successfully compiled" first.
 - Drive and measure the unit without a finger or the serial port: `tools/dbg.py [--all] script.txt` (API action `debug_cmd`, log
-  stream). Commands: `perf reset state list close`, `open sun|moon|earth|region|uaf|planet N`, `page sky|list|settings|about|debug`,
+  stream). Commands: `perf reset state list close stack` (`stack`: the main task's stack high-water mark; it is 8 KB and a peak near it aborts the firmware), `cdtest` (the launch countdown now, then the launch animation at T-0), `open sun|moon|earth|region|uaf|planet N`, `page sky|list|settings|about|debug`,
   `card moon|sun`, `card image`, `reentry`, `dino`. Examples in `tools/dbg_*.txt`.
 - Release (only when asked): bump `fw_version` in the YAML, mark the changelog line `(released)`, commit and push,
   `gh release create X.Y.Z --notes-file ...`. The Firmware workflow then publishes the manifest the units check.

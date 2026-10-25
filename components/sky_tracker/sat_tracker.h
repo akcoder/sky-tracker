@@ -540,6 +540,102 @@ inline void set_text_if(lv_obj_t *l, const char *s) {
   if (cur == nullptr || strcmp(cur, s) != 0)
     lv_label_set_text(l, s);  // PERF-6a
 }
+// UI-88: a label whose text changes fades out, takes the new text and fades back in (the status-bar clock, once a minute)
+inline char fade_text[2][16];
+inline void fade_text_set(lv_obj_t *l, const char *s) {
+  if (l == nullptr)
+    return;
+  const char *cur = lv_label_get_text(l);
+  if (cur == nullptr || strcmp(cur, s) == 0)
+    return;
+  if (cur[0] == 0 || lv_anim_get(l, nullptr) != nullptr) {
+    lv_label_set_text(l, s);  // the first text, or a change while one is fading: just take it
+    return;
+  }
+  snprintf(fade_text[0], sizeof(fade_text[0]), "%s", s);
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, l);
+  lv_anim_set_values(&a, 0, 1000);
+  lv_anim_set_duration(&a, 500);
+  lv_anim_set_path_cb(&a, lv_anim_path_linear);
+  lv_anim_set_custom_exec_cb(&a, [](lv_anim_t *an, int32_t v) {
+    lv_obj_t *o = (lv_obj_t *) an->var;
+    if (v >= 500 && strcmp(lv_label_get_text(o), fade_text[0]) != 0)
+      lv_label_set_text(o, fade_text[0]);
+    const int32_t k = v < 500 ? 1000 - v * 2 : v * 2 - 1000;  // 1000 .. 0 .. 1000
+    lv_obj_set_style_text_opa(o, (lv_opa_t) (255 * k / 1000), 0);
+  });
+  lv_anim_set_completed_cb(&a, [](lv_anim_t *an) { lv_obj_set_style_text_opa((lv_obj_t *) an->var, LV_OPA_COVER, 0); });
+  lv_anim_start(&a);
+}
+// UI-88: the alert on the status line crossfades into the next: copies of the old text and icon (ghosts) fade out over
+// the originals, which are given the new alert and fade in
+inline lv_obj_t *alert_ghost[3];
+inline void alert_ghost_clear() {
+  lv_anim_delete(&alert_ghost, nullptr);
+  for (lv_obj_t *&g : alert_ghost) {
+    if (g)
+      lv_obj_delete(g);
+    g = nullptr;
+  }
+  for (lv_obj_t *o : {ui.w.status, ui.aurora_icon, ui.alert_img})
+    if (o)
+      lv_obj_set_style_opa(o, LV_OPA_COVER, 0);
+}
+inline void alert_crossfade_start() {
+  alert_ghost_clear();
+  lv_obj_t *st = ui.w.status;
+  lv_obj_t *parent = lv_obj_get_parent(st);
+  if (lv_label_get_text(st)[0] == 0)
+    return;  // nothing shown to fade out
+  lv_obj_t *g = alert_ghost[0] = lv_label_create(parent);
+  lv_obj_remove_style_all(g);
+  lv_label_set_long_mode(g, lv_label_get_long_mode(st));
+  lv_obj_set_style_text_font(g, lv_obj_get_style_text_font(st, LV_PART_MAIN), 0);
+  lv_obj_set_style_text_color(g, lv_obj_get_style_text_color(st, LV_PART_MAIN), 0);
+  lv_obj_set_style_text_line_space(g, lv_obj_get_style_text_line_space(st, LV_PART_MAIN), 0);
+  lv_obj_set_style_text_letter_space(g, lv_obj_get_style_text_letter_space(st, LV_PART_MAIN), 0);
+  lv_obj_set_width(g, lv_obj_get_width(st));
+  lv_obj_set_pos(g, lv_obj_get_x(st), lv_obj_get_y(st));
+  lv_label_set_text(g, lv_label_get_text(st));
+  lv_obj_remove_flag(g, LV_OBJ_FLAG_CLICKABLE);
+  if (ui.aurora_icon && !lv_obj_has_flag(ui.aurora_icon, LV_OBJ_FLAG_HIDDEN)) {
+    lv_obj_t *o = alert_ghost[1] = lv_label_create(parent);
+    lv_obj_remove_style_all(o);
+    lv_obj_set_style_text_font(o, lv_obj_get_style_text_font(ui.aurora_icon, LV_PART_MAIN), 0);
+    lv_obj_set_style_text_color(o, lv_obj_get_style_text_color(ui.aurora_icon, LV_PART_MAIN), 0);
+    lv_label_set_text(o, lv_label_get_text(ui.aurora_icon));
+    lv_obj_set_pos(o, lv_obj_get_x(ui.aurora_icon), lv_obj_get_y(ui.aurora_icon));
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
+  }
+  if (ui.alert_img && !lv_obj_has_flag(ui.alert_img, LV_OBJ_FLAG_HIDDEN)) {
+    lv_obj_t *o = alert_ghost[2] = lv_image_create(parent);
+    lv_obj_remove_style_all(o);
+    lv_image_set_src(o, lv_image_get_src(ui.alert_img));
+    lv_obj_set_pos(o, lv_obj_get_x(ui.alert_img), lv_obj_get_y(ui.alert_img));
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
+  }
+  for (lv_obj_t *o : {ui.w.status, ui.aurora_icon, ui.alert_img})
+    if (o)
+      lv_obj_set_style_opa(o, LV_OPA_TRANSP, 0);
+  lv_anim_t a;
+  lv_anim_init(&a);
+  lv_anim_set_var(&a, &alert_ghost);
+  lv_anim_set_values(&a, 0, 255);
+  lv_anim_set_duration(&a, 400);
+  lv_anim_set_path_cb(&a, lv_anim_path_linear);
+  lv_anim_set_custom_exec_cb(&a, [](lv_anim_t *, int32_t v) {
+    for (lv_obj_t *g : alert_ghost)
+      if (g)
+        lv_obj_set_style_opa(g, (lv_opa_t) (255 - v), 0);
+    for (lv_obj_t *o : {ui.w.status, ui.aurora_icon, ui.alert_img})
+      if (o)
+        lv_obj_set_style_opa(o, (lv_opa_t) v, 0);
+  });
+  lv_anim_set_completed_cb(&a, [](lv_anim_t *) { alert_ghost_clear(); });
+  lv_anim_start(&a);
+}
 inline void set_shown(lv_obj_t *o, bool &state, bool want) {
   if (state == want)
     return;
@@ -2458,7 +2554,10 @@ inline void draw_hud(double t) {
   // UI-38/41: alerts (aurora, ISS pass, planets, alignments) in place of an all-is-well
   // (or empty) status line, one at a time, each for ALERT_ROTATE_S
   aurora_update(t);
-  Alert alerts[MAX_ALERTS];
+  // (in PSRAM, allocated once: 12 alerts on the main task's stack were 1.5 KB of its 8 KB, which was never more than ~400 bytes from
+  //  overflowing: the firmware aborted at the first launch countdown, 4.6.58)
+  static pvector<Alert> alerts_buf(MAX_ALERTS);
+  Alert *const alerts = alerts_buf.data();
   const int n_alerts = (clock_valid() && col == C_OK && !(notice_text[0] && t < notice_until)) ? collect_alerts(t, alerts, MAX_ALERTS) : 0;
   const Alert *al = n_alerts ? &alerts[(((int64_t) (t / ALERT_ROTATE_S) + alert_skip) % n_alerts + n_alerts) % n_alerts] : nullptr;
   if (alert_override)
@@ -2515,6 +2614,17 @@ inline void draw_hud(double t) {
       lv_obj_set_pos(ui.alert_img, base_x, base_y + ALERT_DY - 2);
       lv_obj_add_flag(ui.alert_img, LV_OBJ_FLAG_HIDDEN);
       lv_obj_remove_flag(ui.alert_img, LV_OBJ_FLAG_CLICKABLE);  // UI-41d: images take taps by default
+    }
+    {  // UI-88: a different alert (the rotation, a swipe) crossfades in; one that only updates its own text does not
+      static uint32_t shown_key = 0;
+      static bool key_set = false;
+      const uint32_t key = al ? (1u + ((uint32_t) al->info << 20) + ((uint32_t) (al->kind & 0xFF) << 12) + ((uint32_t) (al->id & 0xFF) << 4) +
+                                 ((uint32_t) (al->idx & 0xF))) ^ (uint32_t) (uintptr_t) (al->img ? (const void *) al->img : (const void *) al->glyph)
+                          : 0;
+      if (key_set && key != shown_key)
+        alert_crossfade_start();
+      shown_key = key;
+      key_set = true;
     }
     static const void *shown_icon = nullptr;
     const void *want_icon = al ? (al->img ? (const void *) al->img : (const void *) al->glyph) : nullptr;
@@ -2582,7 +2692,7 @@ inline void draw_hud(double t) {
 
   if (clock_valid()) {
     local_hm((int64_t) t, b, sizeof(b));
-    set_text_if(ui.w.clock, b);
+    fade_text_set(ui.w.clock, b);  // UI-88
   }
   draw_almanac(t);
 
@@ -5137,7 +5247,7 @@ inline void select_object(int kind, int32_t id);
 // alert's), and the picture button (Sky cam on the aurora and space weather alert cards)
 inline void card_pad_update() {
   const bool info = ui.sel_kind == K_INFO;
-  const bool buttons = !info || info_alert.info == AI_AURORA || info_alert.info == AI_WIND || info_alert.info == AI_SWX;
+  const bool buttons = !info || info_alert.info == AI_AURORA || info_alert.info == AI_WIND || info_alert.info == AI_SWX || info_alert.info == AI_FULLMOON;
   lv_obj_set_style_pad_bottom(ui.card, buttons ? 52 : 10, 0);
 }
 // UI-80b/c: the card's QR code for a launch or event link; nothing (hidden) when it has none
@@ -6456,7 +6566,8 @@ inline void img_request(int k, double t) {
                : k == net::IMG_MOON ? JOB_MOONIMG
                : k == net::IMG_EARTH ? JOB_EARTHIMG
                : k == net::IMG_ALLSKY ? JOB_ALLSKYIMG
-                                     : JOB_REGIONIMG))
+                                     : JOB_REGIONIMG,
+               true))  // (a card is open: the user is waiting)
     return;
   q.at = t;
   q.seq = live.img[k].seq;
@@ -8124,6 +8235,7 @@ void play_now();
 void play_undock_now();
 void play_dock_now();
 void play_splash_now();
+void countdown_show(int launch);  // the launch countdown for that listed launch (debug cdtest)
 }  // namespace rocket
 namespace octo {
 bool play_now();  // sky_octopus.h
@@ -8241,6 +8353,21 @@ inline void run(const char *cmd) {
   } else if (!strcmp(cmd, "card moon") || !strcmp(cmd, "card sun")) {  // the Sun / Moon card, as a touch on the icon opens it
     select_object(cmd[5] == 'm' ? K_MOON : K_SUN, 0);
     ESP_LOGI(UI_TAG, "dbg: card open, image button %s", ui.card_img_btn && !lv_obj_has_flag(ui.card_img_btn, LV_OBJ_FLAG_HIDDEN) ? "shown" : "HIDDEN");
+  } else if (!strcmp(cmd, "alert next")) {  // a swipe to the next alert
+    alert_skip++;
+    draw_hud(clock_now());
+    ESP_LOGI(UI_TAG, "dbg: alert \"%s\"", shown_alert_ok ? shown_alert.text : "(none)");
+  } else if (!strcmp(cmd, "card alert")) {  // a tap on the status line's alert
+    if (shown_alert_ok) {
+      if (shown_alert.kind >= 0)
+        select_object(shown_alert.kind, shown_alert.id);
+      else {
+        info_alert = shown_alert;
+        select_object(K_INFO, 0);
+      }
+      ESP_LOGI(UI_TAG, "dbg: alert card \"%s\" open, image button %s", shown_alert.text, ui.card_img_btn && !lv_obj_has_flag(ui.card_img_btn, LV_OBJ_FLAG_HIDDEN) ? "shown" : "HIDDEN");
+    } else
+      ESP_LOGI(UI_TAG, "dbg: no alert showing");
   } else if (!strcmp(cmd, "card image")) {  // a touch on the card's Image button
     lv_obj_send_event(ui.card_img_btn, LV_EVENT_CLICKED, nullptr);
     ESP_LOGI(UI_TAG, "dbg: image button pressed; viewer %s, picture %s, text \"%s\"", sv.root ? "open" : "NOT open",
@@ -8298,6 +8425,28 @@ inline void run(const char *cmd) {
     ESP_LOGI(UI_TAG, "dbg: history card, event %d", (int) a.idx);
   } else if (!strcmp(what, "octoeat")) {  // UI-85d: octoeat [0 crab | 1 fish | 2 bull]; without a number any seafood
     ESP_LOGI(UI_TAG, "dbg: octopus meal %s", octo::play_eat(n < 0 ? -3 : n) ? "started" : "NOT started (none of it up on the map, or no memory)");
+#ifndef SAT_HOST_TEST
+  } else if (!strcmp(cmd, "stack")) {  // how deep the main task's stack has ever been (a stack overflow aborts the firmware)
+    if (TaskHandle_t h = xTaskGetHandle("loopTask"))
+      ESP_LOGI(UI_TAG, "dbg: loopTask stack: never less than %u bytes free of %u", (unsigned) uxTaskGetStackHighWaterMark(h), (unsigned) ESPHOME_LOOP_TASK_STACK_SIZE);
+#endif
+  } else if (!strcmp(cmd, "cdtest")) {  // the launch countdown now: the first listed launch is set to T-75 s (put back after 3 min)
+    if (live.launches.empty()) {
+      ESP_LOGI(UI_TAG, "dbg: no launch listed");
+    } else {
+      static net::LaunchRec saved;
+      saved = live.launches[0];
+      live.launches[0].net = clock_now() + 75;
+      snprintf(live.launches[0].status, sizeof(live.launches[0].status), "Go");
+      lv_timer_t *ot = lv_timer_create([](lv_timer_t *) { rocket::countdown_show(0); }, 1, nullptr);  // (from a timer, as the real one: the QR code's
+      lv_timer_set_repeat_count(ot, 1);                                                                //  stack does not fit on top of the API call's)
+      ESP_LOGI(UI_TAG, "dbg: countdown for %s at T-75 s (the launch animation follows at T-0)", live.launches[0].name);
+      lv_timer_t *rt = lv_timer_create([](lv_timer_t *) {
+        if (!live.launches.empty() && !strcmp(live.launches[0].name, saved.name))
+          live.launches[0] = saved;
+      }, 180000, nullptr);
+      lv_timer_set_repeat_count(rt, 1);
+    }
   } else if (!strcmp(cmd, "dinoeat")) {  // UI-85c
     ESP_LOGI(UI_TAG, "dbg: dino hunting walk %s", dino_hunt(lv_tick_get() * 2654435761u + 1) ? "started" : "NOT started (nothing up, or no memory)");
   } else if (!strcmp(cmd, "dino")) {

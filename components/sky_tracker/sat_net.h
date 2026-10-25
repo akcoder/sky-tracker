@@ -4184,7 +4184,10 @@ constexpr double PASS_SPAN_S = 4 * 86400.0, PASS_STEP_S = 60.0;
 constexpr float PASS_MIN_MAX_EL = 10.0f;
 constexpr size_t PASS_KEEP = 3;
 
-inline void find_passes(SgpSat &sat, pvector<Pass> &staging) {
+inline bool img_job_waiting();  // below: a picture is queued (the user opened a card)
+inline void requeue_pass();  // below
+// false when it stopped early because a picture is waiting (the caller runs it again later)
+inline bool find_passes(SgpSat &sat, pvector<Pass> &staging) {
   const geo::Observer o = observer();
   auto el_at = [&](double t, geo::AzEl *out = nullptr) {
     double x[3] = {0, 0, 0};
@@ -4213,6 +4216,8 @@ inline void find_passes(SgpSat &sat, pvector<Pass> &staging) {
   uint32_t step = 0;
   for (double t = t0 + PASS_STEP_S; t < t0 + PASS_SPAN_S && staging.size() < PASS_KEEP; t += PASS_STEP_S) {
     breathe(step++, 500);
+    if ((step & 15) == 0 && img_job_waiting())
+      return false;
     const float el = el_at(t);
     if (prev_el < 0 && el >= 0)
       rise = cross(prev_t, t, true);
@@ -4259,16 +4264,17 @@ inline void find_passes(SgpSat &sat, pvector<Pass> &staging) {
     prev_t = t;
     prev_el = el;
   }
+  return true;
 }
 
 inline void do_pass() {
   if (!have_iss && !have_css)
     return;
   pvector<Pass> a, b;
-  if (have_iss)
-    find_passes(iss, a);
-  if (have_css)
-    find_passes(css, b);  // UI-52
+  if ((have_iss && !find_passes(iss, a)) || (have_css && !find_passes(css, b))) {  // UI-52 (Tiangong)
+    requeue_pass();  // a picture is waiting: it goes first, the passes start over after it
+    return;
+  }
   xSemaphoreTake(mutex, portMAX_DELAY);
   std::swap(pending.passes, a);
   std::swap(pending.css_passes, b);
@@ -4332,6 +4338,10 @@ inline void run_job(uint8_t job) {
 // long element download used to let the 1-2 s position jobs pile up (queue full, then
 // a burst of stale repeats). A request for a job already waiting is merged into it.
 inline std::atomic<uint32_t> queued{0};
+inline bool img_job_waiting() {
+  constexpr uint32_t mask = 0x7E0;  // JOB_SUNIMG (5) .. JOB_ALLSKYIMG (10)
+  return (queued.load() & mask) != 0;
+}
 
 inline void task_main(void *) {
   cache_load();         // DATA-10
@@ -4350,8 +4360,12 @@ inline void task_main(void *) {
     }
     if (!paused) {  // BUILD-6: drop work during an upload
       job_busy = true;
+      const uint32_t j0 = net_ms();
       run_job(job);
       job_busy = false;
+      if (net_ms() - j0 >= 500)  // what a picture asked for meanwhile waits behind
+        ESP_LOGI(TAG, "job %u took %u ms (%u more queued)", (unsigned) job, (unsigned) (net_ms() - j0),
+                 (unsigned) uxQueueMessagesWaiting(queue));
       if (uxQueueMessagesWaiting(queue) == 0)
         img_scratch_release();  // PERF-20b
     }
@@ -4428,7 +4442,7 @@ inline bool net_init(const Config &c) {
 
 // NET-14: keep the data task off the network for `ms` (a request in flight finishes first); it drops its kept
 // connection as it wakes. net_quiet(): it is idle and holds no connection. Never blocks.
-inline bool enqueue(Job j);
+inline bool enqueue(Job j, bool front = false);
 inline void net_hold(uint32_t ms) {
   net::hold_until_ms = net::net_ms() + ms;
   enqueue(JOB_DROP);
@@ -4436,18 +4450,22 @@ inline void net_hold(uint32_t ms) {
 inline bool net_quiet() { return !net::job_busy && net::kept.h == nullptr; }
 
 // ARCH-4: never blocks. False when the queue is full (the caller retries next tick).
-inline bool enqueue(Job j) {
+// front: a picture the user is waiting for goes ahead of the background refreshes already queued
+inline bool enqueue(Job j, bool front) {
   if (net::queue == nullptr)
     return false;
   const uint32_t bit = 1u << j;
   if (net::queued.fetch_or(bit) & bit)
     return true;  // ARCH-4: already waiting; this request is served by that run
   uint8_t v = j;
-  if (xQueueSend(net::queue, &v, 0) == pdTRUE)
+  if ((front ? xQueueSendToFront(net::queue, &v, 0) : xQueueSend(net::queue, &v, 0)) == pdTRUE)
     return true;
   net::queued.fetch_and(~bit);
   return false;
 }
+namespace net {
+inline void requeue_pass() { enqueue(JOB_PASS, false); }
+}  // namespace net
 
 // UI-16: new observer location for later jobs.
 inline void net_set_observer(double lat, double lon) {

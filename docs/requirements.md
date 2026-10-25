@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.59 (released): fixes 4.6.58 aborting ("A stack overflow in task loopTask") when a launch countdown opened or ended: the main task's 8 KB stack held 7.7 KB at boot, and draw_hud kept 12 alerts (1.5 KB) on it; they are now in PSRAM (peak 6.5 KB measured over the countdown, T-0, every page and card, and all animations). the launch countdown's digits crossfade when they change, instead of dropping in (UI-76c). a picture asked for by opening a card (Sun, Moon, Earth, the all-sky camera) goes to the front of the network queue, so it no longer waits 15 to 20 s behind background refreshes after a boot (UI-59), and the octopus comes in and goes out by a random edge or corner (UI-85), and the status bar's clock fades out and in when the minute changes, and a new alert crossfades with the old (UI-88), and the ISS and Tiangong pass search (4 to 6 s at boot) stops when a picture is waiting and starts over after it. the full Moon alert card's bottom padding clears its Image button (UI-48d).
 - 4.6.58 (released): the dinosaur's walk draws faster (about 20 to 26 fps): its backdrop is a plain opaque object that draws the screen snapshot, as the rocket's, so LVGL no longer redraws the whole sky page under it every refresh (PERF-9, UI-85). the capsule in the docking and undocking animations moves in quarter-pixel steps (four prerendered copies), so its slow approach and departure no longer jerk a pixel at a time (UI-69q). the dinosaur's hunting walks are three in four of its walks, up from one in three (UI-85c). the launch, undocking, docking and splashdown animations run faster (about 20 to 27 fps for a launch): a smoke disc's dirty area goes straight to the display (lv_inv_area), skipping lv_obj_invalidate_area's walk up the object tree, which cost 1.4 ms a call (PERF-9). the full Moon alert (Harvest Moon, Hunter's Moon, Blue Moon, Blood Moon, Wolf Moon...) opens a card with when it is full and what the name means, with an Image button for the Moon picture (UI-48c, UI-48d). the Last Animation FPS reading is in the web page's Animations box (was System; PERF-17). on the launch countdown a digit that changes drops in from above with a small bounce while the old one fades out under it (UI-76c). the octopus paints faster (about 28 to 22 ms a frame): floor and ceil are single FPU instructions, and the arm radii (a pow call) are worked out once a frame instead of five times. the Sun, Moon and planets rise out of the rim of the sky disc and sink into it, drawn partly as they come into view, instead of appearing whole at the rim and vanishing at the horizon (UI-6b). a launch pad's long country name is shortened instead of cut off: "Xichang Satellite Launch Center, People's Republic of China" showed as "... People's Republic o" and now reads "..., China" (UI-54).
 - 4.6.57 (released): a failed ISS or Tiangong download that SatNOGS has filled in is no longer shown as a warning (logged only; DATA-13). a data warning or error on the status line (a CelesTrak download that failed, stale orbital data) has an icon (a triangle for a warning, a circle for an error) and a tap on it opens a details card: the full text, when the last good download was and what the failure means (UI-41o).
 - 4.6.56 (released): a launch's list is also read just before the 90-minute window opens (at 85 min before T-0), and a list loaded from flash is read again by the same schedule from the time it was saved, so a launch that slipped since the last list no longer opens a countdown on its old time (UI-76). an alert's details card taller than the sky view (the re-entries list) is cut to the view and scrolls with a finger drag (UI-74).
@@ -806,9 +807,10 @@ UI-76  Launch countdown (sky_rocket.h): from T-10 min to liftoff a full-screen c
        not play while the status is Hold or TBD. Switch Launch Countdown (on). Comp:
        docs/comps/launch_countdown.png.
 UI-76c The clock is seven fixed cells ("T-MM:SS", one mono72 digit wide each, each clipping its own
-       contents). A digit that changes gets a new label that drops in from one cell height above
-       with a small overshoot (lv_anim_path_overshoot, 250 ms) while the old label fades out in
-       the first 60% of the move and is then deleted. Only the changed cell redraws.
+       contents). A digit that changes gets a new label on top of the old one; over 250 ms (linear) the
+       new fades in as the old fades out, and the old label is then deleted. Only the changed cell redraws.
+       (4.6.58 shipped a drop-in with a bounce, which started a digit height above its cell and looked as if it came out
+       of nothing; replaced by the crossfade in 4.6.59.)
 UI-77  On this day (sky_history.h, 108 built-in events, in sky_extra.cpp): the event for the local
        date, shown in the alert rotation for 10 minutes in every 30 ("This day in 1957: Sputnik 1,
        the first artificial satellite, is launched"), mdi:calendar-star in 0xC5B3F0; its card
@@ -859,11 +861,11 @@ UI-83  A dinosaur on the About page: touching the Sky Tracker logo there makes a
        walking in, and a touch in its first 2.5 s is ignored (a second tap on the logo was ending it unseen).
        The Play Launch / Undocking / Splashdown / Dinosaur Animation buttons are the web page's Animations group.
 UI-85  The octopus: a mimic octopus (brown with cream bands) visits the map 2-3 times an hour, ~10 s: it jets in from
-       beyond the right edge, fast and slowing as it arrives (like the dinosaur's entrance; the heavy first refresh does not
+       beyond an edge or a corner of the screen (chosen at random each visit, eight ways), fast and slowing as it arrives (like the dinosaur's entrance; the heavy first refresh does not
        count against the entrance), says a line (a speech bubble above it), morphs into ONE thing chosen at random for the visit, with a
        line to match: a lionfish (arms fanned out, redder), a banded sea snake (two arms stretched out in a wave, the
        rest drawn in, dark with white bands) or the ISS (arms straight out to each side, blue and gold, like the solar
-       arrays), then turns back, squirts a cloud of ink and jets off to the left. Each beat's line is drawn at random from a pool (arrival 24, lionfish 7, sea snake 6, ISS 7, ink 9: the arrival, the morph and the ink; never the line said last time from the same pool). The first
+       arrays), then turns back, squirts a cloud of ink and jets off by another edge or corner (random, never the one it came in by). Each beat's line is drawn at random from a pool (arrival 24, lionfish 7, sea snake 6, ISS 7, ink 9: the arrival, the morph and the ink; never the line said last time from the same pool). The first
        visit is 8-15 min after the clock is valid, then 15-35 min apart. Drawn over a snapshot of the map (UI-69o),
        painted off-screen: each model step (~11 fps) copies the box's screen from the snapshot into a 480 x 480 RGB565
        composite, paints the octopus on it through an LVGL canvas layer, and invalidates the box, which the backdrop blits
@@ -1008,6 +1010,9 @@ UI-87  Eclipse view (sky_eclipse.h, sky_extra.cpp; sky_events.h solar_view/lunar
        the solar shadow path every 8 min over 5 h, the eclipse now, you), a timeline and words. Live it follows the real clock every
        2 s; a replay runs first to last contact in 30 s at ~3 fps (a step is ~150 ms on the unit). Opened by the two web buttons (UI-87 is not on the touch screen) or
        "eclipse solar|annular|lunar". The picture and map buffers (270 KB, PSRAM) exist only while it is open.
+UI-88  A different alert on the status line (the rotation, a swipe) crossfades over 0.4 s: the old text and icon fade out as the new ones fade in; an alert
+       that only updates its own text does not. The status bar's clock fades out and back in over half a second when the minute changes (the new time arrives at the dark
+       point), instead of switching at once.
 UI-48b A total lunar eclipse is a Blood Moon, wherever on the Earth: the full Moon is named Blood Moon (over Harvest, Hunter's, Blue), the
        alert adds " - total lunar eclipse" (or ", not visible here"), and the eclipse alert reads "Blood Moon: total lunar eclipse ...".
 UI-48c Tapping the full Moon alert opens a details card (AI_FULLMOON) titled with the Moon's name: when it is full, a sentence on
