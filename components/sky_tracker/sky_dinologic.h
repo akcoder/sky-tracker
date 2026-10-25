@@ -5,7 +5,7 @@
 //
 // A walk: the dinosaur enters off screen, walks, stops somewhere in the middle, stands and roars (a
 // speech bubble with a random word, the mouth opening and closing) for 2-3 s, then walks on and leaves.
-// A third of its walks are hunting walks (UI-85c): it walks to a Sun, Moon or planet on the map, stops with its
+// Three in four of its walks are hunting walks (UI-85c): it walks to a Sun, Moon or planet on the map, stops with its
 // snout at it, says it is hungry (one of N_HUNGRY lines), chews (the object is gone at the middle of the chewing)
 // and says it was tasty (one of N_TASTY); then it walks on.
 // Its speed is never steady: base * (1 + amp cos(2 pi t / period + phase)), always forward, so it

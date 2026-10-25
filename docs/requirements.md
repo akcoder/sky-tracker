@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.58 (released): the dinosaur's walk draws faster (about 20 to 26 fps): its backdrop is a plain opaque object that draws the screen snapshot, as the rocket's, so LVGL no longer redraws the whole sky page under it every refresh (PERF-9, UI-85). the capsule in the docking and undocking animations moves in quarter-pixel steps (four prerendered copies), so its slow approach and departure no longer jerk a pixel at a time (UI-69q). the dinosaur's hunting walks are three in four of its walks, up from one in three (UI-85c). the launch, undocking, docking and splashdown animations run faster (about 20 to 27 fps for a launch): a smoke disc's dirty area goes straight to the display (lv_inv_area), skipping lv_obj_invalidate_area's walk up the object tree, which cost 1.4 ms a call (PERF-9). the full Moon alert (Harvest Moon, Hunter's Moon, Blue Moon, Blood Moon, Wolf Moon...) opens a card with when it is full and what the name means, with an Image button for the Moon picture (UI-48c, UI-48d). the Last Animation FPS reading is in the web page's Animations box (was System; PERF-17). on the launch countdown a digit that changes drops in from above with a small bounce while the old one fades out under it (UI-76c). the octopus paints faster (about 28 to 22 ms a frame): floor and ceil are single FPU instructions, and the arm radii (a pow call) are worked out once a frame instead of five times. the Sun, Moon and planets rise out of the rim of the sky disc and sink into it, drawn partly as they come into view, instead of appearing whole at the rim and vanishing at the horizon (UI-6b). a launch pad's long country name is shortened instead of cut off: "Xichang Satellite Launch Center, People's Republic of China" showed as "... People's Republic o" and now reads "..., China" (UI-54).
 - 4.6.57 (released): a failed ISS or Tiangong download that SatNOGS has filled in is no longer shown as a warning (logged only; DATA-13). a data warning or error on the status line (a CelesTrak download that failed, stale orbital data) has an icon (a triangle for a warning, a circle for an error) and a tap on it opens a details card: the full text, when the last good download was and what the failure means (UI-41o).
 - 4.6.56 (released): a launch's list is also read just before the 90-minute window opens (at 85 min before T-0), and a list loaded from flash is read again by the same schedule from the time it was saved, so a launch that slipped since the last list no longer opens a countdown on its old time (UI-76). an alert's details card taller than the sky view (the re-entries list) is cut to the view and scrolls with a finger drag (UI-74).
 - 4.6.55 (released): the T- clock is centred between the rocket line and the GO/HOLD line (UI-80). the launch countdown's GO/HOLD and Liftoff lines sit higher (y 252 and 278, were 266 and 298) so the QR code no longer touches the Liftoff time (UI-80).
@@ -413,6 +414,11 @@ UI-6a  The Moon is drawn over the Sun, except while their icons overlap (centres
        (30 + 20) / 2 px): then the Sun's halo is drawn over the Moon. A new Moon is 4-6 degrees from
        the Sun, a few pixels on the map at about 2 px a degree, and passes in front of it only in an
        eclipse; drawn on top, its dark disc looked like a transit (Oct 10 2026, 4 degrees south).
+UI-6b  Rising and setting: the Sun, Moon and planets are drawn from an elevation of -0.5 degrees. The icon starts just
+       clear of the horizon ring and slides in (an outward push of its own radius that dies out smoothly over twice its
+       size in degrees: 15 degrees for the Sun, 8-9 for the Moon and planets), the true place from then on. While any
+       part of an icon is outside the disc a black ring (a lv_draw_arc, 1.5 x the radius, over the icons, hidden the rest of
+       the time) hides that part, so UI-7 holds: nothing is seen outside the disc. The list, cards and alerts still count a body as up from 0 degrees.
 UI-7   Anything below the horizon MUST be hidden, not clamped to the rim.
 UI-8   Header: title, satellite counts, clock. Under the title sits a two-line
        countdown, "Satellites {n}s" / "Starlink {n}s" ("Starlink off" when
@@ -799,6 +805,10 @@ UI-76  Launch countdown (sky_rocket.h): from T-10 min to liftoff a full-screen c
        Starlink T-0 moved 22 min at 10-min polling was missed, 4.6.42). The T-0 scene (UI-69) does
        not play while the status is Hold or TBD. Switch Launch Countdown (on). Comp:
        docs/comps/launch_countdown.png.
+UI-76c The clock is seven fixed cells ("T-MM:SS", one mono72 digit wide each, each clipping its own
+       contents). A digit that changes gets a new label that drops in from one cell height above
+       with a small overshoot (lv_anim_path_overshoot, 250 ms) while the old label fades out in
+       the first 60% of the move and is then deleted. Only the changed cell redraws.
 UI-77  On this day (sky_history.h, 108 built-in events, in sky_extra.cpp): the event for the local
        date, shown in the alert rotation for 10 minutes in every 30 ("This day in 1957: Sputnik 1,
        the first artificial satellite, is launched"), mdi:calendar-star in 0xC5B3F0; its card
@@ -867,7 +877,7 @@ UI-85  The octopus: a mimic octopus (brown with cream bands) visits the map 2-3 
        splashdown animation, or a touch, ends it. No snapshot memory: no visit. The Octopus Visits switch (web,
        HA, restored, on by default) turns the visits off; the Play Octopus Animation button (web Animations group, HA)
        plays one now. sky_octopus.h, compiled in sky_extra.cpp (BUILD-7); it reports its frame rate as Last Animation FPS.
-UI-85c The dinosaur's hunting walk: a third of its random walks (UI-85b) go to a Sun, Moon or planet that is up
+UI-85c The dinosaur's hunting walk: three in four of its random walks (UI-85b) go to a Sun, Moon or planet that is up
        on the map (chosen at random; with none up it walks as usual). It enters from the side nearer the target,
        stops with its snout at the object, says one of 30 hungry lines (some name the object: "The Moon", "Mars"),
        chews for 1.8 s (the object disappears in the middle of it: the walk's backdrop is taken again without it)
@@ -1000,6 +1010,10 @@ UI-87  Eclipse view (sky_eclipse.h, sky_extra.cpp; sky_events.h solar_view/lunar
        "eclipse solar|annular|lunar". The picture and map buffers (270 KB, PSRAM) exist only while it is open.
 UI-48b A total lunar eclipse is a Blood Moon, wherever on the Earth: the full Moon is named Blood Moon (over Harvest, Hunter's, Blue), the
        alert adds " - total lunar eclipse" (or ", not visible here"), and the eclipse alert reads "Blood Moon: total lunar eclipse ...".
+UI-48c Tapping the full Moon alert opens a details card (AI_FULLMOON) titled with the Moon's name: when it is full, a sentence on
+       where the name comes from (ev::full_moon_story: the 12 monthly names, Harvest, Hunter's, Blue and Blood), the eclipse's
+       visibility for a Blood Moon, and a note for a supermoon. (It no longer selects the Moon.)
+UI-48d The full Moon card has the Moon card's "Image" button (bottom left): the NASA Moon picture, fetched as the card opens.
 UI-52  Tiangong (CSS Tianhe, NORAD 48274; Wentian and Mengtian dropped from the lists):
        elements fetched with the ISS (not cached; a failure other than 403/no network is
        retried hourly without a status error), position with the ISS job, passes with
@@ -1351,6 +1365,10 @@ UI-69p Docking animation: at the time of a Launch Library event whose type is "D
        log. Play Docking Animation button (web Animations group, weight 9, and HA; Splashdown 10,
        Dinosaur 11). Accuracy: a docking or undocking slips by minutes on the day, so within the
        hour before one (and 20 min after) the events list is fetched every 20 min (UI-54c).
+UI-69q The capsule of the docking and undocking animations is drawn four times (capsule_buf[0..3], one row taller), each a quarter
+       pixel lower than the last; place_capsule() picks the copy for the nearest quarter pixel of y. Its slow stretches (4 px/s at
+       contact, and just after release) then move in quarter-pixel steps instead of one jump of a pixel every 170 ms. Four more
+       picture jobs at boot (pic_jobs sized for them).
 UI-69g Frame profile, logged at INFO after each animation: per refresh, average and maximum of
        the refresh itself (LV_EVENT_REFR_START to REFR_READY) and its flush part (FLUSH_START to
        FLUSH_FINISH, with the number of flushed chunks), the main-loop time between refreshes,

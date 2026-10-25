@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.57"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.58"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -981,8 +981,8 @@ sensor:
     filters:
       - delta: 0.05
     web_server:
-      sorting_group_id: grp_system
-      sorting_weight: 15
+      sorting_group_id: grp_animations
+      sorting_weight: 50
 
 select:
   - platform: template           # UI-70: the clock's time zone (Auto = Home Assistant's)

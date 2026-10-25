@@ -566,6 +566,32 @@ const Shower SHOWERS[N_SHOWERS] = {
 };
 
 // ================================================================== UI-48 full Moon names
+// UI-48c: where a full Moon's name comes from (plain words for its details card)
+inline const char *full_moon_story(const char *name) {
+  struct S { const char *n, *t; };
+  static const S T[] = {
+      {"Wolf Moon", "January's full Moon. Hungry wolves were heard howling outside villages in the deep winter."},
+      {"Snow Moon", "February's full Moon, named for the heaviest snowfalls of the year."},
+      {"Worm Moon", "March's full Moon. The ground softens and earthworms return, and with them the robins."},
+      {"Pink Moon", "April's full Moon, named for the wild pink phlox that blooms in early spring. The Moon itself is not pink."},
+      {"Flower Moon", "May's full Moon, when flowers come out everywhere."},
+      {"Strawberry Moon", "June's full Moon, named for the short strawberry harvest. Low in the sky, it can look golden."},
+      {"Buck Moon", "July's full Moon, when a deer's new antlers are growing in."},
+      {"Sturgeon Moon", "August's full Moon, when sturgeon were easiest to catch in the Great Lakes."},
+      {"Corn Moon", "September's full Moon, when corn is harvested (when it falls nearest the equinox it is the Harvest Moon)."},
+      {"Hunter's Moon", "The full Moon after the Harvest Moon, usually in October. The fields are bare and the evenings stay bright, so hunters could track game before winter."},
+      {"Harvest Moon", "The full Moon nearest the autumn equinox. It rises only about half an hour later each night, so farmers had bright evenings to bring in the crops."},
+      {"Beaver Moon", "November's full Moon, when beavers stock their lodges and trappers set their traps."},
+      {"Cold Moon", "December's full Moon, with the long, cold nights of early winter."},
+      {"Blue Moon", "The second full Moon in one calendar month. It happens about every 2.7 years. The Moon is not blue."},
+      {"Blood Moon", "A total lunar eclipse: the Moon is inside Earth's shadow and turns red, lit by sunlight bent through Earth's atmosphere."},
+  };
+  for (const S &e : T)
+    if (!strcmp(e.n, name))
+      return e.t;
+  return "The Moon's near side is fully lit, as the Sun and Moon are on opposite sides of the Earth.";
+}
+
 inline const char *full_moon_name(int month) {  // month 1..12 (northern names)
   static const char *const N[12] = {"Wolf Moon",   "Snow Moon", "Worm Moon",     "Pink Moon",
                                     "Flower Moon", "Strawberry Moon", "Buck Moon", "Sturgeon Moon",

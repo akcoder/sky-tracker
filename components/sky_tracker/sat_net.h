@@ -2114,6 +2114,22 @@ inline void launches_publish(pvector<LaunchRec> &out, double now, const char *sr
   pending.fresh |= L_EXTRA;
   xSemaphoreGive(mutex);
 }
+// UI-54: a pad's location name made to fit LaunchRec::where (47 characters): the long country names are shortened
+// ("Xichang Satellite Launch Center, People's Republic of China" was cut to "... People's Republic o")
+inline void launch_where(char *out, size_t n, const char *in) {
+  static const char *const LONG[][2] = {{"Democratic People's Republic of Korea", "North Korea"},
+                                        {"People's Republic of China", "China"},
+                                        {"Republic of Korea", "South Korea"},
+                                        {"Islamic Republic of Iran", "Iran"},
+                                        {"Russian Federation", "Russia"}};
+  std::string w = in;
+  for (const auto &r : LONG) {
+    const size_t k = w.find(r[0]);
+    if (k != std::string::npos)
+      w.replace(k, strlen(r[0]), r[1]);
+  }
+  copy_cstr(out, n, w.c_str());
+}
 // UI-54b: pads RocketLaunch.Live names without coordinates (its free feed has none), for the
 // "launch near you" alert and the bearing. Matched on the start of the location name.
 struct PadPos {
@@ -2300,7 +2316,7 @@ inline void do_launches(double now) {
     LaunchRec l;
     copy_cstr(l.name, sizeof(l.name), r["name"] | "");
     copy_cstr(l.rocket, sizeof(l.rocket), r["rocket"]["configuration"]["name"] | "");
-    copy_cstr(l.where, sizeof(l.where), r["pad"]["location"]["name"] | "");
+    launch_where(l.where, sizeof(l.where), r["pad"]["location"]["name"] | "");
     copy_cstr(l.status, sizeof(l.status), r["status"]["abbrev"] | "");
     copy_cstr(l.cc, sizeof(l.cc), launch_cc(r["pad"]["country"]["alpha_3_code"] | ""));  // UI-54d
     if (!parse_epoch(r["net"] | "", l.net))

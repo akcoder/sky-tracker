@@ -337,7 +337,11 @@ struct Ui {
   float map_moon_k = -1, map_moon_ang = 0;  // UI-6 phase picture last drawn
   bool sun_over = false;  // UI-6a: the Sun's halo is drawn over the Moon (their icons overlap)
   int sun_x = INT_MIN, sun_y = INT_MIN, moon_x = INT_MIN, moon_y = INT_MIN, shadow_x = INT_MIN, shadow_y = INT_MIN;
-  bool sun_shown = false, moon_shown = false;
+  bool sun_shown = false, moon_shown = false;     // up (elevation 0 or more)
+  bool sun_map = false, moon_map = false;          // on the map: from just before the rim, rising out of it (UI-6b)
+  bool planet_map[planets::N_PLANETS] = {};
+  lv_obj_t *rim_mask = nullptr;                    // UI-6b: hides what a rising body has outside the disc
+  bool rim_on = false;
   astro::SunMoon sm{};
   astro::Event sun_ev, moon_ev;   // UI-20
   double alm_next = 0;            // next rise/set search, UTC seconds
@@ -765,6 +769,25 @@ inline void project(geo::AzEl a, float &x, float &y, float inset = 0) {
   x = ui.cx + r * sinf(s);
   y = ui.cy - r * cosf(s);
 }
+
+// UI-6b: where a Sun, Moon or planet icon of radius mr (px) is drawn. A body that rises used to appear whole at the rim
+// (project() keeps it inside) and a set one vanished. Now it comes up from outside the ring: the icon starts just clear
+// of it at an elevation of RISE_EL and slides in, its part outside the disc hidden by the rim mask, reaching its true
+// place over about twice its own size (the extra push dies out smoothly).
+constexpr float RISE_EL = -0.5f;
+inline float rise_push(float el, float mr) {  // px outward of the true place
+  const float span = 2.0f * mr / ui.radius * 90.0f;
+  const float u = std::max(0.0f, std::min(1.0f, (el - RISE_EL) / span));
+  return mr * (1.0f - u * u * (3.0f - 2.0f * u));
+}
+inline void project_rise(geo::AzEl a, float &x, float &y, float mr) {
+  const float r = ui.radius * (90.0f - a.el) / 90.0f + rise_push(a.el, mr);
+  const float s = (a.az - ui.heading) * geo::DEG;
+  x = ui.cx + r * sinf(s);
+  y = ui.cy - r * cosf(s);
+}
+// is any of an icon of radius mr at (x, y) outside the disc? (then the rim mask is needed)
+inline bool rim_cut(float x, float y, float mr) { return hypotf(x - ui.cx, y - ui.cy) + mr > ui.radius; }
 
 // Compass letters just inside the horizon, nudged off the crosshair lines.
 inline void place_compass_tags() {
@@ -1577,6 +1600,24 @@ inline void render_moon(lv_obj_t *cv, float k, float ux, float uy) {
   lv_obj_invalidate(cv);
 }
 
+// UI-6b: the rim mask is on while any icon sticks out of the disc
+inline void rim_update() {
+  if (ui.rim_mask == nullptr)
+    return;
+  bool cut = ui.sun_map && rim_cut(ui.sun_x + SUN_HALO_PX / 2.0f, ui.sun_y + SUN_HALO_PX / 2.0f, SUN_HALO_PX / 2.0f);
+  cut = cut || (ui.moon_map && rim_cut(ui.moon_x + MOON_PX / 2.0f, ui.moon_y + MOON_PX / 2.0f, MOON_PX / 2.0f));
+  for (int p = 0; p < planets::N_PLANETS && !cut; p++)
+    cut = ui.planet_map[p] && rim_cut(ui.planet_x[p] + picons::SMALL / 2.0f, ui.planet_y[p] + picons::SMALL / 2.0f, picons::SMALL / 2.0f);
+  if (cut != ui.rim_on) {
+    ui.rim_on = cut;
+    if (cut) {
+      lv_obj_remove_flag(ui.rim_mask, LV_OBJ_FLAG_HIDDEN);
+      lv_obj_move_foreground(ui.rim_mask);
+    } else {
+      lv_obj_add_flag(ui.rim_mask, LV_OBJ_FLAG_HIDDEN);
+    }
+  }
+}
 inline void draw_sun_moon(double t, double tv) {
   const Config &c = config();
   if (!clock_valid()) {  // (the 1970 clock put them at that day's places; ui.sm stays zero: Sun on the horizon)
@@ -1588,29 +1629,35 @@ inline void draw_sun_moon(double t, double tv) {
   // UI-53: the map shows them at the scrubbed time; everything else uses now (ui.sm)
   const astro::SunMoon v = tv == t ? ui.sm : astro::compute(tv, c.lat, c.lon, c.alt_m);
   ui.view_sun_el = v.sun.el;
-  float sx, sy, mx, my;
+  float sx, sy, mx, my;  // (where each is: the direction of the Moon's lit side uses these, below the horizon too)
   project(v.sun, sx, sy, SUN_HALO_PX / 2 + 1);
   project(v.moon, mx, my, MOON_PX / 2 + 1);
+  float sdx, sdy, mdx, mdy;  // where the icons are drawn (UI-6b: rising out of the rim)
+  project_rise(v.sun, sdx, sdy, SUN_HALO_PX / 2);
+  project_rise(v.moon, mdx, mdy, MOON_PX / 2);
 
-  set_shown(ui.sun, ui.sun_shown, v.sun.el >= 0);
-  const int spx = (int) lroundf(sx) - SUN_HALO_PX / 2, spy = (int) lroundf(sy) - SUN_HALO_PX / 2;
-  if (ui.sun_shown && (spx != ui.sun_x || spy != ui.sun_y)) {
+  ui.sun_shown = v.sun.el >= 0;
+  ui.moon_shown = v.moon.el >= 0;
+  set_shown(ui.sun, ui.sun_map, v.sun.el >= RISE_EL);
+  const int spx = (int) lroundf(sdx) - SUN_HALO_PX / 2, spy = (int) lroundf(sdy) - SUN_HALO_PX / 2;
+  if (ui.sun_map && (spx != ui.sun_x || spy != ui.sun_y)) {
     ui.sun_x = spx;
     ui.sun_y = spy;
     lv_obj_set_pos(ui.sun, spx, spy);
   }
 
-  set_shown(ui.moon, ui.moon_shown, v.moon.el >= 0);
+  set_shown(ui.moon, ui.moon_map, v.moon.el >= RISE_EL);
   {  // UI-6a
-    const bool over = ui.sun_shown && ui.moon_shown && hypotf(sx - mx, sy - my) < (SUN_HALO_PX + MOON_PX) / 2.0f;
+    const bool over = ui.sun_map && ui.moon_map && hypotf(sdx - mdx, sdy - mdy) < (SUN_HALO_PX + MOON_PX) / 2.0f;
     if (over != ui.sun_over) {
       ui.sun_over = over;
       order_sun_moon();
     }
   }
-  if (!ui.moon_shown)
+  rim_update();
+  if (!ui.moon_map)
     return;
-  const int mpx = (int) lroundf(mx) - MOON_PX / 2, mpy = (int) lroundf(my) - MOON_PX / 2;
+  const int mpx = (int) lroundf(mdx) - MOON_PX / 2, mpy = (int) lroundf(mdy) - MOON_PX / 2;
   if (mpx != ui.moon_x || mpy != ui.moon_y) {
     ui.moon_x = mpx;
     ui.moon_y = mpy;
@@ -2348,7 +2395,7 @@ inline bool is_splashdown(const net::EventRec &e) {
   return strstr(e.type, "Landing") != nullptr && (strstr(e.name, "plashdown") || strstr(e.name, "plash Down"));
 }
 enum AlertInfo : uint8_t { AI_NONE, AI_ISS_PASS, AI_CSS_PASS, AI_AURORA, AI_WIND, AI_LAUNCH, AI_EVENT, AI_CONJ, AI_PARADE,
-                           AI_ECLIPSE, AI_SEASON, AI_SWX, AI_REENTRY, AI_HISTORY, AI_STATUS };
+                           AI_ECLIPSE, AI_SEASON, AI_SWX, AI_REENTRY, AI_HISTORY, AI_STATUS, AI_FULLMOON };
 inline Alert shown_alert;          // UI-41d the alert on the status line now
 inline bool shown_alert_ok = false;
 inline Alert info_alert;           // the one whose details card is open (K_INFO)
@@ -3505,16 +3552,18 @@ inline void update_planets(double t, bool force = false) {
     ui.planet_mag[p] = ps.mag;
     if (!ui.scrub_on)  // UI-53: alerts are about now
       ui.planet_visible[p] = a.el >= PLANET_ALERT_EL && ps.mag <= PLANET_ALERT_MAG && planet_sky_dark(ps.mag);
-    const bool show = ui.planets_on && a.el >= 0;
+    const bool show = ui.planets_on && a.el >= 0;  // up
     if (show != ui.planet_shown[p])
       planets_changed = true;
-    set_shown(ui.planet_img[p], ui.planet_shown[p], show);
-    const bool tag = show;  // 4.5.6: planets keep their names even low (UI-43 is for satellites)
+    ui.planet_shown[p] = show;
+    const bool on_map = ui.planets_on && a.el >= RISE_EL;  // UI-6b: from just before the rim
+    set_shown(ui.planet_img[p], ui.planet_map[p], on_map);
+    const bool tag = on_map;  // 4.5.6: planets keep their names even low (UI-43 is for satellites)
     set_shown(ui.planet_lbl[p], ui.planet_lbl_shown[p], tag);
-    if (!show)
+    if (!on_map)
       continue;
     float x, y;
-    project(v, x, y, H + 1);
+    project_rise(v, x, y, H);
     const int px = (int) lroundf(x) - H, py = (int) lroundf(y) - H;
     if (force || px != ui.planet_x[p] || py != ui.planet_y[p]) {
       ui.planet_x[p] = px;
@@ -3529,6 +3578,7 @@ inline void update_planets(double t, bool force = false) {
       }
     }
   }
+  rim_update();
   if (planets_changed && ui.ready)
     draw_list(t);  // the list's PL rows follow the planets that are up
 }
@@ -4417,7 +4467,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
     // UI-48 the full Moon, on its day and the day before
     if (ui.lunar_alerts && sev.full_t > 0 && sev.full_t - t <= 1.5 * 86400.0 && t < local_midnight(sev.full_t) + 86400.0)
       if (Alert *a = add(C_MOON, "\xF3\xB0\xBD\xA2", nullptr)) {  // moon-full
-        a->kind = K_MOON;
+        a->info = AI_FULLMOON;  // UI-48c: a card with what the name means
         day_word(t, sev.full_t, w, sizeof(w));
         local_hm((int64_t) sev.full_t, h0, sizeof(h0));
         const char *extra = sev.full_blood ? (sev.full_blood_vis ? " - total lunar eclipse" : " - total lunar eclipse, not visible here")
@@ -5282,6 +5332,17 @@ inline void info_card_update(double t) {
     case AI_SEASON:
       snprintf(title, sizeof(title), "Season");
       break;
+    case AI_FULLMOON: {  // UI-48c
+      snprintf(title, sizeof(title), "%s", sev.full_name);
+      local_hm((int64_t) sev.full_t, h0, sizeof(h0));
+      local_md(sev.full_t, d0, sizeof(d0));
+      int n = snprintf(body, sizeof(body), "Full %s at %s.\n%s", d0, h0, ev::full_moon_story(sev.full_name));
+      if (sev.full_blood && !strcmp(sev.full_name, "Blood Moon"))
+        n += snprintf(body + n, sizeof(body) - n, "\n%s", sev.full_blood_vis ? "You can see it from here." : "It is not visible from here.");
+      if (sev.full_super && n < (int) sizeof(body) - 140)
+        snprintf(body + n, sizeof(body) - n, "\nA supermoon: full near its closest point to Earth, so it looks a little bigger and brighter.");
+      break;
+    }
     case AI_SWX: {  // UI-73: every current notice, in plain words
       snprintf(title, sizeof(title), "Space weather");
       int k = 0;
@@ -5479,12 +5540,15 @@ inline void card_update(double t) {
   if (ui.sel_kind == K_INFO) {
     if (ui.card_img_btn) {  // UI-75: the aurora and space weather cards open the all-sky camera
       const bool sky = info_alert.info == AI_AURORA || info_alert.info == AI_WIND || info_alert.info == AI_SWX;
-      if (sky)
+      const bool moon = info_alert.info == AI_FULLMOON;  // UI-48d: its card opens the Moon picture
+      if (sky || moon)
         lv_obj_remove_flag(ui.card_img_btn, LV_OBJ_FLAG_HIDDEN);
       else
         lv_obj_add_flag(ui.card_img_btn, LV_OBJ_FLAG_HIDDEN);
       if (ui.card_img_lbl)
         set_text_if(ui.card_img_lbl, sky ? "Sky cam" : "Image");
+      if (moon)
+        img_request(net::IMG_MOON, t);  // (fetched as the card opens, as the Moon card's)
     }
     info_card_update(t);
     return;
@@ -7287,7 +7351,7 @@ inline void card_img_cb(lv_event_t *e) {
   lv_event_stop_bubbling(e);  // not a tap on the card (which closes it)
   const int kind = ui.sel_kind == K_MOON     ? (int) net::IMG_MOON
                    : ui.sel_kind == K_PLANET ? VIEW_PLANET + ui.sel_id
-                   : ui.sel_kind == K_INFO   ? (int) net::IMG_ALLSKY  // UI-75 (the aurora cards)
+                   : ui.sel_kind == K_INFO   ? (info_alert.info == AI_FULLMOON ? (int) net::IMG_MOON : (int) net::IMG_ALLSKY)  // UI-75 (the aurora cards), UI-48d
                                              : (int) net::IMG_SUN;
   deselect();
   img_view_open_now(kind);
@@ -7632,6 +7696,29 @@ inline void card_build() {
   lv_obj_set_style_border_color(ui.sel_ring, lv_color_hex(0xFFFFFF), 0);
   lv_obj_set_style_border_opa(ui.sel_ring, LV_OPA_COVER, 0);
   lv_obj_add_flag(ui.sel_ring, LV_OBJ_FLAG_HIDDEN);
+
+  {  // UI-6b: a black ring round the disc, over the icons, only while a body is rising out of (or setting into) the rim
+    lv_obj_t *m = plain(sky);
+    lv_obj_set_size(m, ui.size, ui.size);
+    lv_obj_set_pos(m, 0, 0);
+    lv_obj_add_event_cb(m, [](lv_event_t *e) {
+      lv_layer_t *layer = lv_event_get_layer(e);
+      lv_area_t box;
+      lv_obj_get_coords(ui.w.sky, &box);
+      lv_draw_arc_dsc_t d;
+      lv_draw_arc_dsc_init(&d);
+      d.color = lv_color_hex(0x000000);  // (the page behind the disc)
+      d.radius = (int32_t) (ui.radius * 1.5f);
+      d.width = d.radius - (int32_t) ui.radius;
+      d.start_angle = 0;
+      d.end_angle = 360;
+      d.center.x = box.x1 + ui.cx;
+      d.center.y = box.y1 + ui.cy;
+      lv_draw_arc(layer, &d);
+    }, LV_EVENT_DRAW_MAIN, nullptr);
+    lv_obj_add_flag(m, LV_OBJ_FLAG_HIDDEN);
+    ui.rim_mask = m;
+  }
 
   lv_obj_t *page = lv_obj_get_parent(sky);
   ui.card = lv_obj_create(page);

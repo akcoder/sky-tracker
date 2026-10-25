@@ -1118,24 +1118,60 @@ int main() {
     fclose(f);
     lv_obj_delete(cv);
   }
-  // UI-6: Sun just above the horizon stays wholly inside the ring
+  // UI-6b: the Sun rises out of the ring: nothing below -0.5 degrees, then a part of it behind the rim mask, slowly more of it,
+  // and wholly inside once it is well up
   {
-    double t0 = sat_host_now, tt = t0;
-    for (int k = 0; k < 24 * 60; k++) {
-      tt = t0 + k * 60.0;
-      const auto sm = sat::astro::compute(tt, sat::config().lat, sat::config().lon, 0);
-      if (sm.sun.el > 0.2f && sm.sun.el < 1.5f) break;
+    double t0 = sat_host_now;
+    auto sun_at = [&](float lo, float hi, const char *render) {
+      double tt = t0;
+      float el = -99;
+      bool found = false;
+      for (int k = 0; k < 24 * 60 && !found; k++) {
+        tt = t0 + k * 60.0;
+        el = sat::astro::compute(tt, sat::config().lat, sat::config().lon, 0).sun.el;
+        const auto prev = sat::astro::compute(tt - 60.0, sat::config().lat, sat::config().lon, 0).sun.el;
+        found = el >= lo && el < hi && el > prev;  // (rising)
+      }
+      sat_host_now = tt; sat::tick(); run_jobs(); sat::tick();
+      sat::draw_sun_moon(sat_host_now, sat_host_now);
+      lv_obj_update_layout(sat::ui.w.sky);
+      const int cx = lv_obj_get_x(sat::ui.sun) + sat::SUN_HALO_PX / 2 - sat::ui.cx;
+      const int cy = lv_obj_get_y(sat::ui.sun) + sat::SUN_HALO_PX / 2 - sat::ui.cy;
+      const float d = sqrtf((float) (cx * cx + cy * cy));
+      printf("sun el %.2f az %.0f, centre %.1f px from zenith (ring %d), mask %d, shown %d\n", sat::ui.sm.sun.el, sat::ui.sm.sun.az, d,
+             sat::ui.radius, !lv_obj_has_flag(sat::ui.rim_mask, LV_OBJ_FLAG_HIDDEN), !lv_obj_has_flag(sat::ui.sun, LV_OBJ_FLAG_HIDDEN));
+      if (render) {
+        lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
+        char fn[80];
+        snprintf(fn, sizeof(fn), OUT_DIR "/renders/%s.ppm", render);
+        save_ppm(fn);
+      }
+      return std::make_pair(found, d);
+    };
+    const bool mask_on = [] { return !lv_obj_has_flag(sat::ui.rim_mask, LV_OBJ_FLAG_HIDDEN); }();
+    (void) mask_on;
+    auto a = sun_at(-0.4f, -0.2f, "r4_sunrise_a");
+    CHECK(a.first && !lv_obj_has_flag(sat::ui.sun, LV_OBJ_FLAG_HIDDEN) && a.second > sat::ui.radius &&
+              !lv_obj_has_flag(sat::ui.rim_mask, LV_OBJ_FLAG_HIDDEN),
+          "sun just before the horizon: outside the ring behind the mask (%.1f)", a.second);
+    auto b = sun_at(0.2f, 1.5f, "r4_sunedge");
+    CHECK(b.first && b.second + sat::SUN_HALO_PX / 2 > sat::ui.radius && b.second < a.second && !lv_obj_has_flag(sat::ui.rim_mask, LV_OBJ_FLAG_HIDDEN),
+          "sun just above the horizon: partly inside, partly masked (%.1f)", b.second);
+    auto c = sun_at(4.0f, 6.0f, "r4_sunrise_c");
+    CHECK(c.first && c.second < b.second, "sun moves in as it rises (%.1f)", c.second);
+    auto d = sun_at(20.0f, 25.0f, nullptr);
+    CHECK(d.first && d.second + sat::SUN_HALO_PX / 2 <= sat::ui.radius && lv_obj_has_flag(sat::ui.rim_mask, LV_OBJ_FLAG_HIDDEN),
+          "sun well up: wholly inside, no mask (%.1f)", d.second);
+    {
+      double tt = t0;  // and below the horizon: hidden
+      for (int k = 0; k < 24 * 60; k++) {
+        tt = t0 + k * 60.0;
+        if (sat::astro::compute(tt, sat::config().lat, sat::config().lon, 0).sun.el < -3.0f) break;
+      }
+      sat_host_now = tt; sat::tick(); run_jobs(); sat::tick();
+      sat::draw_sun_moon(sat_host_now, sat_host_now);
+      CHECK(lv_obj_has_flag(sat::ui.sun, LV_OBJ_FLAG_HIDDEN), "sun below the horizon is not drawn");
     }
-    sat_host_now = tt; sat::tick(); run_jobs(); sat::tick();
-    sat::draw_sun_moon(sat_host_now, sat_host_now);
-    lv_obj_update_layout(sat::ui.w.sky);
-    const int cx = lv_obj_get_x(sat::ui.sun) + sat::SUN_HALO_PX / 2 - sat::ui.cx;
-    const int cy = lv_obj_get_y(sat::ui.sun) + sat::SUN_HALO_PX / 2 - sat::ui.cy;
-    const float d = sqrtf((float) (cx * cx + cy * cy));
-    printf("sun el %.2f az %.0f, centre %.1f px from zenith (ring %d)\n", sat::ui.sm.sun.el, sat::ui.sm.sun.az, d, sat::ui.radius);
-    CHECK(d + sat::SUN_HALO_PX / 2 <= sat::ui.radius + 1.5f, "sun pokes out: %.1f", d);
-    lv_obj_invalidate(lv_screen_active()); lv_refr_now(disp);
-    save_ppm(OUT_DIR "/renders/r4_sunedge.ppm");
     sat_host_now = t0; sat::tick(); run_jobs(); sat::tick();
   }
   // HW-9a: declination from the location (WMM2025, checked against pygeomag)
@@ -1454,6 +1490,13 @@ int main() {
       CHECK(strstr(sat::net::status.error, "visual") && strstr(sat::net::status.error, "SatNOGS"),
             "a failed satellite list still shows (%s)", sat::net::status.error);
       sat::net::status.error[0] = 0;
+    }
+    {  // UI-54: a long country name is shortened, not cut off
+      char w[48];
+      sat::net::launch_where(w, sizeof(w), "Xichang Satellite Launch Center, People's Republic of China");
+      CHECK(!strcmp(w, "Xichang Satellite Launch Center, China"), "launch pad name: %s", w);
+      sat::net::launch_where(w, sizeof(w), "Cape Canaveral SFS, FL, USA");
+      CHECK(!strcmp(w, "Cape Canaveral SFS, FL, USA"), "launch pad name unchanged: %s", w);
     }
     // UI-55 solar wind: newest first, an inactive source mixed in
     std::string mag = "[", wind = "[";
@@ -3333,6 +3376,21 @@ int main() {
       CHECK(!strstr(lv_label_get_text(sat::ui.w.status), "HTTP 503"), "error gone: its line is gone");
       (void) ok_time;
     }
+    {  // UI-48c: the full Moon alert opens a card that says what the name means
+      sat::sev.full_next_at = sat_host_now + 1e6;
+      sat::sev.full_t = sat_host_now + 0.6 * 86400.0;
+      sat::sev.full_name = "Hunter's Moon";
+      sat::sev.full_blood = sat::sev.full_blood_vis = false;
+      sat::sev.full_super = true;
+      sat::ui.lunar_alerts = true;
+      alert_and_card(sat::AI_FULLMOON, "r23_fullmoon_alert", "r23_fullmoon_card", "hunters could track game");
+      CHECK(!strcmp(lv_label_get_text(sat::ui.card_title), "Hunter's Moon") &&
+                strstr(lv_label_get_text(sat::ui.card_body), "supermoon"),
+            "full Moon card: its name and the supermoon note");
+      CHECK(!lv_obj_has_flag(sat::ui.card_img_btn, LV_OBJ_FLAG_HIDDEN), "full Moon card: the Image button is shown");
+      CHECK(strstr(sat::ev::full_moon_story("Blue Moon"), "second full Moon") && strstr(sat::ev::full_moon_story("Harvest Moon"), "autumn equinox"),
+            "full Moon stories by name");
+    }
     {  // UI-78: feed text the fonts can't draw is folded
       char t1[96] = "Andøya Spaceport \xE2\x80\x93 \xE2\x80\x9CTest\xE2\x80\x9D Łódź\xE2\x80\xA6 ~5\xC2\xB0 \xF0\x9F\x9A\x80";
       net::fold_text(t1);
@@ -3483,7 +3541,7 @@ int main() {
       rk::countdown_fonts(&mono24, &mono18, &mono16, &mono16);
       rk::set_countdown(true);
       rk::countdown_check();
-      CHECK(rk::countdown_open() && !strcmp(lv_label_get_text(rk::cd.clock), "T-05:00") &&
+      CHECK(rk::countdown_open() && !strcmp(rk::cd.text, "T-05:00") &&
                 !strcmp(lv_label_get_text(rk::cd.status), "GO for launch") && !lv_obj_has_flag(rk::cd.badge, LV_OBJ_FLAG_HIDDEN),
             "countdown: T-05:00, GO, webcast live");
       CHECK(!lv_obj_has_flag(rk::cd.qr, LV_OBJ_FLAG_HIDDEN) && rk::cd.qr_ok, "countdown: the webcast's QR code (%d)",
@@ -3502,7 +3560,7 @@ int main() {
       sat::live.launches[0].webcast = false;
       sat_host_now += 61;
       rk::cd_update();
-      CHECK(!strcmp(lv_label_get_text(rk::cd.clock), "T-03:59") && !strcmp(lv_label_get_text(rk::cd.status), "HOLD") &&
+      CHECK(!strcmp(rk::cd.text, "T-03:59") && !strcmp(lv_label_get_text(rk::cd.status), "HOLD") &&
                 lv_obj_has_flag(rk::cd.badge, LV_OBJ_FLAG_HIDDEN) && !lv_obj_has_flag(rk::cd.qr, LV_OBJ_FLAG_HIDDEN),
             "countdown: a hold (no LIVE pill; the QR code stays while there is a link, UI-80c)");
       sat::live.launches[0].watch[0] = 0;

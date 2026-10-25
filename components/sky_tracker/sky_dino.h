@@ -251,11 +251,23 @@ inline bool begin_walk(uint32_t seed, const Target *tg = nullptr, const char *na
   for (int p = 0; p < N_POSES; p++) describe(st.pose_dsc[p], pose_src[p], DATA_W, DATA_H);
   describe(st.tail_dsc, tail_src, TAIL_W, TAIL_H);
 
-  st.root = lv_image_create(scr);
-  lv_image_set_src(st.root, st.snap);
-  lv_obj_set_size(st.root, SCREEN_W, SCREEN_H);   // fixed: an image sizes itself to its content, and a sprite past the
-                                                   // right edge made it wider and shifted the picture right
+  // The backdrop is a plain object with an opaque background that draws the snapshot itself (as the rocket's, UI-69o): an
+  // lv_image of the snapshot did not pass LVGL's cover check, so every refresh drew the whole sky page under the sprite
+  // again (about 20 of 24 ms; measured with the page hidden: 4 ms).
+  st.root = lv_obj_create(scr);
+  lv_obj_remove_style_all(st.root);
+  lv_obj_set_size(st.root, SCREEN_W, SCREEN_H);
   lv_obj_set_pos(st.root, 0, 0);
+  lv_obj_set_style_bg_color(st.root, lv_color_hex(0x000000), 0);
+  lv_obj_set_style_bg_opa(st.root, LV_OPA_COVER, 0);
+  lv_obj_add_event_cb(st.root, [](lv_event_t *e) {
+    if (st.snap == nullptr) return;
+    lv_draw_image_dsc_t im;
+    lv_draw_image_dsc_init(&im);
+    im.src = st.snap;
+    const lv_area_t full = {0, 0, SCREEN_W - 1, SCREEN_H - 1};
+    lv_draw_image(lv_event_get_layer(e), &im, &full);
+  }, LV_EVENT_DRAW_MAIN_END, nullptr);
   lv_obj_remove_flag(st.root, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_remove_flag(st.root, LV_OBJ_FLAG_SCROLLABLE);
   lv_obj_move_foreground(st.root);
