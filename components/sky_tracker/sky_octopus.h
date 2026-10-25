@@ -116,18 +116,23 @@ inline void fig_pt(float t, float x, float y, float mx, float my, float &ox, flo
 }
 inline float hover_x = 260, hover_y = 262;  // where it hovers (a meal: over the constellation)
 inline bool is_meal = false;
+// which way it comes in and goes out (-1, 0, 1 on each axis: a side, the top or bottom, or a corner), chosen per visit
+inline int in_dx = 1, in_dy = 0, out_dx = -1, out_dy = 0;
+inline float edge_x(int d, float mid) { return d < 0 ? -220.0f : d > 0 ? 700.0f : mid; }  // far enough off for the arms
+inline float edge_y(int d, float mid) { return d < 0 ? -210.0f : d > 0 ? 650.0f : mid; }
 inline void pos(float t, float &x, float &y) {
-  if (t < 1.8f) {  // in from beyond the right edge, jetting: fast, then slowing as it arrives (the dinosaur's entrance)
+  if (t < 1.8f) {  // in from beyond the edge, jetting: fast, then slowing as it arrives (the dinosaur's entrance)
     const float u = 1 - t / 1.8f, k = 1 - u * u * u;
-    x = 640 - (640 - hover_x) * k;
-    y = hover_y + 6 * std::sin(t * 5);
+    const float sx = edge_x(in_dx, hover_x), sy = edge_y(in_dy, hover_y);
+    x = sx + (hover_x - sx) * k;
+    y = sy + (hover_y - sy) * k + 6 * std::sin(t * 5);
   } else if (t < EXIT_T) {  // hovers
     x = hover_x + 10 * std::sin((t - 2.2f) * 0.9f);
     y = hover_y + 9 * std::sin((t - 2.2f) * 1.7f);
-  } else {  // jets off to the left
-    const float k = seg(t, EXIT_T, EXIT_T + 1.5f);
-    x = hover_x - (hover_x + 220) * std::pow(k, 1.3f);
-    y = hover_y - 40 * k;
+  } else {  // jets off
+    const float k = std::pow(seg(t, EXIT_T, EXIT_T + 1.5f), 1.3f);
+    x = hover_x + (edge_x(out_dx, hover_x) - hover_x) * k;
+    y = hover_y + (edge_y(out_dy, hover_y - 40) - hover_y) * k;
   }
 }
 inline float vel(float t) {
@@ -135,6 +140,12 @@ inline float vel(float t) {
   pos(t - 0.05f, x0, y0);
   pos(t + 0.05f, x1, y1);
   return (x1 - x0) / 0.1f;
+}
+inline float vel_y(float t) {
+  float x0, y0, x1, y1;
+  pos(t - 0.05f, x0, y0);
+  pos(t + 0.05f, x1, y1);
+  return (y1 - y0) / 0.1f;
 }
 inline float jet(float t) {
   if (t < 1.8f)
@@ -216,6 +227,8 @@ inline void build(float t, Model &m) {
   m.rx = 56 * SC * (1 - 0.10f * m.p);
   m.ry = 66 * SC * (1 + 0.08f * m.p);
   const float trail = std::max(-1.2f, std::min(1.2f, -vel(t) / 260.0f));
+  // moving down the arms are swept back up and out (fanned); moving up they stream straight down behind it (drawn in a little)
+  const float vy = std::max(-1.2f, std::min(1.2f, vel_y(t) / 260.0f)), fan = vy > 0 ? vy * 1.0f : vy * 0.5f;
   for (int k = 0; k < 8; k++) {
     const bool left = k < 4;
     const float sx_n = m.cx + (k - 3.5f) * 13, sy_n = m.cy + 4;
@@ -237,6 +250,7 @@ inline void build(float t, Model &m) {
       const float ph = 2 * (float) M_PI * (1.0f * u - 0.55f * t) + k * 0.9f;
       float phi_n = (k - 3.5f) * 0.20f * (1 + u) + amp * std::sin(ph) + trail * u * 1.25f;
       phi_n += (k > 3 ? 1.0f : -1.0f) * 0.9f * u * u * (1 - std::fabs(trail));
+      phi_n += (k > 3 ? 1.0f : -1.0f) * fan * u * (0.4f + u);
       const float phi_l = (k - 3.5f) * 0.50f + 0.06f * std::sin(2 * (float) M_PI * (u - 0.8f * t) + k);
       const float phi_i = (left ? -1.5708f : 1.5708f) + 0.03f * std::sin(2 * (float) M_PI * (u - 0.5f * t) + k);
       float phi_s = phi_n;
@@ -830,6 +844,14 @@ inline bool begin(uint32_t seed, int force = -2) {
   // is the map without them (the octopus paints the figure itself, to pull it in)
   st.ate = false;
   hover_x = 260, hover_y = 262;
+  {  // in and out by a side, the top, the bottom or a corner (never both the same way, so it crosses the screen)
+    static const int8_t D[8][2] = {{1, 0}, {-1, 0}, {0, -1}, {0, 1}, {1, -1}, {-1, -1}, {1, 1}, {-1, 1}};
+    const int a = rnd() % 8;
+    int b = rnd() % 8;
+    if (b == a)
+      b = (b + 1) % 8;
+    in_dx = D[a][0], in_dy = D[a][1], out_dx = D[b][0], out_dy = D[b][1];
+  }
   st.eat_name = -1;
   st.meal = pick_meal(force);
   is_meal = st.meal != M_NONE;

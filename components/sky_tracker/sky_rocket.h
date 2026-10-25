@@ -1270,7 +1270,7 @@ struct Cd {
   uint32_t key = 0, dismissed = 0;  // the launch (by name), and the one put away
   char name[64] = "";
   int shown_s = -1;
-  // UI-76c: the clock is seven fixed cells ("T-MM:SS"); a digit that changes drops in from above and the old one fades
+  // UI-76c: the clock is seven fixed cells ("T-MM:SS"); a digit that changes crossfades: the old one fades out as the new fades in
   static constexpr int SLOTS = 7;
   char text[SLOTS + 1] = "";            // what the cells show
   lv_obj_t *cur[SLOTS] = {}, *old[SLOTS] = {};
@@ -1298,11 +1298,11 @@ void countdown_close() {
   cd.shown_s = -1;
 }
 bool countdown_open() { return cd.root != nullptr; }
-// UI-76c: a digit drops in from above with a small bounce (250 ms) while the old one fades out under it
+// UI-76c: a changed digit crossfades (250 ms): the new one fades in over the old one as it fades out
 constexpr uint32_t CD_DROP_MS = 250;
 inline void cd_slot_done(int i) {
   if (cd.cur[i])
-    lv_obj_set_y(cd.cur[i], 0);
+    lv_obj_set_style_text_opa(cd.cur[i], LV_OPA_COVER, 0);
   if (cd.old[i]) {
     lv_obj_delete(cd.old[i]);
     cd.old[i] = nullptr;
@@ -1327,7 +1327,8 @@ inline void cd_clock_set(const char *b) {
     lv_obj_set_style_text_font(n, lv_obj_get_style_text_font(cd.old[i], LV_PART_MAIN), 0);
     lv_obj_set_style_text_color(n, lv_obj_get_style_text_color(cd.old[i], LV_PART_MAIN), 0);
     lv_label_set_text(n, t);
-    lv_obj_set_pos(n, 0, -cd.cell_h);
+    lv_obj_set_pos(n, 0, 0);
+    lv_obj_set_style_text_opa(n, LV_OPA_TRANSP, 0);
     cd.cur[i] = n;
     lv_anim_t a;
     lv_anim_init(&a);
@@ -1335,12 +1336,13 @@ inline void cd_clock_set(const char *b) {
     lv_anim_set_user_data(&a, (void *) (intptr_t) i);
     lv_anim_set_values(&a, 0, 1000);
     lv_anim_set_duration(&a, CD_DROP_MS);
-    lv_anim_set_path_cb(&a, lv_anim_path_overshoot);
+    lv_anim_set_path_cb(&a, lv_anim_path_linear);
     lv_anim_set_custom_exec_cb(&a, [](lv_anim_t *an, int32_t v) {
       const int k = (int) (intptr_t) lv_anim_get_user_data(an);
-      lv_obj_set_y(cd.cur[k], -cd.cell_h * (1000 - v) / 1000);
+      const int32_t in = std::min<int32_t>(255, std::max<int32_t>(0, v * 255 / 1000));
+      lv_obj_set_style_text_opa(cd.cur[k], (lv_opa_t) in, 0);
       if (cd.old[k])
-        lv_obj_set_style_text_opa(cd.old[k], (lv_opa_t) std::max<int32_t>(0, 255 - std::min<int32_t>(255, v * 255 / 600)), 0);
+        lv_obj_set_style_text_opa(cd.old[k], (lv_opa_t) (255 - in), 0);
     });
     lv_anim_set_completed_cb(&a, [](lv_anim_t *an) { cd_slot_done((int) (intptr_t) lv_anim_get_user_data(an)); });
     lv_anim_start(&a);

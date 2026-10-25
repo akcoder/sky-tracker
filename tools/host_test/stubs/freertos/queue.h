@@ -8,6 +8,9 @@ inline QueueHandle_t xQueueCreate(unsigned n, unsigned sz) { return new HostQueu
 inline BaseType_t xQueueSend(QueueHandle_t h, const void *v, TickType_t) {
   if (h->q.size() >= h->cap) return pdFALSE;
   std::vector<uint8_t> b(h->item); memcpy(b.data(), v, h->item); h->q.push_back(std::move(b)); return pdTRUE; }
+inline BaseType_t xQueueSendToFront(QueueHandle_t h, const void *v, TickType_t) {
+  if (h->q.size() >= h->cap) return pdFALSE;
+  std::vector<uint8_t> b(h->item); memcpy(b.data(), v, h->item); h->q.push_front(std::move(b)); return pdTRUE; }
 inline BaseType_t xQueueReceive(QueueHandle_t h, void *v, TickType_t) {
   if (h->q.empty()) return pdFALSE; memcpy(v, h->q.front().data(), h->item); h->q.pop_front(); return pdTRUE; }
 inline BaseType_t xQueueReset(QueueHandle_t h) { h->q.clear(); return pdTRUE; }
