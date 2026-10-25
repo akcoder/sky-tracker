@@ -179,7 +179,11 @@ struct St {
   bool dock = false;        // UI-69p: the docking
   uint32_t dock_key = 0;    // the last docking shown
   bool boot = false;        // UI-69k on the boot screen (black page, no banner)
-  lv_draw_buf_t *capsule_buf = nullptr;
+  // UI-69q: the capsule drawn four times, each a quarter pixel lower than the last: its slow approach and
+  // departure (4 px/s at contact) then move in quarter-pixel steps instead of one jerk of a pixel every 170 ms
+  static constexpr int CAP_PH = 4;
+  lv_draw_buf_t *capsule_buf[CAP_PH] = {};
+  int cap_ph = 0;
   lv_obj_t *iss[ISS_PARTS] = {};
   // UI-69m
   bool splash = false;
@@ -302,10 +306,11 @@ inline void path(float u, float &x, float &y, float &deg) {
 inline void disc_area(const St::Disc &d, lv_area_t &a) {
   a.x1 = d.x - d.r, a.y1 = d.y - d.r, a.x2 = d.x + d.r - 1, a.y2 = d.y + d.r - 1;
 }
+extern "C" lv_result_t lv_inv_area(lv_display_t *disp, const lv_area_t *area_p);  // (lv_refr_private.h)
 inline void inval_disc(const St::Disc &d) {
   lv_area_t a;
   disc_area(d, a);
-  lv_obj_invalidate_area(st.smoke, &a);
+  lv_inv_area(nullptr, &a);   // (the smoke object is the whole screen, untransformed: lv_obj_invalidate_area's walk up its parents adds nothing)
 }
 inline void draw_smoke(lv_event_t *e) {
   lv_layer_t *layer = lv_event_get_layer(e);
@@ -716,6 +721,18 @@ inline void puff_emit(float ts, float px, float py) {
   st.puff_x[i] = px, st.puff_y[i] = py, st.puff_t[i] = ts, st.puff_step[i] = -1;
 }
 inline void puffs_step(float ts);
+// the capsule's top-left at (x, y): x to the pixel, y to a quarter pixel (the picture drawn that much lower)
+inline void place_capsule(float x, float y) {
+  int yi = (int) std::floor(y);
+  int ph = (int) ((y - yi) * St::CAP_PH + 0.5f);
+  if (ph >= St::CAP_PH)
+    yi++, ph = 0;
+  if (ph != st.cap_ph) {
+    lv_image_set_src(st.img, st.capsule_buf[ph]);
+    st.cap_ph = ph;
+  }
+  lv_obj_set_pos(st.img, (int32_t) std::lround(x), yi);
+}
 inline void frame_undock() {
   const float ts = (now_ms() - st.t0) / 1000.0f;
   if (ts > UNDOCK_S) {
@@ -724,7 +741,7 @@ inline void frame_undock() {
   }
   float x, y;
   capsule_at(ts, x, y);
-  lv_obj_set_pos(st.img, (int32_t) std::lround(x), (int32_t) std::lround(y));
+  place_capsule(x, y);
   // thruster puffs: a burst of four at separation, then a pair every half second for 2 s
   auto emit = [&](float px, float py) { puff_emit(ts, px, py); };
   const int due = ts < UNDOCK_GO ? 0 : 1 + std::min(4, (int) ((ts - UNDOCK_GO) / 0.5f));
@@ -752,7 +769,7 @@ inline void frame_dock() {
   }
   float x, y;
   dock_capsule_at(ts, x, y);
-  lv_obj_set_pos(st.img, (int32_t) std::lround(x), (int32_t) std::lround(y));
+  place_capsule(x, y);
   // braking puffs at the nose every 0.6 s on the way in; at contact a burst of four as the hooks close
   auto emit = [&](float px, float py) { puff_emit(ts, px, py); };
   const int in_due = 1 + (int) (std::min(ts, DOCK_GO) / 0.6f);
@@ -1080,7 +1097,7 @@ inline void banner_text(const char *name, char *b, size_t n) {
 inline bool play_scene(bool undock, const char *name, bool boot = false, bool splash = false, bool dock = false) {
   octo::stop();  // UI-85: a launch, docking or splashdown ends the octopus's visit
   stop();
-  if (!pics_ready || !st.img_buf[0] || ((undock || dock) && !st.capsule_buf) ||
+  if (!pics_ready || !st.img_buf[0] || ((undock || dock) && !st.capsule_buf[St::CAP_PH - 1]) ||
       (splash && (!st.sea_buf || !st.cap2_buf || !st.chute_buf)))
     return false;
   st.dock = dock && !splash;
@@ -1147,7 +1164,8 @@ inline bool play_scene(bool undock, const char *name, bool boot = false, bool sp
     lv_obj_add_event_cb(st.lines, draw_lines, LV_EVENT_DRAW_MAIN, nullptr);
   }
   st.img = lv_image_create(lv_layer_top());
-  lv_image_set_src(st.img, splash ? st.cap2_buf : undock ? st.capsule_buf : st.img_buf[0]);
+  lv_image_set_src(st.img, splash ? st.cap2_buf : undock ? st.capsule_buf[0] : st.img_buf[0]);
+  st.cap_ph = 0;
   if (!undock && !splash)
     lv_image_set_pivot(st.img, PX, PY);
   if (splash) {  // the water line in front of the floating capsule (shown once it is down)
@@ -1252,6 +1270,11 @@ struct Cd {
   uint32_t key = 0, dismissed = 0;  // the launch (by name), and the one put away
   char name[64] = "";
   int shown_s = -1;
+  // UI-76c: the clock is seven fixed cells ("T-MM:SS"); a digit that changes drops in from above and the old one fades
+  static constexpr int SLOTS = 7;
+  char text[SLOTS + 1] = "";            // what the cells show
+  lv_obj_t *cur[SLOTS] = {}, *old[SLOTS] = {};
+  int cell_h = 0;
 };
 inline Cd cd;
 inline const net::LaunchRec *cd_launch() {
@@ -1267,11 +1290,63 @@ void countdown_close() {
   }
   if (cd.root)
     lv_obj_delete(cd.root);
-  cd.root = cd.mission = cd.sub = cd.clock = cd.status = cd.when = cd.badge = cd.qr = nullptr;
+  cd.root = cd.mission = cd.sub = cd.clock = cd.status = cd.when = cd.badge = cd.qr = nullptr;  // (the cells go with root)
+  for (int i = 0; i < Cd::SLOTS; i++)
+    cd.cur[i] = cd.old[i] = nullptr;
+  cd.text[0] = 0;
   cd.watch[0] = 0;
   cd.shown_s = -1;
 }
 bool countdown_open() { return cd.root != nullptr; }
+// UI-76c: a digit drops in from above with a small bounce (250 ms) while the old one fades out under it
+constexpr uint32_t CD_DROP_MS = 250;
+inline void cd_slot_done(int i) {
+  if (cd.cur[i])
+    lv_obj_set_y(cd.cur[i], 0);
+  if (cd.old[i]) {
+    lv_obj_delete(cd.old[i]);
+    cd.old[i] = nullptr;
+  }
+}
+inline void cd_clock_set(const char *b) {
+  const bool first = cd.text[0] == 0;
+  for (int i = 0; i < Cd::SLOTS; i++) {
+    const char ch = b[i] ? b[i] : ' ';
+    if (!first && cd.text[i] == ch)
+      continue;
+    lv_obj_t *cell = lv_obj_get_parent(cd.cur[i]);
+    char t[2] = {ch, 0};
+    if (first || !isdigit((unsigned char) ch)) {
+      lv_label_set_text(cd.cur[i], t);
+      continue;
+    }
+    lv_anim_delete(cd.cur[i], nullptr);   // a drop still running: finish it
+    cd_slot_done(i);
+    cd.old[i] = cd.cur[i];
+    lv_obj_t *n = lv_label_create(cell);
+    lv_obj_set_style_text_font(n, lv_obj_get_style_text_font(cd.old[i], LV_PART_MAIN), 0);
+    lv_obj_set_style_text_color(n, lv_obj_get_style_text_color(cd.old[i], LV_PART_MAIN), 0);
+    lv_label_set_text(n, t);
+    lv_obj_set_pos(n, 0, -cd.cell_h);
+    cd.cur[i] = n;
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, n);
+    lv_anim_set_user_data(&a, (void *) (intptr_t) i);
+    lv_anim_set_values(&a, 0, 1000);
+    lv_anim_set_duration(&a, CD_DROP_MS);
+    lv_anim_set_path_cb(&a, lv_anim_path_overshoot);
+    lv_anim_set_custom_exec_cb(&a, [](lv_anim_t *an, int32_t v) {
+      const int k = (int) (intptr_t) lv_anim_get_user_data(an);
+      lv_obj_set_y(cd.cur[k], -cd.cell_h * (1000 - v) / 1000);
+      if (cd.old[k])
+        lv_obj_set_style_text_opa(cd.old[k], (lv_opa_t) std::max<int32_t>(0, 255 - std::min<int32_t>(255, v * 255 / 600)), 0);
+    });
+    lv_anim_set_completed_cb(&a, [](lv_anim_t *an) { cd_slot_done((int) (intptr_t) lv_anim_get_user_data(an)); });
+    lv_anim_start(&a);
+  }
+  snprintf(cd.text, sizeof(cd.text), "%s", b);
+}
 inline void cd_update() {
   const net::LaunchRec *l = cd_launch();
   const double t = clock_now();
@@ -1284,7 +1359,7 @@ inline void cd_update() {
     cd.shown_s = rem;
     char b[24];
     snprintf(b, sizeof(b), "T-%02d:%02d", rem / 60, rem % 60);
-    lv_label_set_text(cd.clock, b);
+    cd_clock_set(b);
   }
   const bool hold = !strcmp(l->status, "Hold"), go = !strcmp(l->status, "Go");
   const char *st = go ? "GO for launch" : hold ? "HOLD" : !strcmp(l->status, "TBC") ? "Time to be confirmed" : l->status;
@@ -1351,7 +1426,31 @@ inline void cd_open(const net::LaunchRec &l) {
   cd_label(r, cd.body, 0xFF8A1F, 26, "Launch countdown");
   cd.mission = cd_label(r, cd.title, 0xFFFFFF, 64, mission);
   cd.sub = cd_label(r, cd.body, 0x9AA6C8, 124, sub);
-  cd.clock = cd_label(r, cd.digits ? cd.digits : cd.title, 0xFFC46B, 168, "T-10:00");
+  {  // UI-76c: the clock: seven cells of one digit's width, each clipping its own drop
+    const lv_font_t *f = cd.digits ? cd.digits : cd.title;
+    const int w = f ? lv_font_get_glyph_width(f, '0', 0) : 40;
+    cd.cell_h = f ? lv_font_get_line_height(f) : 40;
+    cd.clock = lv_obj_create(r);
+    lv_obj_remove_style_all(cd.clock);
+    lv_obj_remove_flag(cd.clock, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(cd.clock, w * Cd::SLOTS, cd.cell_h);
+    lv_obj_align(cd.clock, LV_ALIGN_TOP_MID, 0, 168);
+    for (int i = 0; i < Cd::SLOTS; i++) {
+      lv_obj_t *cell = lv_obj_create(cd.clock);
+      lv_obj_remove_style_all(cell);
+      lv_obj_remove_flag(cell, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_remove_flag(cell, LV_OBJ_FLAG_SCROLLABLE);
+      lv_obj_set_size(cell, w, cd.cell_h);
+      lv_obj_set_pos(cell, i * w, 0);
+      cd.cur[i] = lv_label_create(cell);
+      if (f)
+        lv_obj_set_style_text_font(cd.cur[i], f, 0);
+      lv_obj_set_style_text_color(cd.cur[i], lv_color_hex(0xFFC46B), 0);
+      cd.old[i] = nullptr;
+    }
+    cd.text[0] = 0;
+    cd_clock_set("T-10:00");
+  }
   cd.status = cd_label(r, cd.title, 0x7EE0B0, 252, "");
   {  // the T- clock centred between the rocket line and the GO line
     lv_obj_update_layout(r);
@@ -1478,7 +1577,7 @@ struct PicJob {
   uint8_t kind, arg;  // kind: 0 rocket (arg: flame), 1 undocking capsule, 2 returning capsule, 3 chutes, 4 sea
   uint16_t row;
 };
-inline PicJob pic_jobs[FLAMES + 4];
+inline PicJob pic_jobs[FLAMES + St::CAP_PH + 3];  // the flames, the capsule's phases, the returning capsule, the canopy, the sea
 inline int pic_n = 0, pic_i = 0;
 inline uint32_t pic_sample(const PicJob &j, float x, float y) {
   switch (j.kind) {
@@ -1486,7 +1585,7 @@ inline uint32_t pic_sample(const PicJob &j, float x, float y) {
       const float u = (x - PX) / S, v = (y - PY) / S;
       return sample(u, v, FLAME[j.arg]);
     }
-    case 1: return capsule_sample(x, y);
+    case 1: return capsule_sample(x, y - j.arg / (float) St::CAP_PH);
     case 2: return capsule2_sample(x, y);
     case 3: return chute_sample(x, y);
     default: return sea_sample(x, y);
@@ -1539,7 +1638,8 @@ void init(const lv_font_t *banner) {
   };
   for (int i = 0; i < FLAMES; i++)
     job(st.img_buf[i], IW, IH, 0, (uint8_t) i);
-  job(st.capsule_buf, CAP_W, CAP_H, 1, 0);
+  for (int k = 0; k < St::CAP_PH; k++)  // (one row taller: the shifted ones)
+    job(st.capsule_buf[k], CAP_W, CAP_H + 1, 1, (uint8_t) k);
   job(st.cap2_buf, CAP2_W, CAP2_H, 2, 0);  // UI-69m
   job(st.chute_buf, CAN_W, CAN_H, 3, 0);
   job(st.sea_buf, SEA_W, SEA_H, 4, 0);

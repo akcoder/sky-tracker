@@ -297,6 +297,14 @@ struct Rz {
   size_t stride;
   int cx1, cy1, cx2, cy2;  // clip, inclusive
 };
+// floor/ceil straight to an int: one FPU instruction on the S3 (std::floor/ceil are ~60-instruction library calls)
+#ifdef __XTENSA__
+inline int ifloor(float x) { int r; __asm__("floor.s %0, %1, 0" : "=a"(r) : "f"(x)); return r; }
+inline int iceil(float x) { int r; __asm__("ceil.s %0, %1, 0" : "=a"(r) : "f"(x)); return r; }
+#else
+inline int ifloor(float x) { return (int) std::floor(x); }
+inline int iceil(float x) { return (int) std::ceil(x); }
+#endif
 inline uint16_t c565(uint32_t rgb) { return (uint16_t) (((rgb >> 8) & 0xF800) | ((rgb >> 5) & 0x07E0) | ((rgb >> 3) & 0x1F)); }
 inline uint16_t blend565(uint16_t fg, uint16_t bg, uint32_t a5) {  // a5: 0..32 of fg
   const uint32_t f = (fg | ((uint32_t) fg << 16)) & 0x07E0F81Fu, b = (bg | ((uint32_t) bg << 16)) & 0x07E0F81Fu;
@@ -314,9 +322,9 @@ inline void px_a(const Rz &r, int x, int y, uint16_t c, uint32_t a5) {  // one p
 inline void row(const Rz &r, int y, float xl, float xr, uint16_t c, uint32_t alpha = 32) {
   if (y < r.cy1 || y > r.cy2 || xr <= xl)
     return;
-  const int x1 = (int) std::ceil(xl), x2 = (int) std::floor(xr);  // pixel centres at integers
+  const int x1 = iceil(xl), x2 = ifloor(xr);  // pixel centres at integers
   if (x1 > x2) {  // narrower than a pixel
-    px_a(r, (int) std::floor(xl), y, c, (uint32_t) ((xr - xl) * alpha));
+    px_a(r, ifloor(xl), y, c, (uint32_t) ((xr - xl) * alpha));
     return;
   }
   if (x1 - xl > 0.02f)
@@ -338,9 +346,10 @@ inline void row(const Rz &r, int y, float xl, float xr, uint16_t c, uint32_t alp
 inline void ellipse(const Rz &r, float cx, float cy, float rx, float ry, uint16_t c, uint32_t alpha = 32) {
   if (cx + rx < r.cx1 || cx - rx > r.cx2)
     return;
-  const int y0 = std::max(r.cy1, (int) std::ceil(cy - ry)), y1 = std::min(r.cy2, (int) std::floor(cy + ry));
+  const int y0 = std::max(r.cy1, iceil(cy - ry)), y1 = std::min(r.cy2, ifloor(cy + ry));
+  const float inv = 1.0f / ry;  // one division, not one a row
   for (int y = y0; y <= y1; y++) {
-    const float d = (y - cy) / ry, q = 1 - d * d;
+    const float d = (y - cy) * inv, q = 1 - d * d;
     if (q <= 0)
       continue;
     const float hw = rx * std::sqrt(q);
@@ -352,12 +361,16 @@ inline void disc(const Rz &r, float cx, float cy, float rad, uint16_t c, uint32_
 // the octopus, onto the composite (everything inside the clip)
 inline void paint_octopus(const Rz &r, const Model &m) {
   const uint16_t dark = c565(C_DARK), body = c565(m.body), band = c565(m.band), sucker = c565(0xF4E8D0);
+  float AR[8][N + 1];  // arm_r once per joint (it calls pow): both passes, both ends of a segment and the suckers share it
+  for (int k = 0; k < 8; k++)
+    for (int i = 0; i <= N; i++)
+      AR[k][i] = arm_r(m, k, (float) i / N);
   // arms: all the outlines, then all the fills (neighbours do not outline each other); stamps along each segment
   for (int pass = 0; pass < 2; pass++)
     for (int k = 0; k < 8; k++)
       for (int i = 1; i <= N; i++) {
         const float xa = m.ax[k][i - 1], ya = m.ay[k][i - 1], xb = m.ax[k][i], yb = m.ay[k][i];
-        const float ra = arm_r(m, k, (float) (i - 1) / N), rb = arm_r(m, k, (float) i / N);
+        const float ra = AR[k][i - 1], rb = AR[k][i];
         const float pad = std::max(ra, rb) + 4;
         if (std::max(xa, xb) + pad < r.cx1 || std::min(xa, xb) - pad > r.cx2 || std::max(ya, yb) + pad < r.cy1 ||
             std::min(ya, yb) - pad > r.cy2)
@@ -374,13 +387,13 @@ inline void paint_octopus(const Rz &r, const Model &m) {
       }
   for (int k = 0; k < 8; k++)  // suckers
     for (int i = 3; i < N; i += 2)
-      disc(r, m.ax[k][i], m.ay[k][i] + 1.5f, arm_r(m, k, (float) i / N) * 0.30f, sucker);
+      disc(r, m.ax[k][i], m.ay[k][i] + 1.5f, AR[k][i] * 0.30f, sucker);
   // the mantle, with its bands
   ellipse(r, m.cx, m.my, m.rx + 1.8f, m.ry + 1.8f, dark);
   ellipse(r, m.cx, m.my, m.rx, m.ry, body);
   for (int j = 0; j < 5; j++) {
     const float yb = m.my - m.ry + (14 + j * 26) * SC;
-    for (int y = (int) std::ceil(yb - 3); y <= (int) std::floor(yb + 3); y++) {
+    for (int y = iceil(yb - 3); y <= ifloor(yb + 3); y++) {
       const float d = (y - m.my) / m.ry, q = 1 - d * d;
       if (q <= 0)
         continue;
@@ -398,10 +411,10 @@ inline void paint_octopus(const Rz &r, const Model &m) {
     disc(r, ex, ey, er + 1.5f, dark);
     ellipse(r, ex, ey, er, er * m.blink, cream);
     if (m.blink > 0.5f)
-      for (int y = (int) std::ceil(ey - 3.6f * SC); y <= (int) std::floor(ey + 3.6f * SC); y++)
+      for (int y = iceil(ey - 3.6f * SC); y <= ifloor(ey + 3.6f * SC); y++)
         row(r, y, ex + (m.look - 10) * SC, ex + (m.look + 10) * SC, slit);
     // the lid: the wedge of the eye between 205 and 335 degrees (above the middle, 2.14 wide for every 1 up)
-    for (int y = (int) std::ceil(ey - er); y < (int) ey; y++) {
+    for (int y = iceil(ey - er); y < (int) ey; y++) {
       const float dy = ey - y, q = er * er - dy * dy;
       if (q <= 0)
         continue;
@@ -930,7 +943,7 @@ bool walk_eat(uint32_t seed, int x, int y, int r, const char *name, lv_obj_t *co
 inline bool walking();
 #endif
 }  // namespace dino
-// UI-85c: a third of the dinosaur's walks go to a Sun, Moon or planet that is up on the map and eat it. False: none is up
+// UI-85c: three in four of the dinosaur's walks go to a Sun, Moon or planet that is up on the map and eat it. False: none is up
 // (or no memory): the caller walks as usual.
 bool dino_hunt(uint32_t seed) {
   lv_obj_t *obj[2 + planets::N_PLANETS], *lbl[2 + planets::N_PLANETS];
@@ -982,7 +995,7 @@ void check() {
     return;
   if (rnd() % 3 == 0) {  // UI-85b: one visit in three is the dinosaur's walk (sky_dino.h) instead
     const uint32_t seed = st.rng ^ rocket::now_us();
-    if (rnd() % 3 != 0 || !dino_hunt(seed))  // UI-85c: and a third of those is a hunting walk
+    if (rnd() % 4 == 0 || !dino_hunt(seed))  // UI-85c: and three in four of those are hunting walks (a plain one when nothing is up)
       dino::walk(seed);
   }
   else
