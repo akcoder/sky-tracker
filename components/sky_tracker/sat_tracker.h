@@ -369,6 +369,7 @@ struct Ui {
     uint8_t poly;                 // which sky::FIG polyline (UI-46b: a selected constellation's lines)
   };
   std::vector<StarPt> star_pts;   // disc coordinates, recomputed every STAR_PERIOD
+  int star_skip_x = INT_MIN, star_skip_y = INT_MIN;  // UI-90: a star the UFO has taken is not drawn (disc coordinates; INT_MIN: none)
   struct DsoPt {
     int16_t x, y;
     uint8_t idx;                  // ev::DSO
@@ -2212,6 +2213,8 @@ inline void fig_draw_cb(lv_event_t *e) {
     d.bg_opa = LV_OPA_COVER;
     d.radius = LV_RADIUS_CIRCLE;
     for (const auto &p : ui.star_pts) {
+      if (std::abs(p.x - ui.star_skip_x) <= 2 && std::abs(p.y - ui.star_skip_y) <= 2)
+        continue;
       const int x0 = ox + (int) lroundf(p.x - p.size / 2.0f), y0 = oy + (int) lroundf(p.y - p.size / 2.0f);
       const lv_area_t a = {x0, y0, x0 + p.size - 1, y0 + p.size - 1};
       if (a.x2 < clip.x1 || a.x1 > clip.x2 || a.y2 < clip.y1 || a.y1 > clip.y2)
@@ -5142,6 +5145,17 @@ inline void arc_update(double t) {
         project({p->path[i].az, p->path[i].el}, x, y);
         pts.push_back({(int32_t) lroundf(x), (int32_t) lroundf(y)});
       }
+    }
+  } else if (ui.sel_kind != K_SUN && ui.sel_kind != K_MOON && ui.station_alerts && clock_valid() && next_pass(t) &&
+             next_pass(t)->visible && t >= next_pass(t)->start - 600 && t <= next_pass(t)->end) {
+    // UI-89: a visible ISS pass that is about to start (10 min ahead) or under way is drawn on the map, nothing selected
+    const Pass *p = next_pass(t);
+    ui.arc_rise_dot = true;
+    ui.arc_color = C_ISS;
+    for (int i = 0; i < p->npath; i++) {
+      float x, y;
+      project({p->path[i].az, p->path[i].el}, x, y);
+      pts.push_back({(int32_t) lroundf(x), (int32_t) lroundf(y)});
     }
   } else if ((ui.sel_kind == K_SUN || ui.sel_kind == K_MOON) && body.kind == ui.sel_kind) {
     for (const auto &a : body.path) {
@@ -8239,6 +8253,8 @@ void countdown_show(int launch);  // the launch countdown for that listed launch
 }  // namespace rocket
 namespace octo {
 bool play_now();  // sky_octopus.h
+const char *last_log();
+bool play_critter(int who);
 bool playing();
 }  // namespace octo
 namespace eclipse {
@@ -8357,6 +8373,17 @@ inline void run(const char *cmd) {
     alert_skip++;
     draw_hud(clock_now());
     ESP_LOGI(UI_TAG, "dbg: alert \"%s\"", shown_alert_ok ? shown_alert.text : "(none)");
+  } else if (!strcmp(cmd, "octolog")) {  // what the last octopus, UFO or cat visit logged
+    char ln[140];
+    const char *q = octo::last_log();
+    while (*q) {  // a line at a time (the logger cuts long ones)
+      size_t n = strcspn(q, "\n");
+      n = std::min(n, sizeof(ln) - 1);
+      memcpy(ln, q, n);
+      ln[n] = 0;
+      ESP_LOGI(UI_TAG, "dbg: octolog: %s", ln);
+      q += n + (q[n] == '\n' ? 1 : 0);
+    }
   } else if (!strcmp(cmd, "card alert")) {  // a tap on the status line's alert
     if (shown_alert_ok) {
       if (shown_alert.kind >= 0)
@@ -8403,6 +8430,8 @@ inline void run(const char *cmd) {
       rocket::play_splash_now();
     else if (!strcmp(a, "octopus"))
       ESP_LOGI(UI_TAG, "dbg: octopus %s", octo::play_now() ? "started" : "NOT started");
+    else if (!strcmp(a, "ufo") || !strcmp(a, "cat"))
+      ESP_LOGI(UI_TAG, "dbg: %s %s", a, octo::play_critter(a[0] == 'u' ? 1 : 2) ? "started" : "NOT started");
     ESP_LOGI(UI_TAG, "dbg: anim %s", a);
   } else if (!strncmp(cmd, "eclipse ", 8)) {  // UI-87: the eclipse view, replayed: solar | annular | lunar | close
     const char *a = cmd + 8;

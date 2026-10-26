@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.60 (released): a UFO and a cat riding a comet visit the map at random, with the octopus and the dinosaur: a visit in four each (UI-90). a visible ISS pass starting within 10 minutes or under way is drawn on the map as its path, without selecting the ISS (UI-89).
 - 4.6.59 (released): fixes 4.6.58 aborting ("A stack overflow in task loopTask") when a launch countdown opened or ended: the main task's 8 KB stack held 7.7 KB at boot, and draw_hud kept 12 alerts (1.5 KB) on it; they are now in PSRAM (peak 6.5 KB measured over the countdown, T-0, every page and card, and all animations). the launch countdown's digits crossfade when they change, instead of dropping in (UI-76c). a picture asked for by opening a card (Sun, Moon, Earth, the all-sky camera) goes to the front of the network queue, so it no longer waits 15 to 20 s behind background refreshes after a boot (UI-59), and the octopus comes in and goes out by a random edge or corner (UI-85), and the status bar's clock fades out and in when the minute changes, and a new alert crossfades with the old (UI-88), and the ISS and Tiangong pass search (4 to 6 s at boot) stops when a picture is waiting and starts over after it. the full Moon alert card's bottom padding clears its Image button (UI-48d).
 - 4.6.58 (released): the dinosaur's walk draws faster (about 20 to 26 fps): its backdrop is a plain opaque object that draws the screen snapshot, as the rocket's, so LVGL no longer redraws the whole sky page under it every refresh (PERF-9, UI-85). the capsule in the docking and undocking animations moves in quarter-pixel steps (four prerendered copies), so its slow approach and departure no longer jerk a pixel at a time (UI-69q). the dinosaur's hunting walks are three in four of its walks, up from one in three (UI-85c). the launch, undocking, docking and splashdown animations run faster (about 20 to 27 fps for a launch): a smoke disc's dirty area goes straight to the display (lv_inv_area), skipping lv_obj_invalidate_area's walk up the object tree, which cost 1.4 ms a call (PERF-9). the full Moon alert (Harvest Moon, Hunter's Moon, Blue Moon, Blood Moon, Wolf Moon...) opens a card with when it is full and what the name means, with an Image button for the Moon picture (UI-48c, UI-48d). the Last Animation FPS reading is in the web page's Animations box (was System; PERF-17). on the launch countdown a digit that changes drops in from above with a small bounce while the old one fades out under it (UI-76c). the octopus paints faster (about 28 to 22 ms a frame): floor and ceil are single FPU instructions, and the arm radii (a pow call) are worked out once a frame instead of five times. the Sun, Moon and planets rise out of the rim of the sky disc and sink into it, drawn partly as they come into view, instead of appearing whole at the rim and vanishing at the horizon (UI-6b). a launch pad's long country name is shortened instead of cut off: "Xichang Satellite Launch Center, People's Republic of China" showed as "... People's Republic o" and now reads "..., China" (UI-54).
 - 4.6.57 (released): a failed ISS or Tiangong download that SatNOGS has filled in is no longer shown as a warning (logged only; DATA-13). a data warning or error on the status line (a CelesTrak download that failed, stale orbital data) has an icon (a triangle for a warning, a circle for an error) and a tap on it opens a details card: the full text, when the last good download was and what the failure means (UI-41o).
@@ -1010,6 +1011,34 @@ UI-87  Eclipse view (sky_eclipse.h, sky_extra.cpp; sky_events.h solar_view/lunar
        the solar shadow path every 8 min over 5 h, the eclipse now, you), a timeline and words. Live it follows the real clock every
        2 s; a replay runs first to last contact in 30 s at ~3 fps (a step is ~150 ms on the unit). Opened by the two web buttons (UI-87 is not on the touch screen) or
        "eclipse solar|annular|lunar". The picture and map buffers (270 KB, PSRAM) exist only while it is open.
+UI-90  Two more critters visit as the octopus and the dinosaur do (UI-85, UI-85b: the same timer, quiet-map rules and
+       painting; each visit is one of the four at random, a quarter each): a UFO (grey saucer 154 px wide, glass dome, chasing
+       rim lights) that comes in by a random edge or corner, flies to hover right over something that is really on the map (the Sun,
+       the Moon, a planet, the ISS or another satellite, one of the bright stars, or a constellation's figure) or over a cow
+       that rises up from below the bottom edge first on a small grassy hill (a green mound with swaying blades in front of his hooves) and grazes there, head down, before the UFO comes in to hover over it (the hill sinks back after the UFO leaves); says a line, shines a pale green tractor beam straight down on it and, as
+       the beam takes hold, lifts it up into the saucer: the object comes off the map at that moment (its object is hidden and the
+       backdrop taken again, as the cat's targets are) and the UFO says a line and leaves by another edge or corner; the object is
+       back when the visit ends. A star is not drawn while it is taken; a constellation's figure and name are not drawn. After the big blast the disc is black like the screen behind it, the rim ring included. The cow's own line ("Moooooo???") is in a bubble beside
+       the beam, pointing at it.
+       Each kind has its own lines ("Target locked: Mars." / "Beam me up, Scotty!", "Free satellite. No tracking fee." / "Beam me
+       up, Sat... err, Scotty."); the last line is from a pool of eight ("Take me to your leader.", "We were never here."...).
+       And a cat riding a comet (a rocky nucleus in a soft glow, no tail; the cat is
+       orange with stripes, a pale belly and a waving tail, about 120 px long, standing on the nucleus): a visit of 11 to 15
+       s. It comes in by a random edge or corner, hovers near it and fires 2 to 4 laser shots from its red eyes, a second
+       apart ("pew pew"), each at a Sun, Moon, planet, the ISS or another satellite that is on the map; the target flashes,
+       throws a ring and sparks and is gone from the map for the rest of the visit (its object is hidden and the backdrop
+       taken again, as the dinosaur's meal is). Then it backs away, shrinking to a third of its size, charges a big shot at its
+       eyes for a second and fires it at the middle of the sky disc: a white flash, a shock ring racing out over the rim,
+       debris, the whole disc dark (a Death Star on a planet). The cat then flies off by the opposite edge or corner, the disc staying dark; two seconds after it is off the screen the disc fades back, with
+       everything that was shot restored (the backdrop taken again with it): the cat has its victory. With nothing
+       on the map to shoot it goes straight to the big shot. A tap ends the visit and puts everything back. Renders:
+       docs/renders/ufo_strip.png, ufo_items.png, ufo.gif, cat_strip.png (four frames of the story on the real map with a
+       Sun, a Moon and Mars that are shot, stay gone and come back; the host cannot hide a real map object or take the screen again) and cat.gif (the host test writes the frames to
+       tools/host_test/out/renders/critter_*.ppm; CRITTER_GIF=1 adds the gifs' frames). The Octopus Visits switch turns all four kinds of visit off; the Play UFO Animation and Play Cat Animation
+       buttons (web Animations group, HA) play one now. Debug: "anim ufo", "anim cat".
+UI-89  A visible ISS pass that starts within 10 minutes or is under way is drawn on the map as its path (the selected pass's
+       arc, with the rise dot), with nothing selected and the ISS alerts on. Selecting the ISS or Tiangong, or a Sun or Moon
+       card, shows its own arc as before.
 UI-88  A different alert on the status line (the rotation, a swipe) crossfades over 0.4 s: the old text and icon fade out as the new ones fade in; an alert
        that only updates its own text does not. The status bar's clock fades out and back in over half a second when the minute changes (the new time arrives at the dark
        point), instead of switching at once.

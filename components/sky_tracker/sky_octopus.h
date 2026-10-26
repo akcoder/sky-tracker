@@ -32,8 +32,10 @@ namespace sat {
 namespace octo {
 void set_enabled(bool on);
 bool play_now();  // the button
+bool play_critter(int who);  // the debug command: 1 UFO, 2 cat
 bool play_eat(int meal);  // the debug command: a meal (0 crab, 1 fish, 2 bull) if one is up on the map
 bool playing();
+const char *last_log();  // what the last visit logged (the API's log stream starves while a visit runs)
 void stop();
 void check();  // every second (sky_rocket.h's timer): a visit that is due
 }  // namespace octo
@@ -196,6 +198,18 @@ struct St {
   uint32_t exit_us = 0, exit_n = 0, exit_px = 0;  // ...of which in the ink and exit (t >= EXIT_T)
 };
 inline St st;
+inline char vlog[700];  // the last visit's events: read back by the octolog debug command
+inline void vlogf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+inline void vlogf(const char *fmt, ...) {
+  const size_t n = strlen(vlog);
+  if (n + 4 >= sizeof(vlog))
+    return;
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(vlog + n, sizeof(vlog) - n - 1, fmt, ap);
+  va_end(ap);
+  strncat(vlog, "\n", sizeof(vlog) - strlen(vlog) - 1);
+}
 inline uint32_t min_idle_ms = 20000;  // no touch for this long before a visit starts
 
 inline uint32_t rnd() {
@@ -480,7 +494,525 @@ inline bool ink_box(float t, int &x1, int &y1, int &x2, int &y2) {
   return any;
 }
 
+// ---- the other critters (they share this file's timeline, backdrop, composite and rasteriser): a UFO that hovers and
+// beams down, and a cat riding a comet across the map
+enum { CR_OCTO = 0, CR_UFO = 1, CR_CAT = 2 };
+inline int critter = CR_OCTO;
+// The cat's visit is a story (UI-90): it comes in on its comet and hovers, fires 2 to 4 laser shots, each vaporising a Sun,
+// Moon, planet or satellite that is up on the map; moves out of the way, charges, and blows up the whole sky disc (flash,
+// shock ring, debris, dark); two seconds later the disc fades back, with everything that was shot.
+constexpr float CAT_K = 4.0f;  // CAT_K: the cat's size, in units of its 15 px body half-length
+struct CatTgt {
+  float x, y, r;     // on the screen
+  lv_obj_t *o[2];    // the map's own objects to hide when it is gone (the picture, its label)
+  bool gone;
+  uint8_t kind = 0;  // 0 the Sun, 1 the Moon, 2 a planet, 3 the ISS, 4 another satellite
+  int8_t pl = 0;     // which planet (kind 2)
+};
+inline CatTgt ctg[4];
+inline int n_ctg = 0;
+struct CatPlan {
+  float shot0 = 1.8f, dt = 0.9f, t_move = 0, t_charge = 0, t_fire = 0, t_hit = 0, t_leave = 0, t_rest = 0, t_end = 0;  // t_leave: the cat flies off; t_rest: the disc starts to come back
+};
+inline CatPlan cp;
+inline float disc_ox = 0, disc_oy = 0;  // where the sky disc's square sits on the screen (ui.cx, ui.cy and the stars are relative to it)
+inline void disc_origin() {
+  lv_area_t a;
+  if (ui.w.sky) {
+    lv_obj_get_coords(ui.w.sky, &a);
+    disc_ox = (float) a.x1, disc_oy = (float) a.y1;
+  } else
+    disc_ox = disc_oy = 0;
+}
+inline float cat_x1 = 370, cat_y1 = 270, cat_x2 = 390, cat_y2 = 300;  // where it hovers to shoot, and where it goes to fire at the disc
+inline bool cat_restored = false;
+inline void cat_plan() {
+  cp.t_move = cp.shot0 + cp.dt * std::max(n_ctg, 1);
+  cp.t_charge = cp.t_move + 1.0f, cp.t_fire = cp.t_charge + 1.0f, cp.t_hit = cp.t_fire + 0.35f, cp.t_leave = cp.t_hit + 1.7f;
+  cp.t_rest = cp.t_leave + 1.5f + 2.0f, cp.t_end = cp.t_rest + 2.0f;  // the disc stays dark until two seconds after the cat is off the screen
+  auto cl = [](float v, float lo, float hi) { return std::max(lo, std::min(hi, v)); };
+  cat_x1 = cl(240 + in_dx * 110, 130, 340), cat_y1 = cl(270 + in_dy * 100, 200, 400);
+  cat_x2 = cl(cat_x1 + in_dx * 50, 110, 360), cat_y2 = cl(cat_y1 + in_dy * 40, 190, 420);
+  cat_restored = false;
+  for (int i = 0; i < n_ctg; i++)
+    ctg[i].gone = false;
+}
+inline float ufo_delay = 0;  // a cow is there first: the UFO comes in this long after the start (its own clock is t - ufo_delay)
+inline float dur_s() { return critter == CR_CAT ? cp.t_end : critter == CR_UFO ? DUR_S + ufo_delay : DUR_S; }
+inline float shot_hit(int i) { return cp.shot0 + cp.dt * i + 0.4f; }  // when shot i's beam arrives
+// the comet's head (where the cat rides): in from its edge, hovering, over to where it fires at the disc, out by the other edge
+inline void cat_xy(float t, float &x, float &y) {
+  auto ex = [](int d, float m) { return d < 0 ? -230.0f : d > 0 ? 710.0f : m; };
+  const float e0x = ex(in_dx, cat_x1), e0y = ex(in_dy, cat_y1), e1x = ex(out_dx, cat_x2), e1y = ex(out_dy, cat_y2), bob = 7 * std::sin(t * 2.3f);
+  if (t < 1.6f) {
+    const float u = 1 - t / 1.6f, k = 1 - u * u * u;
+    x = e0x + (cat_x1 - e0x) * k, y = e0y + (cat_y1 - e0y) * k + bob;
+  } else if (t < cp.t_move) {
+    x = cat_x1, y = cat_y1 + bob;
+  } else if (t < cp.t_charge) {
+    const float k = seg(t, cp.t_move, cp.t_charge);
+    x = cat_x1 + (cat_x2 - cat_x1) * k, y = cat_y1 + (cat_y2 - cat_y1) * k + bob;
+  } else if (t < cp.t_leave) {
+    x = cat_x2, y = cat_y2 + bob;
+  } else {
+    const float u = std::min(1.0f, (t - cp.t_leave) / 1.5f), k = u * u;
+    x = cat_x2 + (e1x - cat_x2) * k, y = cat_y2 + (e1y - cat_y2) * k + bob;
+  }
+}
+// how big the cat and its comet are: it backs away, shrinking to a third, as it moves out of the way of the big shot, and stays small
+inline float cat_scale(float t) { return t < cp.t_move ? 1.0f : 1.0f - 0.65f * seg(t, cp.t_move, cp.t_charge); }
+// what it aims at now, and which way it faces: ax, ay (the target or the disc's middle), f (-1 left, 1 right); aim false: just flying
+inline bool cat_aim(float t, float x, float &ax, float &ay, float &f) {
+  const bool fin = t >= cp.t_move;
+  if (fin && t < cp.t_leave) {
+    ax = disc_ox + ui.cx, ay = disc_oy + ui.cy, f = ax < x ? -1.0f : 1.0f;
+    return t >= cp.t_fire && t < cp.t_hit + 0.2f;
+  }
+  if (!fin && n_ctg > 0 && t >= cp.shot0 - 0.4f) {
+    const int i = std::min(n_ctg - 1, std::max(0, (int) ((t - cp.shot0 + 0.4f) / cp.dt)));
+    ax = ctg[i].x, ay = ctg[i].y, f = ax < x ? -1.0f : 1.0f;
+    const float w = t - (cp.shot0 + cp.dt * i);  // the charge, then the beam (0.3 to 0.55 s into its slot)
+    return w >= 0.3f && w < 0.55f;
+  }
+  float e0 = in_dx < 0 ? -230.0f : in_dx > 0 ? 710.0f : cat_x1;
+  f = t < 1.6f ? (cat_x1 >= e0 ? 1.0f : -1.0f) : (out_dx != 0 ? (float) out_dx : (cat_x2 >= x ? 1.0f : -1.0f));
+  ax = x + f * 100, ay = 0;
+  return false;
+}
+constexpr float UFO_K = 1.6f;                  // the saucer's size, in units of its 48 px half-width
+constexpr float BEAM_TOP = 14 * UFO_K;
+inline float beam_a(float t) { return seg(t, 2.6f, 3.2f) * (1 - seg(t, 6.8f, 7.4f)); }
+// What it beams up (UI-90): something that is really on the map (the Sun, the Moon, a planet, the ISS or another satellite, a bright
+// star, a constellation's figure) or a cow standing at the bottom of the screen. It hovers right over it, the beam comes down on it, and
+// as the beam takes hold it comes off the map and rises into the saucer.
+enum { IT_NONE = 0, IT_SUN, IT_MOON, IT_PLANET, IT_SAT, IT_STAR, IT_CONST, IT_COW };
+inline int ufo_item = IT_NONE, ufo_planet = 0, ufo_var = 0;
+inline float ufo_bh = 150;        // how far down its beam reaches (to the object)
+constexpr float UFO_LIFT = 3.3f;  // when the beam takes hold: the object comes off the map
+inline char ufo_a[48], ufo_c[40];
+inline const char *const SAY_PLANET_B[5] = {"Small one.\nBeam it up.", "Handle with\noven mitts.", "Beam me up,\nScotty!", "Bring the\nbig crane.", "Rings and all.\nBeam it up."};
+inline const char *const SAY_UFO_EXIT[] = {"Nothing to see\nhere.", "Take me to your\nleader.", "We were never\nhere.", "Thanks for\nthe snack.",
+                                           "Back to the\nmothership.", "Greetings,\nearthlings.", "Taking this\nto go.", "Don't tell\nanyone."};
+inline int last_ufo_exit = -1;
+inline bool ufo_iss = false;
+inline void ufo_lines() {  // a line as the beam comes on, one as it lifts the thing, one on leaving
+  const char *a = "Scanning...\nNothing good.", *b = "Maybe next time.";
+  if (ufo_item == IT_SUN)
+    a = "Just the Sun.\nThey have more.", b = "Hot! Hot! Hot!\nBeam it up.";
+  else if (ufo_item == IT_MOON)
+    a = "The Moon.\nI'll take it.", b = "That's no moon.\nOh wait, it is.";
+  else if (ufo_item == IT_PLANET) {
+    snprintf(ufo_a, sizeof(ufo_a), "Target locked:\n%s.", planets::name(ufo_planet));
+    a = ufo_a, b = SAY_PLANET_B[ufo_planet % 5];
+  } else if (ufo_item == IT_SAT)
+    a = ufo_iss ? "The ISS.\nNobody will notice." : "Free satellite.\nNo tracking fee.", b = "Beam me up,\nSat... err, Scotty.";
+  else if (ufo_item == IT_STAR)
+    a = ufo_var ? "Twinkle,\ntwinkle..." : "Just one star.\nThey won't miss it.", b = ufo_var ? "...gotcha." : "Make a wish.\nThen beam it.";
+  else if (ufo_item == IT_CONST) {
+    snprintf(ufo_a, sizeof(ufo_a), "Take all of\n%s.", ufo_c);
+    a = ufo_a, b = "Connect the dots.\nBeam up.";
+  } else if (ufo_item == IT_COW)
+    a = ufo_var ? "Moo-ve over,\nEarth." : "Cow.\nClassic.", b = ufo_var ? "Moo?! Put me\ndown!" : "Moooooo???";
+  st.say[0] = a, st.say[1] = b;
+  st.say[2] = pick_line(SAY_UFO_EXIT, sizeof(SAY_UFO_EXIT) / sizeof(*SAY_UFO_EXIT), last_ufo_exit);
+}
+// the cow: it rises up from below the bottom edge of the screen as if standing on a hill, grazes there with its head down, and is then taken by the beam
+inline float cow_dir = 1;  // which way the cow faces: towards the middle of the screen
+inline float cow_x(float) {
+  cow_dir = ctg[0].x < 240 ? 1.0f : -1.0f;
+  return ctg[0].x;
+}
+inline float cow_y(float t) { return ctg[0].y + 110 * (1 - seg(t, 0.3f, 1.3f)); }
+// the grassy hill the cow stands on: it rises from below the edge with him and sinks back after the UFO has gone
+inline float hill_off(float t) { return 110 * (1 - seg(t, 0.3f, 1.3f)) + 110 * seg(t, ufo_delay + 6.9f, ufo_delay + 8.0f); }
+inline void ufo_setup() {  // after ufo_pick(): it hovers over what it has and reaches down to it
+  const CatTgt &g = ctg[0];
+  ufo_item = n_ctg == 0 ? IT_NONE : g.kind == 0 ? IT_SUN : g.kind == 1 ? IT_MOON : g.kind == 2 ? IT_PLANET : g.kind <= 4 ? IT_SAT : g.kind == 5 ? IT_STAR : g.kind == 6 ? IT_CONST : IT_COW;
+  ufo_iss = n_ctg > 0 && g.kind == 3, ufo_planet = n_ctg > 0 ? g.pl : 0, ufo_var = (int) (rnd() % 2), ufo_bh = 130, ufo_delay = ufo_item == IT_COW ? 2.0f : 0.0f;
+  if (n_ctg > 0) {
+    hover_x = std::max(40.0f, std::min(440.0f, g.x)), hover_y = std::max(70.0f, std::min(330.0f, g.y - 150));
+    ufo_bh = std::max(40.0f, g.y - (hover_y + BEAM_TOP) + 6);
+  }
+  ufo_lines();
+}
+// the box to redo
+inline void critter_box(float t, int32_t &x1, int32_t &y1, int32_t &x2, int32_t &y2) {
+  if (critter == CR_UFO) {
+    const float tu = t - ufo_delay;  // the UFO's own clock
+    float cx = 240, cy = 0;
+    if (tu >= 0)
+      pos(tu, cx, cy);
+    x1 = (int32_t) (cx - 52 * UFO_K), x2 = (int32_t) (cx + 52 * UFO_K), y1 = (int32_t) (cy - 28 * UFO_K), y2 = (int32_t) (cy + (beam_a(tu) > 0 ? BEAM_TOP + ufo_bh + 40 : 14 * UFO_K));
+    if (tu < 0)
+      x1 = x2 = y1 = y2 = 0;
+    if (ufo_item == IT_COW && n_ctg > 0) {  // (the cow at the bottom of the screen, from the start)
+      const int32_t cxx = (int32_t) cow_x(t);
+      x1 = tu < 0 ? cxx - 140 : std::min(x1, cxx - 140), x2 = tu < 0 ? cxx + 140 : std::max(x2, cxx + 140), y2 = std::max(y2, (int32_t) (ctg[0].y + 120)), y1 = tu < 0 ? (int32_t) (ctg[0].y - 80) : y1;
+    }
+  } else {  // the cat: the comet and its tails, the cat above, the beam, what it is shooting; the whole disc once it blows up
+    float x, y, ax, ay, f;
+    cat_xy(t, x, y);
+    const bool beam = cat_aim(t, x, ax, ay, f);
+    x1 = (int32_t) (x - 340), x2 = (int32_t) (x + 340), y1 = (int32_t) (y - 190), y2 = (int32_t) (y + 340);  // (the tail runs any way: the screen clips it)
+    if (beam)
+      x1 = std::min(x1, (int32_t) ax - 60), x2 = std::max(x2, (int32_t) ax + 60), y1 = std::min(y1, (int32_t) ay - 60), y2 = std::max(y2, (int32_t) ay + 60);
+    for (int i = 0; i < n_ctg; i++)
+      if (t >= shot_hit(i) - 0.05f && t < shot_hit(i) + 1.2f)
+        x1 = std::min(x1, (int32_t) (ctg[i].x - 70)), x2 = std::max(x2, (int32_t) (ctg[i].x + 70)), y1 = std::min(y1, (int32_t) (ctg[i].y - 70)),
+        y2 = std::max(y2, (int32_t) (ctg[i].y + 70));
+    if (t >= cp.t_fire && t < cp.t_end)
+      x1 = std::min(x1, (int32_t) (disc_ox + ui.cx - ui.radius - 16)), x2 = std::max(x2, (int32_t) (disc_ox + ui.cx + ui.radius + 16)),
+      y1 = std::min(y1, (int32_t) (disc_oy + ui.cy - ui.radius - 16)), y2 = std::max(y2, (int32_t) (disc_oy + ui.cy + ui.radius + 16));
+  }
+}
+inline void fig_line(const Rz &r, float x0, float y0, float x1, float y1, uint16_t c, bool thick);
+inline void tapered(const Rz &r, float x0, float y0, float r0, float x1, float y1, float r1, uint16_t c, float a0, float a1);
+// what it has in the beam, at (x, y), s: its scale (it shrinks as it rises)
+inline void paint_item(const Rz &r, float x, float y, float s, float t) {
+  const float R = 13 * s;
+  switch (ufo_item) {
+    case IT_SUN:
+      disc(r, x, y, R * 1.9f, c565(0xFFE070), 8);
+      disc(r, x, y, R, c565(0xFFD84A));
+      break;
+    case IT_MOON:
+      disc(r, x, y, R, c565(0xD8D8E0));
+      disc(r, x + R * 0.3f, y - R * 0.25f, R * 0.2f, c565(0xB0B0BC));
+      disc(r, x - R * 0.35f, y + R * 0.3f, R * 0.25f, c565(0xB0B0BC));
+      break;
+    case IT_PLANET: {  // Mercury, Venus, Mars, Jupiter, Saturn (the map's five)
+      static const uint32_t COL[5] = {0xA8A8A8, 0xF2E0B0, 0xC1523A, 0xD8B48A, 0xE6D29A};
+      const int pl = ufo_planet % 5;
+      const float Rp = R * 1.2f;
+      auto ring = [&](bool front) {  // the band between two flat ellipses, row by row: the back half goes behind the planet, the front over it
+        const float ro = Rp * 2.1f, ao = Rp * 0.45f, ri = Rp * 1.5f, ai = Rp * 0.3f;
+        for (int yy = (int) (y - ao); yy <= (int) (y + ao) + 1; yy++) {
+          const float dy = yy - y;
+          if ((dy >= 0) != front || std::fabs(dy) > ao)
+            continue;
+          const float xo = ro * std::sqrt(1 - (dy / ao) * (dy / ao)), xi = std::fabs(dy) < ai ? ri * std::sqrt(1 - (dy / ai) * (dy / ai)) : 0.0f;
+          const uint16_t rc = c565(xi > 0 ? 0xCDB98A : 0xB8A472);
+          row(r, yy, x - xo, x - xi, rc);
+          row(r, yy, x + xi, x + xo, rc);
+        }
+      };
+      if (pl == 4)
+        ring(false);
+      disc(r, x, y, Rp, c565(COL[pl]));
+      if (pl == 3)  // Jupiter's bands
+        for (int k = -2; k <= 2; k++) {
+          const float by = y + k * Rp * 0.36f, hw = std::sqrt(std::max(0.0f, Rp * Rp - (k * Rp * 0.36f) * (k * Rp * 0.36f)));
+          row(r, (int) by, x - hw, x + hw, c565(k % 2 ? 0xA87B52 : 0xE8D0A8));
+        }
+      if (pl == 2)
+        disc(r, x - Rp * 0.3f, y - Rp * 0.2f, Rp * 0.22f, c565(0x8E3A28));
+      if (pl == 4)
+        ring(true);
+      break;
+    }
+    case IT_SAT: {  // a little satellite: gold body, two blue panels, a dish
+      const float sc = s * 0.9f, w = 11 * sc, h = 9 * sc;
+      for (int yy = (int) (y - h); yy <= (int) (y + h); yy++) {
+        row(r, yy, x - w, x + w, c565(0xD8B04C));
+        row(r, yy, x - w - 6 * sc - 26 * sc, x - w - 6 * sc, c565((yy & 3) ? 0x3A5FB0 : 0x8CAEF0));
+        row(r, yy, x + w + 6 * sc, x + w + 6 * sc + 26 * sc, c565((yy & 3) ? 0x3A5FB0 : 0x8CAEF0));
+      }
+      row(r, (int) y, x - w - 6 * sc, x - w, c565(0x9AA4B8));
+      row(r, (int) y, x + w, x + w + 6 * sc, c565(0x9AA4B8));
+      disc(r, x, y - h - 4 * sc, 5 * sc, c565(0xE6E6E6));
+      break;
+    }
+    case IT_STAR:
+      disc(r, x, y, 20 * s, c565(0xFFF2A0), 6);
+      ellipse(r, x, y, 18 * s, 1.8f * s, c565(0xFFF8D0));
+      ellipse(r, x, y, 1.8f * s, 18 * s, c565(0xFFF8D0));
+      disc(r, x, y, 4.5f * s, c565(0xFFFFFF));
+      break;
+    case IT_CONST:  // the figure's lines, as they were on the map, drawn in about the item's place and size
+      for (int i = 0; i < fig.n; i++)
+        fig_line(r, x + (fig.s[i].x0 - (fig.bx0 + fig.bx1) / 2) * s, y + (fig.s[i].y0 - (fig.by0 + fig.by1) / 2) * s, x + (fig.s[i].x1 - (fig.bx0 + fig.bx1) / 2) * s,
+                 y + (fig.s[i].y1 - (fig.by0 + fig.by1) / 2) * s, c565(0x9FB6F0), false);
+      break;
+    case IT_COW: {  // a cow: a boxy body with a flat back and rump, straight legs with dark hooves, an udder, a tail with a tuft, a long head with a horn
+      const uint16_t white = c565(0xF4F4F4), spot = c565(0x2A2A2A), pink = c565(0xF0A8A8), horn = c565(0xE8DCC0);
+      const float k = 1.7f * s, d = cow_dir;  // d: +1 faces right, -1 left (the way it walks in)
+      const bool graze = t >= 1.3f && t < UFO_LIFT + ufo_delay;  // head down in the grass, chewing
+      const float ph = t * 10.0f, hd = graze ? 8.0f + 0.5f * std::sin(ph) : 0.0f;  // the head's drop, in k
+      const bool walking = false;
+      x -= d * 6 * k;  // (the head sticks out in front: the whole cow is centred)
+      auto X = [&](float u) { return x + d * u * k; };
+      auto rrect = [&](float u0, float y0, float u1, float y1, float rad, uint16_t c) {  // a rectangle with rounded corners, by rows (u: along the cow, in k)
+        const float xa = std::min(X(u0), X(u1)), xb = std::max(X(u0), X(u1)), ya = y + y0 * k, yb = y + y1 * k, rd = rad * k;
+        for (int yy = (int) std::ceil(ya); yy <= (int) yb; yy++) {
+          const float top = yy - ya, bot = yb - yy, e = std::min(top, bot);
+          const float in = e < rd ? rd - std::sqrt(std::max(0.0f, rd * rd - (rd - e) * (rd - e))) : 0.0f;
+          row(r, yy, xa + in, xb - in, c);
+        }
+      };
+      int li = 0;
+      for (float lx : {-11.0f, -6.0f, 5.0f, 10.0f}) {  // four legs: diagonal pairs swing together while it walks
+        const float sw = walking ? std::sin(ph + (li++ % 2 ? 3.14159f : 0.0f)) : 0.0f;
+        const float fx = lx + sw * 2.2f, lift = walking ? std::max(0.0f, sw) * 1.6f : 0.0f;
+        tapered(r, X(lx), y + 5 * k, 1.5f * k, X(fx), y + (16.5f - lift) * k, 1.4f * k, white, 32, 32);
+        disc(r, X(fx), y + (17 - lift) * k, 1.5f * k, spot);
+      }
+      tapered(r, X(-13), y - 4 * k, 0.6f * k, X(-15 + (walking ? std::sin(ph) * 1.5f : 0.0f)), y + 8 * k, 0.5f * k, white, 32, 32);  // the tail swings
+      disc(r, X(-15 + (walking ? std::sin(ph) * 1.5f : 0.0f)), y + 9 * k, 1.5f * k, spot);
+      rrect(-13, -7, 13, 7, 2.6f, white);
+      rrect(-11, -6, -4, 1, 1.8f, spot);
+      rrect(1, -1, 8, 5.5f, 1.8f, spot);
+      rrect(-12, 2.5f, -8, 6, 1.2f, spot);
+      ellipse(r, X(-4), y + 8 * k, 2.2f * k, 1.6f * k, pink);
+      if (graze)
+        rrect(10, -7, 16, hd - 3, 1.2f, white);  // the neck down to the head
+      y += hd * k;  // (the head, lowered in the grass)
+      rrect(12, -8, 22, 3, 2, white);
+      rrect(12, -8, 16, -2, 1.5f, spot);
+      rrect(19.5f, -1.5f, 23.5f, 3.5f, 1.4f, pink);
+      ellipse(r, X(17), y - 9 * k, 1.1f * k, 2.2f * k, horn);
+      ellipse(r, X(13.5f), y - 7 * k, 3 * k, 1.3f * k, white);
+      disc(r, X(18.5f), y - 5 * k, 0.8f * k, spot);
+      break;
+    }
+    default:
+      break;
+  }
+}
+// the hill's mound (behind the cow) and the grass blades (in front of his legs), swaying a little
+inline float hash01(uint32_t i);
+inline void paint_hill(const Rz &r, float t, bool front) {
+  const float cx = cow_x(t), top = ctg[0].y + 34 + hill_off(t);  // the mound's top: a little above the cow's hooves
+  if (!front) {
+    ellipse(r, cx, top + 36, 130, 36, c565(0x2A6030));
+    ellipse(r, cx, top + 40, 112, 30, c565(0x347A3A));
+    return;
+  }
+  for (int i = 0; i < 44; i++) {
+    const float u = (i + hash01(i * 3 + 1) * 0.8f) / 44.0f, bx = cx - 118 + u * 236, edge = 1 - std::pow(std::fabs(u * 2 - 1), 3.0f);
+    const float by = top + 12 + (1 - edge) * 20, h = (7 + 9 * hash01(i * 7 + 5)) * (0.5f + 0.5f * edge), lean = 2.2f * std::sin(t * 2.0f + i * 0.7f);
+    tapered(r, bx, by, 1.5f, bx + lean, by - h, 0.4f, c565(i % 3 == 0 ? 0x56A84A : i % 3 == 1 ? 0x3C8C3C : 0x2F7A33), 32, 32);
+  }
+}
+inline void paint_ufo(const Rz &r, float t) {
+  const float tu = t - ufo_delay;  // the UFO's own clock: a cow is there before it comes
+  if (ufo_item == IT_COW && n_ctg > 0) {  // the hill and the cow, risen from below the bottom edge and grazing
+    paint_hill(r, t, false);
+    if (tu < UFO_LIFT)
+      paint_item(r, cow_x(t), cow_y(t), 1.5f, t);
+    paint_hill(r, t, true);
+  }
+  if (tu < 0)
+    return;
+  float cx, cy;
+  pos(tu, cx, cy);
+  const float a = beam_a(tu), K = UFO_K;
+  if (a > 0) {  // the tractor beam: a pale green cone, fading towards the ground
+    for (int y = (int) (cy + BEAM_TOP); y <= (int) (cy + BEAM_TOP + ufo_bh); y++) {
+      const float f = (y - cy - BEAM_TOP) / ufo_bh, hw = (14 + 40 * f) * K * std::min(1.0f, ufo_bh / 150.0f + 0.4f);
+      row(r, y, cx - hw, cx + hw, c565(0xB8FFB0), (uint32_t) (a * (11 - 7 * f)));
+    }
+    if (tu >= UFO_LIFT && ufo_item != IT_NONE && n_ctg > 0) {  // the thing rises from where it was up the beam, small as it goes up, and is gone into the saucer
+      const float k = seg(tu, UFO_LIFT + 0.1f, 6.6f), y0 = ctg[0].y, y1 = cy + BEAM_TOP + 6, x0 = ufo_item == IT_COW ? cow_x(t) : ctg[0].x;
+      paint_item(r, x0 + (cx - x0) * k + 2 * std::sin(tu * 4), y0 + (y1 - y0) * k, (ufo_item == IT_COW ? 1.5f : 1.0f) * (1.0f - 0.6f * k), tu);
+    }
+  }
+  ellipse(r, cx, cy + 5 * K, 30 * K, 7 * K, c565(0x6C7690));      // the underside
+  ellipse(r, cx, cy, 48 * K, 11 * K, c565(0x9AA4B8));              // the saucer
+  ellipse(r, cx, cy - 9 * K, 20 * K, 13 * K, c565(0xA8DCF4));      // the dome
+  disc(r, cx - 7 * K, cy - 14 * K, 3.5f * K, c565(0xF0FAFF));
+  for (int i = 0; i < 5; i++)                                      // the lights chase round the rim
+    disc(r, cx + (i - 2) * 18 * K, cy + (3 + (i == 2 ? 3 : 0)) * K, 2.6f * K, ((int) (tu * 6) + i) % 3 == 0 ? c565(0xFFE060) : c565(0x4A5068));
+}
+// a straight tapered streak from (x0, y0) of radius r0 to (x1, y1) of radius r1, strength a0..a1 (of 32) along it, soft at the edge:
+// every pixel is worked out from its distance to the line (no chain of discs, so no beads)
+inline void tapered(const Rz &r, float x0, float y0, float r0, float x1, float y1, float r1, uint16_t c, float a0, float a1) {
+  const float rm = std::max(r0, r1) + 1;
+  const int ya = std::max(r.cy1, ifloor(std::min(y0, y1) - rm)), yb = std::min(r.cy2, iceil(std::max(y0, y1) + rm));
+  const int xa = std::max(r.cx1, ifloor(std::min(x0, x1) - rm)), xb = std::min(r.cx2, iceil(std::max(x0, x1) + rm));
+  const float dx = x1 - x0, dy = y1 - y0, l2 = std::max(1.0f, dx * dx + dy * dy);
+  for (int y = ya; y <= yb; y++) {
+    uint16_t *row_p = (uint16_t *) (r.base + (size_t) y * r.stride);
+    for (int x = xa; x <= xb; x++) {
+      const float px = x - x0, py = y - y0;
+      const float u = std::min(1.0f, std::max(0.0f, (px * dx + py * dy) / l2));
+      const float qx = px - dx * u, qy = py - dy * u, rad = r0 + (r1 - r0) * u, d2 = qx * qx + qy * qy;
+      if (d2 >= (rad + 0.5f) * (rad + 0.5f))
+        continue;
+      const float edge = std::min(1.0f, std::max(0.0f, rad + 0.5f - std::sqrt(d2)));  // one pixel of soft edge
+      const uint32_t a5 = (uint32_t) ((a0 + (a1 - a0) * u) * edge);
+      if (a5)
+        row_p[x] = a5 >= 32 ? c : blend565(c, row_p[x], a5);
+    }
+  }
+}
+// the band between two circles, row by row
+inline void ring_fill(const Rz &r, float cx, float cy, float ro, float ri, uint16_t c, uint32_t alpha) {
+  for (int y = std::max(r.cy1, ifloor(cy - ro)); y <= std::min(r.cy2, iceil(cy + ro)); y++) {
+    const float dy = y - cy, o2 = ro * ro - dy * dy;
+    if (o2 <= 0)
+      continue;
+    const float xo = std::sqrt(o2), xi = std::fabs(dy) < ri ? std::sqrt(ri * ri - dy * dy) : 0.0f;
+    row(r, y, cx - xo, cx - xi, c, alpha);
+    row(r, y, cx + xi, cx + xo, c, alpha);
+  }
+}
+inline float hash01(uint32_t i) {  // a repeatable number 0..1 per index (the particles of every shot fly the same way)
+  i ^= i >> 16, i *= 0x7FEB352Du, i ^= i >> 15, i *= 0x846CA68Bu, i ^= i >> 16;
+  return (i & 0xFFFF) / 65535.0f;
+}
+// a shot's target vaporising: a flash, a ring and sparks, va seconds after the hit
+inline void paint_zap(const Rz &r, const CatTgt &g, float va, int seed) {
+  if (va < 0 || va > 1.2f)
+    return;
+  const float R = std::max(10.0f, g.r);
+  if (va < 0.3f)
+    disc(r, g.x, g.y, R * (1.0f + 1.6f * va / 0.3f), c565(0xFFFFFF), (uint32_t) (32 * (1 - va / 0.3f)));
+  ring_fill(r, g.x, g.y, R * (1 + 5 * va) + 3, R * (1 + 5 * va) - 2, c565(0xFFE8B0), (uint32_t) (22 * (1 - va / 1.2f)));
+  for (int i = 0; i < 14; i++) {
+    const float an = hash01(seed * 31 + i) * 6.2832f, sp = 50 + 140 * hash01(seed * 57 + i + 100);
+    disc(r, g.x + std::cos(an) * sp * va, g.y + std::sin(an) * sp * va, 3.2f * (1 - va / 1.2f) + 0.6f, c565(i % 3 ? 0xFFD070 : 0xFF8040), (uint32_t) (32 * (1 - va / 1.2f)));
+  }
+}
+// the sky disc destroyed: a white flash, a shock ring racing out, everything inside it gone dark, debris; the dark fades once t_rest is past
+inline void paint_boom(const Rz &r, float t) {
+  const float u = t - cp.t_hit;
+  if (u < 0)
+    return;
+  const float R = (float) ui.radius + 10, cxd = disc_ox + ui.cx, cyd = disc_oy + ui.cy;  // (+10: the rim ring round the disc goes too)
+  const float flash = u < 0.12f ? u / 0.12f : std::max(0.0f, 1 - (u - 0.12f) / 0.45f);
+  const float Rs = R * 1.15f * ease(u / 0.9f);
+  const float gone = t < cp.t_rest ? 1.0f : 1 - seg(t, cp.t_rest, cp.t_end);
+  for (int y = std::max(r.cy1, (int) (cyd - R)); y <= std::min(r.cy2, (int) (cyd + R)); y++) {
+    const float dy = y - cyd, hw = std::sqrt(std::max(0.0f, R * R - dy * dy));
+    if (hw <= 0)
+      continue;
+    const float gw = Rs > std::fabs(dy) ? std::min(hw, std::sqrt(Rs * Rs - dy * dy)) : 0.0f;
+    if (gw > 0 && gone > 0)
+      row(r, y, cxd - gw, cxd + gw, c565(0x000000), (uint32_t) (32 * gone));  // (black, like the screen behind the disc)
+    if (flash > 0)
+      row(r, y, cxd - hw, cxd + hw, c565(0xFFFFFF), (uint32_t) (26 * flash));
+  }
+  if (u < 1.3f) {  // the shock ring (clipped to the disc's square: it runs out over the rim)
+    const float ro = Rs + 8, ri = std::max(0.0f, Rs - 4);
+    ring_fill(r, cxd, cyd, ro, ri, c565(0xFFE8B0), (uint32_t) (24 * (1 - u / 1.3f)));
+  }
+  if (u < 2.0f)
+    for (int i = 0; i < 44; i++) {  // debris
+      const float an = hash01(i * 7 + 1) * 6.2832f, sp = 90 + 300 * hash01(i * 13 + 5), f = 1 - u / 2.0f;
+      disc(r, cxd + std::cos(an) * sp * u, cyd + std::sin(an) * sp * u, (2.0f + 4.0f * hash01(i * 3 + 9)) * f + 0.8f, c565(i % 4 ? 0xFFB050 : 0x8C8C94), (uint32_t) (32 * f));
+    }
+}
+// the comet the cat rides: a lumpy icy nucleus in a soft blue-white glow (no tail)
+inline void paint_comet(const Rz &r, float hx, float hy, float S) {
+  disc(r, hx, hy, 62 * S, c565(0xBFD8FF), 4);
+  disc(r, hx, hy, 48 * S, c565(0xBFD8FF), 7);
+  disc(r, hx, hy, 36 * S, c565(0xDDEBFF), 10);
+  const uint16_t ice = c565(0x8E98AC), lit = c565(0xC4CEE0), pit = c565(0x646E82);
+  disc(r, hx, hy, 24 * S, ice);  // an irregular lump: four overlapping blobs
+  disc(r, hx - 15 * S, hy + 6 * S, 16 * S, ice);
+  disc(r, hx + 14 * S, hy + 7 * S, 15 * S, ice);
+  disc(r, hx + 2 * S, hy - 12 * S, 14 * S, ice);
+  disc(r, hx - 8 * S, hy - 9 * S, 9 * S, lit);  // the sunlit side
+  disc(r, hx + 12 * S, hy + 8 * S, 4.5f * S, pit);  // craters
+  disc(r, hx - 14 * S, hy + 9 * S, 3.5f * S, pit);
+  disc(r, hx + 3 * S, hy + 15 * S, 3 * S, pit);
+}
+// a filled triangle, row by row
+inline void tri_fill(const Rz &r, float x0, float y0, float x1, float y1, float x2, float y2, uint16_t c) {
+  const float X[3] = {x0, x1, x2}, Y[3] = {y0, y1, y2};
+  const int ya = std::max(r.cy1, iceil(std::min(y0, std::min(y1, y2)))), yb = std::min(r.cy2, ifloor(std::max(y0, std::max(y1, y2))));
+  for (int y = ya; y <= yb; y++) {
+    float lo = 1e9f, hi = -1e9f;
+    for (int e = 0; e < 3; e++) {
+      const int a = e, b = (e + 1) % 3;
+      if ((Y[a] <= y && Y[b] > y) || (Y[b] <= y && Y[a] > y)) {
+        const float x = X[a] + (X[b] - X[a]) * (y - Y[a]) / (Y[b] - Y[a]);
+        lo = std::min(lo, x), hi = std::max(hi, x);
+      }
+    }
+    if (hi > lo)
+      row(r, y, lo, hi, c);
+  }
+}
+inline void paint_cat(const Rz &r, float t) {
+  float hx, hy, ax, ay, f;
+  cat_xy(t, hx, hy);
+  const bool beam = cat_aim(t, hx, ax, ay, f);
+  paint_boom(r, t);  // (under everything else)
+  for (int i = 0; i < n_ctg; i++)
+    paint_zap(r, ctg[i], t - shot_hit(i), i);
+  const float S = cat_scale(t);
+  paint_comet(r, hx, hy, S);
+  const float K = CAT_K * S;
+  const float cx = hx, cy = hy - 74 * S;  // it stands on the nucleus
+  const uint16_t fur = c565(0xE8903A), dark = c565(0xB8661E);
+  {  // the tail: a short one, from the rump back and up and curling over, its tip swaying a little (six streaks end to end)
+    float px = cx - f * K * 12, py = cy - K * 1;
+    for (int i = 1; i <= 6; i++) {
+      const float u = i / 6.0f, th = 0.6f + 1.7f * u + 0.07f * u * std::sin(t * 4 + u * 3);
+      const float qx = px - f * std::cos(th) * K * 2.6f, qy = py - std::sin(th) * K * 2.6f;
+      tapered(r, px, py, K * (3.6f - 1.5f * (u - 0.17f)), qx, qy, K * (3.6f - 1.5f * u), i == 6 ? dark : fur, 32, 32);
+      px = qx, py = qy;
+    }
+  }
+  ellipse(r, cx + f * K * 8, cy + K * 8, K * 3, K * 4.5f, fur);
+  ellipse(r, cx - f * K * 8, cy + K * 8, K * 3, K * 4.5f, fur);
+  ellipse(r, cx, cy, K * 15, K * 9, fur);
+  ellipse(r, cx, cy + K * 3, K * 9, K * 5, c565(0xF6D7A8));  // the pale belly
+  ellipse(r, cx - K * 3, cy - K * 2, K * 2, K * 6, dark);
+  ellipse(r, cx + K * 4.5f, cy - K * 2, K * 2, K * 6, dark);
+  const uint16_t pink = c565(0xF0A0A0);
+  disc(r, cx + f * K * 15, cy - K * 8, K * 8, fur);
+  auto ear = [&](float xc, float lean) {  // pointed, with its base sunk into the head's curve so it joins the head; pink inside
+    auto top = [](float x) { return -8.0f - std::sqrt(std::max(0.0f, 64.0f - (x - 15) * (x - 15))) + 1.2f; };  // the head's top edge at x, in units of K
+    const float hw = 2.6f, xl = xc - hw, xr = xc + hw, ym = top(xc);
+    tri_fill(r, cx + f * K * xl, cy + K * top(xl), cx + f * K * xr, cy + K * top(xr), cx + f * K * (xc + lean), cy + K * (ym - 9.6f), fur);
+    const float hi = hw * 0.55f;
+    tri_fill(r, cx + f * K * (xc - hi), cy + K * (top(xc - hi) - 0.4f), cx + f * K * (xc + hi), cy + K * (top(xc + hi) - 0.4f), cx + f * K * (xc + lean * 0.8f), cy + K * (ym - 6.6f), pink);
+  };
+  ear(10.5f, -0.9f);
+  ear(19.5f, 0.5f);
+
+  ellipse(r, cx + f * K * 17, cy - K * 4.5f, K * 4.2f, K * 3, c565(0xF6D7A8));  // the muzzle
+  const float ey = cy - K * 9;
+  const float charge = t >= cp.t_charge ? seg(t, cp.t_charge, cp.t_fire) * (t < cp.t_hit + 0.2f ? 1.0f : 0.0f) : 0.0f;
+  for (int e = 0; e < 2; e++) {  // the eyes: red when they fire, and the beam straight at what it aims at
+    const float ex = cx + f * K * (e ? 19.0f : 12.0f), eyy = ey + (e ? 0 : K);
+    if (beam) {
+      const bool fin = t >= cp.t_move;
+      const float w0 = fin ? 9.0f : 5.0f;
+      tapered(r, ex, eyy, w0 * 1.6f, ax, ay, w0 * 1.1f, c565(0xFF3030), 10, 10);
+      tapered(r, ex, eyy, w0, ax, ay, w0 * 0.8f, c565(0xFF5040), 32, 32);
+      tapered(r, ex, eyy, w0 * 0.4f, ax, ay, w0 * 0.3f, c565(0xFFF0E8), 32, 32);
+    }
+    disc(r, ex, eyy, K * 1.8f, beam || charge > 0 ? c565(0xFF2020) : c565(0x202020));
+  }
+  {  // the nose, the mouth (open when it fires) and whiskers
+    const float nx = cx + f * K * 17, ny = cy - K * 5.6f;
+    ellipse(r, nx, ny, K * 1.3f, K * 0.9f, pink);
+    const uint16_t brown = c565(0x5A2E14);
+    if (beam || charge > 0)
+      ellipse(r, nx, ny + K * 2.4f, K * 1.4f, K * 1.2f, c565(0x401818));
+    else {
+      tapered(r, nx, ny + K * 0.9f, K * 0.28f, nx, ny + K * 2.2f, K * 0.28f, brown, 32, 32);  // a cat's mouth: down from the nose, then a smile either way
+      tapered(r, nx, ny + K * 2.2f, K * 0.28f, nx - K * 2.0f, ny + K * 1.8f, K * 0.28f, brown, 32, 32);
+      tapered(r, nx, ny + K * 2.2f, K * 0.28f, nx + K * 2.0f, ny + K * 1.8f, K * 0.28f, brown, 32, 32);
+    }
+    for (int w = -1; w <= 1; w++) {  // three whiskers on the front side
+      tapered(r, nx + f * K * 1.5f, ny + K * 0.4f + w * K * 0.7f, K * 0.18f, nx + f * K * 6.5f, ny + K * 0.4f + w * K * 2.0f, K * 0.18f, c565(0xFFF4E0), 26, 26);
+      tapered(r, nx - f * K * 1.5f, ny + K * 0.4f + w * K * 0.7f, K * 0.18f, nx - f * K * 4.5f, ny + K * 0.4f + w * K * 1.8f, K * 0.18f, c565(0xFFF4E0), 26, 26);
+    }
+  }
+  if (charge > 0) {  // the big shot gathers at its eyes
+    const float ex = cx + f * K * 16, rad = 6 + 30 * charge + 3 * std::sin(t * 30);
+    disc(r, ex, ey, rad * 1.6f, c565(0xFF6040), 8);
+    disc(r, ex, ey, rad, c565(0xFF4030));
+    disc(r, ex, ey, rad * 0.5f, c565(0xFFF0E0));
+  }
+}
+
 // ---- the speech bubble now: its box (the same maths for the painter and the redraw box)
+inline bool cow_speaks(int beat) { return critter == CR_UFO && ufo_item == IT_COW && beat == 1; }  // the cow's own line, as it is lifted
 inline void bubble_geom(float t, int beat, float &bx, float &by, float &bw, float &bh) {
   bw = bh = 0;
   bx = by = 0;
@@ -494,7 +1026,13 @@ inline void bubble_geom(float t, int beat, float &bx, float &by, float &bw, floa
   float cx, cy;
   pos(t, cx, cy);
   bx = std::max(10.0f, std::min(480 - bw - 10, cx - bw / 2 + 30));
-  by = beat == N_BEATS - 1 ? std::max(46.0f, cy - 120) : std::max(46.0f, cy - (46 + 66) * SC - bh - 22);
+  const float above = critter == CR_UFO ? 30 * UFO_K : (46 + 66) * SC;  // (the UFO's dome tops out at 30 units)
+  by = beat == N_BEATS - 1 ? std::max(46.0f, cy - 120) : std::max(46.0f, cy - above - bh - 22);
+  if (cow_speaks(beat) && n_ctg > 0) {  // beside the beam, level with the cow, the tail pointing at it
+    const float k = seg(t, UFO_LIFT + 0.1f, 6.6f), y0 = ctg[0].y, y1 = cy + BEAM_TOP + 6;
+    bx = std::min(480 - bw - 10, cx + 100);
+    by = std::max(46.0f, y0 + (y1 - y0) * k - bh / 2);
+  }
   const float pop = ease((t - beat_a(beat)) / 0.18f);
   by += (1 - pop) * 10;
 }
@@ -521,27 +1059,43 @@ inline void paint_bubble(lv_layer_t *layer) {
     return;
   const float bx = st.bx, by = st.by, bw = st.bw, bh = st.bh;
   rect(layer, bx, by, bx + bw, by + bh, 0x0E1836, 14, 255, 0x3A4E86, 2);
+  const float tt = critter == CR_UFO ? st.t - ufo_delay : st.t;  // (the UFO's own clock)
   float cx, cy;
-  pos(st.t, cx, cy);
-  const float tx = std::min(cx, 440.0f);
+  pos(tt, cx, cy);
   lv_draw_triangle_dsc_t tri;
   lv_draw_triangle_dsc_init(&tri);
-  tri.color = lv_color_hex(0x3A4E86);
-  tri.p[0].x = tx - 8, tri.p[0].y = by + bh - 3;
-  tri.p[1].x = tx + 20, tri.p[1].y = by + bh - 3;
-  tri.p[2].x = tx + 2, tri.p[2].y = by + bh + 20;
-  lv_draw_triangle(layer, &tri);
-  tri.color = lv_color_hex(0x0E1836);
-  tri.p[0].x = tx - 4, tri.p[0].y = by + bh - 3;
-  tri.p[1].x = tx + 16, tri.p[1].y = by + bh - 3;
-  tri.p[2].x = tx + 2, tri.p[2].y = by + bh + 14;
-  lv_draw_triangle(layer, &tri);
-  rect(layer, tx - 4, by + bh - 4, tx + 16, by + bh, 0x0E1836, 0);  // the seam
+  if (cow_speaks(beat_at(tt))) {  // the cow's: the tail comes out of the bubble's left side towards the cow
+    const float my = by + bh / 2;
+    tri.color = lv_color_hex(0x3A4E86);
+    tri.p[0].x = bx + 3, tri.p[0].y = my - 11;
+    tri.p[1].x = bx + 3, tri.p[1].y = my + 11;
+    tri.p[2].x = bx - 24, tri.p[2].y = my + 6;
+    lv_draw_triangle(layer, &tri);
+    tri.color = lv_color_hex(0x0E1836);
+    tri.p[0].x = bx + 3, tri.p[0].y = my - 7;
+    tri.p[1].x = bx + 3, tri.p[1].y = my + 7;
+    tri.p[2].x = bx - 17, tri.p[2].y = my + 5;
+    lv_draw_triangle(layer, &tri);
+    rect(layer, bx, my - 7, bx + 4, my + 7, 0x0E1836, 0);  // the seam
+  } else {
+    const float tx = std::min(cx, 440.0f);
+    tri.color = lv_color_hex(0x3A4E86);
+    tri.p[0].x = tx - 8, tri.p[0].y = by + bh - 3;
+    tri.p[1].x = tx + 20, tri.p[1].y = by + bh - 3;
+    tri.p[2].x = tx + 2, tri.p[2].y = by + bh + 20;
+    lv_draw_triangle(layer, &tri);
+    tri.color = lv_color_hex(0x0E1836);
+    tri.p[0].x = tx - 4, tri.p[0].y = by + bh - 3;
+    tri.p[1].x = tx + 16, tri.p[1].y = by + bh - 3;
+    tri.p[2].x = tx + 2, tri.p[2].y = by + bh + 14;
+    lv_draw_triangle(layer, &tri);
+    rect(layer, tx - 4, by + bh - 4, tx + 16, by + bh, 0x0E1836, 0);  // the seam
+  }
   lv_draw_label_dsc_t l;
   lv_draw_label_dsc_init(&l);
   l.font = rocket::st.font;
   l.color = lv_color_hex(0xEEF2FF);
-  l.text = st.say[beat_at(st.t)];
+  l.text = st.say[beat_at(tt)];
   const lv_area_t a = {(int32_t) (bx + 14), (int32_t) (by + 9), (int32_t) (bx + bw + 40), (int32_t) (by + bh)};
   lv_draw_label(layer, &l, &a);
 }
@@ -637,6 +1191,7 @@ inline void fig_box(float t, const Model &m, int32_t &x1, int32_t &y1, int32_t &
 inline void on_refr(lv_event_t *);
 inline void frame();
 
+inline void cat_undo();
 inline void end_visit() {
   if (!st.running)
     return;
@@ -658,6 +1213,7 @@ inline void end_visit() {
     ESP_LOGI("octo", "ink and exit: %u frames, painting %.1f ms a frame, %u px a frame; before: %.1f ms", (unsigned) st.exit_n,
              st.exit_us / 1000.0f / st.exit_n, (unsigned) (st.exit_px / st.exit_n),
              (st.paint_us - st.exit_us) / 1000.0f / std::max<uint32_t>(1, st.frames - st.exit_n));
+  vlogf("end at %.1f s, %u frames, %u ms", st.t, (unsigned) st.frames, (unsigned) ms);
   if (st.frames > 1 && ms) {
     rocket::set_last_fps(st.frames * 1000.0f / ms);
     ESP_LOGI("octo", "visit: %u frames in %u ms (%.1f fps), longest gap %u ms; painting %.1f ms a frame (longest %.1f ms), %u px a frame",
@@ -670,6 +1226,7 @@ inline void end_visit() {
       *o = nullptr;
     }
   undo_meal();
+  cat_undo();
   rocket::st.snap = st.clean;  // the backdrop shows the composite meanwhile; rocket::stop() frees the clean one
   if (st.comp)
     lv_draw_buf_destroy(st.comp);
@@ -683,6 +1240,189 @@ inline void inval(const lv_area_t &a) {
     lv_obj_invalidate_area(rocket::st.back, &a);
 }
 
+// UI-90: what the cat can shoot and the UFO can take: the Sun, the Moon, a planet, the ISS or another satellite that is on the map now; `want` of
+// them (fewer if fewer are up), at random
+inline void cat_targets(int want) {
+  struct C {
+    lv_obj_t *o[2];
+    uint8_t kind;
+    int8_t pl;
+  } c[2 + planets::N_PLANETS + 4];
+  int n = 0;
+  auto up = [](lv_obj_t *o) { return o != nullptr && !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN); };
+  if (up(ui.sun))
+    c[n++] = {{ui.sun, nullptr}, 0, 0};
+  if (up(ui.moon))
+    c[n++] = {{ui.moon, nullptr}, 1, 0};
+  for (int p = 0; p < planets::N_PLANETS; p++)
+    if (up(ui.planet_img[p]))
+      c[n++] = {{ui.planet_img[p], ui.planet_lbl[p]}, 2, (int8_t) p};
+  if (up(ui.iss.dot))
+    c[n++] = {{ui.iss.dot, ui.iss.label}, 3, 0};
+  int ns = 0;
+  for (const Marker &m : ui.sats)
+    if (ns < 3 && m.up && up(m.dot))
+      c[n++] = {{m.dot, m.label}, 4, 0}, ns++;
+  n_ctg = 0;
+  while (want-- > 0 && n > 0 && n_ctg < 4) {
+    const int k = (int) (rnd() % (uint32_t) n);
+    CatTgt &g = ctg[n_ctg++];
+    g.o[0] = c[k].o[0], g.o[1] = c[k].o[1], g.gone = false, g.kind = c[k].kind, g.pl = c[k].pl;
+    c[k] = c[--n];
+    lv_area_t a;
+    lv_obj_get_coords(g.o[0], &a);
+    g.x = (a.x1 + a.x2) / 2.0f, g.y = (a.y1 + a.y2) / 2.0f, g.r = std::max(8.0f, (a.x2 - a.x1) / 2.0f);
+  }
+}
+// a target off the map (on true) or back on it: an object is hidden, a star is not drawn, a constellation's figure and name are not drawn
+inline void tgt_hide(const CatTgt &g, bool on) {
+  if (g.kind <= 4) {
+    for (lv_obj_t *o : g.o)
+      if (o) {
+        if (on)
+          lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+        else
+          lv_obj_remove_flag(o, LV_OBJ_FLAG_HIDDEN);
+      }
+  } else if (g.kind == 5) {
+    ui.star_skip_x = on ? (int) lroundf(g.x - disc_ox) : INT_MIN, ui.star_skip_y = on ? (int) lroundf(g.y - disc_oy) : INT_MIN;
+  } else if (g.kind == 6) {
+    const_eat(on ? g.pl : -1);
+  }
+}
+// UI-90: what the UFO takes this visit: one of (at random, among what there is) a thing on the map, a bright star, a constellation's figure, a cow
+inline void ufo_pick() {
+  cat_targets(1);
+  const bool obj = n_ctg > 0;
+  lv_area_t sb = {0, 0, 0, 0};
+  if (ui.w.sky)
+    lv_obj_get_coords(ui.w.sky, &sb);
+  // a bright star well inside the disc (the Nth that qualifies, chosen below)
+  auto star_ok = [&](const Ui::StarPt &p) {
+    return ui.stars_shown && p.size >= 3 && std::hypot((float) (p.x - ui.cx), (float) (p.y - ui.cy)) < ui.radius * 0.85f;
+  };
+  int n_star = 0;
+  for (const auto &p : ui.star_pts)
+    n_star += star_ok(p);
+  // a constellation whose figure (at least three lines) and name are on the map and inside the disc
+  int n_const = 0, const_idx[sky::N_NAMES];
+  if (ui.stars_shown)
+    for (int idx = 0; idx < sky::N_NAMES && n_const < sky::N_NAMES; idx++) {
+      int lo = 0;
+      for (int j = 0; j < idx; j++)
+        lo += sky::CFIG[sky::CFIG_OFF[j]];
+      const int hi = lo + sky::CFIG[sky::CFIG_OFF[idx]];
+      int cnt = 0;
+      bool inside = true;
+      for (const auto &g : ui.star_segs)
+        if (g.poly >= lo && g.poly < hi) {
+          cnt++;
+          inside = inside && std::hypot((float) (g.x0 - ui.cx), (float) (g.y0 - ui.cy)) < ui.radius * 0.92f && std::hypot((float) (g.x1 - ui.cx), (float) (g.y1 - ui.cy)) < ui.radius * 0.92f;
+        }
+      bool named = false;
+      for (const auto &nt : ui.names)
+        named = named || (nt.idx == idx && nt.shown);
+      if (cnt >= 3 && cnt <= 48 && inside && named)
+        const_idx[n_const++] = idx;
+    }
+  int opt[4], n = 0;
+  if (obj)
+    opt[n++] = 0;
+  if (n_star)
+    opt[n++] = 1;
+  if (n_const)
+    opt[n++] = 2;
+  opt[n++] = 3;
+  const int pick = opt[rnd() % (uint32_t) n];
+  if (pick == 1) {
+    int k = (int) (rnd() % (uint32_t) n_star);
+    for (const auto &p : ui.star_pts)
+      if (star_ok(p) && k-- == 0) {
+        ctg[0] = {sb.x1 + (float) p.x, sb.y1 + (float) p.y, (float) p.size, {nullptr, nullptr}, false, 5, 0};
+        break;
+      }
+    n_ctg = 1;
+  } else if (pick == 2) {
+    const int idx = const_idx[rnd() % (uint32_t) n_const];
+    int lo = 0;
+    for (int j = 0; j < idx; j++)
+      lo += sky::CFIG[sky::CFIG_OFF[j]];
+    const int hi = lo + sky::CFIG[sky::CFIG_OFF[idx]];
+    fig.n = 0;
+    for (const auto &g : ui.star_segs)
+      if (g.poly >= lo && g.poly < hi && fig.n < 48)
+        fig.s[fig.n++] = {(float) (sb.x1 + g.x0), (float) (sb.y1 + g.y0), (float) (sb.x1 + g.x1), (float) (sb.y1 + g.y1), g.major};
+    fig.bx0 = fig.by0 = 1e9f, fig.bx1 = fig.by1 = -1e9f;
+    for (int i = 0; i < fig.n; i++)
+      for (int e = 0; e < 2; e++) {
+        const float x = e ? fig.s[i].x1 : fig.s[i].x0, y = e ? fig.s[i].y1 : fig.s[i].y0;
+        fig.bx0 = std::min(fig.bx0, x), fig.bx1 = std::max(fig.bx1, x), fig.by0 = std::min(fig.by0, y), fig.by1 = std::max(fig.by1, y);
+      }
+    snprintf(ufo_c, sizeof(ufo_c), "%s", sky::NAMES[idx].text);
+    ctg[0] = {(fig.bx0 + fig.bx1) / 2, (fig.by0 + fig.by1) / 2, 20, {nullptr, nullptr}, false, 6, (int8_t) idx};
+    n_ctg = 1;
+  } else if (pick == 3) {
+    ctg[0] = {(float) (90 + rnd() % 300), 415, 20, {nullptr, nullptr}, false, 7, 0};
+    n_ctg = 1;
+  }
+}
+// the map as it is now (the zapped objects hidden), into the clean copy and the composite: the dinosaur's way of taking a thing off the map
+inline void cat_retake() {
+  if (st.clean == nullptr || st.comp == nullptr || rocket::st.back == nullptr)
+    return;
+  for (int i = 0; i < n_ctg; i++)  // (the page may have shown a satellite's marker again meanwhile)
+    tgt_hide(ctg[i], ctg[i].gone && !cat_restored);
+  lv_obj_add_flag(rocket::st.back, LV_OBJ_FLAG_HIDDEN);
+  lv_snapshot_take_to_draw_buf(lv_screen_active(), LV_COLOR_FORMAT_RGB565, st.clean);
+  lv_obj_remove_flag(rocket::st.back, LV_OBJ_FLAG_HIDDEN);
+  for (int32_t y = 0; y < 480; y++)
+    memcpy((uint8_t *) st.comp->data + (size_t) y * st.comp->header.stride, (const uint8_t *) st.clean->data + (size_t) y * st.clean->header.stride, 480 * 2);
+  st.last_box = {0, 0, 479, 479};  // the whole screen is redone this frame
+}
+// the zapped objects come back at the end of an early finish
+inline void cat_undo() {
+  if (critter == CR_OCTO)
+    return;
+  for (int i = 0; i < n_ctg; i++)
+    if (ctg[i].gone)
+      tgt_hide(ctg[i], false);
+  n_ctg = 0;
+}
+// each frame: a shot that has landed takes its target off the map; when the disc comes back, everything is put back
+// (returns the time the retakes cost, so the timeline does not jump)
+inline uint32_t cat_events(float t) {
+  if (critter == CR_UFO) {  // the beam takes hold: the object comes off the map
+    if (n_ctg == 0 || ctg[0].gone || t - ufo_delay < UFO_LIFT)
+      return 0;
+    ctg[0].gone = true;
+    const uint32_t t0 = rocket::now_ms();
+    cat_retake();
+    ESP_LOGI("octo", "UFO: t %.1f s: the beam takes hold; the map taken again in %u ms", t, (unsigned) (rocket::now_ms() - t0));
+    vlogf("UFO t %.1f: beam takes hold, map taken again in %u ms (kind %d)", t, (unsigned) (rocket::now_ms() - t0), ctg[0].kind);
+    return rocket::now_ms() - t0;
+  }
+  bool retake = false;
+  for (int i = 0; i < n_ctg; i++)
+    if (!ctg[i].gone && t >= shot_hit(i)) {
+      ctg[i].gone = true, retake = true;
+    } else if (!ctg[i].gone && ctg[i].o[0]) {  // (a satellite moves: aim at where it is)
+      lv_area_t a;
+      lv_obj_get_coords(ctg[i].o[0], &a);
+      ctg[i].x = (a.x1 + a.x2) / 2.0f, ctg[i].y = (a.y1 + a.y2) / 2.0f;
+    }
+  if (!cat_restored && t >= cp.t_rest)
+    cat_restored = true, retake = true;
+  if (!retake)
+    return 0;
+  const uint32_t t0 = rocket::now_ms();
+  cat_retake();
+  vlogf("cat t %.1f: %s, map taken again in %u ms (%d shots, disc %d/%d r %d origin %d,%d)", t, cat_restored ? "disc comes back" : "a shot lands", (unsigned) (rocket::now_ms() - t0), n_ctg,
+        ui.cx, ui.cy, ui.radius, (int) disc_ox, (int) disc_oy);
+  ESP_LOGI("octo", "cat: t %.1f s: %s; the map taken again in %u ms (%d shot, disc %d/%d r %d)", t, cat_restored ? "the disc comes back" : "a shot lands",
+           (unsigned) (rocket::now_ms() - t0), n_ctg, ui.cx, ui.cy, ui.radius);
+  return rocket::now_ms() - t0;
+}
+
 inline void frame() {
   if (!st.running)
     return;
@@ -691,8 +1431,8 @@ inline void frame() {
   // took does not count, so the entrance starts when the screen is ready (the dinosaur's ENTRY_SKIP_MS idea).
   if (st.frames == 1 && now - st.last_model > MODEL_MS * 2)
     st.t0 += (now - st.last_model) - MODEL_MS;
-  const float t = (now - st.t0) / 1000.0f;
-  if (t >= DUR_S || (rocket::st.back && lv_obj_get_parent(rocket::st.back) != lv_screen_active())) {
+  float t = (now - st.t0) / 1000.0f;
+  if (t >= dur_s() || (rocket::st.back && lv_obj_get_parent(rocket::st.back) != lv_screen_active())) {
     end_visit();
     return;
   }
@@ -706,18 +1446,34 @@ inline void frame() {
   st.last_frame = now;
   st.last_model = now;
   st.frames++;
+  if (critter != CR_OCTO)
+    if (const uint32_t cost = cat_events(t)) {  // the snapshot took a moment: the cat did not move meanwhile
+      st.t0 += cost;
+      t = (rocket::now_ms() - st.t0) / 1000.0f;
+    }
   st.t = t;
-  build(t, st.m);
-  const int beat = beat_at(t);
-  bubble_geom(t, beat, st.bx, st.by, st.bw, st.bh);
-  int32_t bx1 = (int32_t) st.m.x0, by1 = (int32_t) st.m.y0, bx2 = (int32_t) st.m.x1, by2 = (int32_t) st.m.y1;
-  if (st.bw > 0) {  // the bubble and its tail
-    bx1 = std::min(bx1, (int32_t) st.bx - 4), by1 = std::min(by1, (int32_t) st.by - 4);
-    bx2 = std::max(bx2, (int32_t) (st.bx + st.bw + 6)), by2 = std::max(by2, (int32_t) (st.by + st.bh + 24));
-  }
-  fig_box(t, st.m, bx1, by1, bx2, by2);
-  {  // the cloud
-    int cx1, cy1, cx2, cy2;
+  int32_t bx1, by1, bx2, by2;
+  if (critter != CR_OCTO) {
+    critter_box(t, bx1, by1, bx2, by2);
+    st.bw = 0;
+    if (critter == CR_UFO) {  // it talks too
+      if (t >= ufo_delay)
+        bubble_geom(t - ufo_delay, beat_at(t - ufo_delay), st.bx, st.by, st.bw, st.bh);
+      if (st.bw > 0)
+        bx1 = std::min(bx1, (int32_t) st.bx - 30), by1 = std::min(by1, (int32_t) st.by - 4), bx2 = std::max(bx2, (int32_t) (st.bx + st.bw + 6)),
+        by2 = std::max(by2, (int32_t) (st.by + st.bh + 24));
+    }
+  } else {
+    build(t, st.m);
+    const int beat = beat_at(t);
+    bubble_geom(t, beat, st.bx, st.by, st.bw, st.bh);
+    bx1 = (int32_t) st.m.x0, by1 = (int32_t) st.m.y0, bx2 = (int32_t) st.m.x1, by2 = (int32_t) st.m.y1;
+    if (st.bw > 0) {  // the bubble and its tail
+      bx1 = std::min(bx1, (int32_t) st.bx - 4), by1 = std::min(by1, (int32_t) st.by - 4);
+      bx2 = std::max(bx2, (int32_t) (st.bx + st.bw + 6)), by2 = std::max(by2, (int32_t) (st.by + st.bh + 24));
+    }
+    fig_box(t, st.m, bx1, by1, bx2, by2);
+    int cx1, cy1, cx2, cy2;  // the cloud
     if (ink_box(t, cx1, cy1, cx2, cy2))
       bx1 = std::min<int32_t>(bx1, cx1), by1 = std::min<int32_t>(by1, cy1), bx2 = std::max<int32_t>(bx2, cx2), by2 = std::max<int32_t>(by2, cy2);
   }
@@ -745,9 +1501,15 @@ inline void frame() {
     memcpy((uint8_t *) st.comp->data + (size_t) y * st.comp->header.stride + (size_t) reg.x1 * 2,
            (const uint8_t *) st.clean->data + (size_t) y * st.clean->header.stride + (size_t) reg.x1 * 2, (size_t) (reg.x2 - reg.x1 + 1) * 2);
   const Rz rz = {(uint8_t *) st.comp->data, st.comp->header.stride, reg.x1, reg.y1, reg.x2, reg.y2};
-  paint_fig(rz, t, st.m);
-  paint_octopus(rz, st.m);
-  paint_ink(rz, t);
+  if (critter == CR_UFO)
+    paint_ufo(rz, t);
+  else if (critter == CR_CAT)
+    paint_cat(rz, t);
+  else {
+    paint_fig(rz, t, st.m);
+    paint_octopus(rz, st.m);
+    paint_ink(rz, t);
+  }
   if (st.bw > 0) {
     lv_layer_t layer;
     lv_canvas_init_layer(st.cv, &layer);
@@ -759,7 +1521,7 @@ inline void frame() {
   st.paint_us += us;
   st.paint_max = std::max(st.paint_max, us);
   st.px += (uint32_t) ((reg.x2 - reg.x1 + 1) * (reg.y2 - reg.y1 + 1));
-  if (t >= EXIT_T)
+  if (t >= EXIT_T && critter == CR_OCTO)
     st.exit_us += us, st.exit_n++, st.exit_px += (uint32_t) ((reg.x2 - reg.x1 + 1) * (reg.y2 - reg.y1 + 1));
   inval(reg);
   st.last_box = box_ok ? box : lv_area_t{0, 0, -1, -1};
@@ -828,7 +1590,7 @@ inline int count_lines(const char *const *a, int n) {
 }
 
 // start a visit now; false: no memory for the backdrop, or something else is playing
-inline bool begin(uint32_t seed, int force = -2) {
+inline bool begin(uint32_t seed, int force = -2, int who = CR_OCTO) {
   if (st.running || rocket::playing() || rocket::st.font == nullptr)
     return false;
   // the backdrop and the composite are 450 KB each: with less PSRAM free there is no visit, quietly
@@ -853,9 +1615,18 @@ inline bool begin(uint32_t seed, int force = -2) {
     in_dx = D[a][0], in_dy = D[a][1], out_dx = D[b][0], out_dy = D[b][1];
   }
   st.eat_name = -1;
-  st.meal = pick_meal(force);
+  critter = who;
+  disc_origin();
+  vlog[0] = 0;
+  vlogf("%s: %d targets", who == CR_UFO ? "UFO" : who == CR_CAT ? "cat" : "octopus", n_ctg);
+  if (who == CR_CAT) {  // out by the opposite side or corner; 2 to 4 things on the map to shoot
+    out_dx = -in_dx, out_dy = -in_dy;
+    cat_targets((int) (2 + rnd() % 3));
+    cat_plan();
+  }
+  st.meal = who == CR_OCTO ? pick_meal(force) : M_NONE;
   is_meal = st.meal != M_NONE;
-  if (!is_meal && force != -2)
+  if (!is_meal && force != -2 && who == CR_OCTO)
     return false;  // a meal was asked for (the debug command) and none is up
   if (is_meal) {
     const_eat(st.eat_name);
@@ -892,6 +1663,10 @@ inline bool begin(uint32_t seed, int force = -2) {
     st.kind = K_MEAL;
     st.say[0] = pick_line(MEAL_BEFORE[st.meal], (uint32_t) count_lines(MEAL_BEFORE[st.meal], 6), last_before[st.meal]);
     st.say[1] = pick_line(MEAL_AFTER[st.meal], (uint32_t) count_lines(MEAL_AFTER[st.meal], 6), last_after[st.meal]);
+  }
+  if (who == CR_UFO) {
+    ufo_pick();
+    ufo_setup();
   }
   const uint32_t keep = st.rng;
   st.rng = 0x1234567u;  // the ink is the same every visit
@@ -931,6 +1706,9 @@ inline bool begin(uint32_t seed, int force = -2) {
       },
       20, nullptr);
   frame();
+  if (critter != CR_OCTO)
+    ESP_LOGI("octo", "visit: %s", critter == CR_UFO ? "UFO" : "cat on a comet");
+  else
   ESP_LOGI("octo", "visit: %s, \"%s\" / \"%s\"", st.kind == K_LION ? "lionfish" : st.kind == K_SNAKE ? "sea snake" : st.kind == K_MEAL ? "a meal" : "ISS", st.say[1], st.say[2]);
   return true;
 }
@@ -996,8 +1774,10 @@ void set_enabled(bool on) {
     schedule(true);
 }
 bool playing() { return st.running; }
+const char *last_log() { return vlog; }
 void stop() { end_visit(); }
 bool play_now() { return begin(rocket::now_us() * 2654435761u + 12345u); }
+bool play_critter(int who) { return begin(rocket::now_us() * 2654435761u + 12345u, -2, who); }
 bool play_eat(int meal) { return begin(rocket::now_us() * 2654435761u + 12345u, meal) && st.meal != M_NONE; }
 void check() {
   if (!st.enabled || st.running || rocket::playing() || !clock_valid() || !ui.ready || ui.ota)
@@ -1015,7 +1795,10 @@ void check() {
     return;
   if (dino::walking())
     return;
-  if (rnd() % 3 == 0) {  // UI-85b: one visit in three is the dinosaur's walk (sky_dino.h) instead
+  const uint32_t who = rnd() % 4;  // UI-85b, UI-90: a visit in four each: the dinosaur's walk (sky_dino.h), the octopus, a UFO, a cat on a comet
+  if (who >= 2)
+    begin(st.rng ^ rocket::now_us(), -2, who == 2 ? CR_UFO : CR_CAT);
+  else if (who == 0) {
     const uint32_t seed = st.rng ^ rocket::now_us();
     if (rnd() % 4 == 0 || !dino_hunt(seed))  // UI-85c: and three in four of those are hunting walks (a plain one when nothing is up)
       dino::walk(seed);

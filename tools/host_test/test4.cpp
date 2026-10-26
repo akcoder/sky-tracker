@@ -3133,6 +3133,144 @@ int main() {
       CHECK(tx.find("launches in") != std::string::npos || tx.find(" in ") != std::string::npos, "a launch ahead still counts down (%s)", tx.c_str());
       sat::live.launches.clear();
     }
+    {  // UI-90 the UFO and the cat, drawn on a dark sky: frames for the preview sheet
+      namespace oc = sat::octo;
+      static uint16_t bgmap[480 * 480];  // the real sky page (RENDER_REAL=1: on the cached CelesTrak lists), as the test left it with no card open
+      sat::dbg::run("close");
+      sat::tick();
+      lv_obj_invalidate(lv_screen_active());
+      lv_refr_now(lv_display_get_default());
+      for (int i = 0; i < 480 * 480; i++)
+        bgmap[i] = (uint16_t) ((fb[i] >> 8) | (fb[i] << 8));  // (the panel is byte-swapped)
+      {
+        lv_area_t sb = {0, 0, 0, 0};
+        if (sat::ui.w.sky)
+          lv_obj_get_coords(sat::ui.w.sky, &sb);
+        printf("REAL DISC: sky object at %d,%d size %d; ui.cx %d cy %d radius %d\n", (int) sb.x1, (int) sb.y1, (int) (sb.x2 - sb.x1 + 1), sat::ui.cx, sat::ui.cy, sat::ui.radius);
+      }
+      static uint16_t buf[480 * 480];
+      auto frame = [&](const char *name, int who, float t, int idx, int idy, int item = 0, int planet = 2, int var = 0) {
+        for (int i = 0; i < 480 * 480; i++)
+          buf[i] = oc::c565(0x0B1220);
+        for (int i = 0; i < 60; i++)  // a few stars
+          buf[((i * 97) % 470) * 480 + (i * 211) % 470] = 0xFFFF;
+        oc::disc_origin();  // the real disc: the sky object's corner plus ui.cx, ui.cy
+        if ((who == oc::CR_CAT && !strncmp(name, "cat_s", 5)) || who == oc::CR_UFO)  // the story frames: on the real map
+          memcpy(buf, bgmap, sizeof(buf));
+        oc::critter = who;
+        oc::in_dx = idx, oc::in_dy = idy, oc::out_dx = -idx, oc::out_dy = -idy;
+        const oc::Rz rz = {(uint8_t *) buf, 480 * 2, 0, 0, 479, 479};
+        if (who == oc::CR_CAT) {
+          oc::n_ctg = 3;
+          const float TX[3] = {150, 300, 215}, TY[3] = {160, 110, 330};
+          for (int i = 0; i < 3; i++)
+            oc::ctg[i] = {TX[i], TY[i], 14, {nullptr, nullptr}, false};
+          oc::cat_plan();
+          if (!strncmp(name, "cat_s", 5)) {  // stand-ins for what it shoots: on the map until their shot lands, back when the disc comes back
+            static const uint32_t COL[3] = {0xFFD84A, 0xC8C8D0, 0xD4603C};  // the Sun, the Moon, Mars
+            static const float RAD[3] = {13, 11, 8};
+            for (int i = 0; i < 3; i++)
+              if (!(t >= oc::shot_hit(i) && t < oc::cp.t_rest)) {
+                oc::disc(rz, oc::ctg[i].x, oc::ctg[i].y, RAD[i] + 3, oc::c565(COL[i]), 8);
+                oc::disc(rz, oc::ctg[i].x, oc::ctg[i].y, RAD[i], oc::c565(COL[i]));
+              }
+          }
+        }
+        if (who == oc::CR_UFO) {  // the UFO takes a thing off the map: item 0 Sun, 1 Moon, 2 planet (planet), 3 ISS, 4 satellite, 5 star, 6 constellation, 7 cow
+          oc::n_ctg = 1;
+          oc::ctg[0] = {300, 330, 12, {nullptr, nullptr}, false, (uint8_t) item, (int8_t) planet};
+          if (item == 6) {  // a figure: the Big Dipper, in the lower middle
+            static const float Q[7][2] = {{250, 300}, {275, 310}, {298, 322}, {320, 336}, {330, 360}, {362, 356}, {358, 334}};
+            oc::fig.n = 0;
+            for (int i = 0; i + 1 < 7; i++)
+              oc::fig.s[oc::fig.n++] = {Q[i][0], Q[i][1], Q[i + 1][0], Q[i + 1][1], true};
+            oc::fig.bx0 = 250, oc::fig.bx1 = 362, oc::fig.by0 = 300, oc::fig.by1 = 360;
+            snprintf(oc::ufo_c, sizeof(oc::ufo_c), "Ursa Major");
+            oc::ctg[0].x = 306, oc::ctg[0].y = 330;
+          } else if (item == 7)
+            oc::ctg[0].y = 415;
+          oc::hover_x = 260, oc::hover_y = 262;
+          oc::ufo_setup();
+          if (t < oc::UFO_LIFT && item != 7) {  // the thing on the map, before the beam takes hold
+            if (item == 5)
+              oc::disc(rz, 300, 330, 3, oc::c565(0xFFFFFF));
+            else
+              oc::paint_item(rz, oc::ctg[0].x, oc::ctg[0].y, 1.0f, t);
+          }
+          oc::paint_ufo(rz, t);
+          if (!rk::st.font)
+            rk::st.font = &mono18;
+          oc::st.t = t;
+          oc::bubble_geom(t - oc::ufo_delay, oc::beat_at(t - oc::ufo_delay), oc::st.bx, oc::st.by, oc::st.bw, oc::st.bh);
+          if (oc::st.bw > 0) {  // the speech bubble, through a canvas on the same pixels
+            static lv_draw_buf_t db;
+            static lv_obj_t *cv = nullptr;
+            lv_draw_buf_init(&db, 480, 480, LV_COLOR_FORMAT_RGB565, 960, buf, sizeof(buf));
+            if (!cv)
+              cv = lv_canvas_create(lv_screen_active());
+            lv_canvas_set_draw_buf(cv, &db);
+            lv_layer_t layer;
+            lv_canvas_init_layer(cv, &layer);
+            oc::paint_bubble(&layer);
+            lv_canvas_finish_layer(cv, &layer);
+          }
+        } else
+          oc::paint_cat(rz, t);
+        char path[160];
+        snprintf(path, sizeof(path), OUT_DIR "/renders/critter_%s.ppm", name);
+        FILE *f = fopen(path, "wb");
+        fprintf(f, "P6\n480 480\n255\n");
+        for (int i = 0; i < 480 * 480; i++) {
+          const uint16_t c = buf[i];
+          fputc(((c >> 11) & 31) * 255 / 31, f), fputc(((c >> 5) & 63) * 255 / 63, f), fputc((c & 31) * 255 / 31, f);
+        }
+        fclose(f);
+      };
+      frame("ufo_arrive", oc::CR_UFO, 1.0f, 1, 0, 4);
+      frame("ufo_hover", oc::CR_UFO, 3.6f, 1, 0, 4);
+      frame("ufo_beam", oc::CR_UFO, 5.4f, 1, 0, 4);
+      frame("ufo_leave", oc::CR_UFO, 8.9f, 1, 0, 4);
+      frame("item_saturn", oc::CR_UFO, 5.0f, 1, 0, 2, 4);
+      frame("item_jupiter", oc::CR_UFO, 5.0f, 1, 0, 2, 3);
+      frame("item_mars", oc::CR_UFO, 5.0f, 1, 0, 2, 2);
+      frame("item_moon", oc::CR_UFO, 5.0f, 1, 0, 1);
+      frame("item_sun", oc::CR_UFO, 5.0f, 1, 0, 0);
+      frame("item_iss", oc::CR_UFO, 5.0f, 1, 0, 3);
+      frame("item_star", oc::CR_UFO, 5.0f, 1, 0, 5);
+      frame("item_const", oc::CR_UFO, 5.0f, 1, 0, 6);
+      frame("item_cow", oc::CR_UFO, 7.0f, 1, 0, 7);
+      frame("item_cow_beam", oc::CR_UFO, 5.4f, 1, 0, 7);
+      frame("item_cow_walk", oc::CR_UFO, 0.9f, 1, 0, 7);
+      frame("item_cow_graze", oc::CR_UFO, 2.6f, 1, 0, 7);
+      {  // the cat's story on the map: arriving, a shot lands, the next, moving aside, charging, firing, the blast, the dark, coming back
+        const float TS[12] = {1.0f, 2.4f, 3.12f, 4.3f, 5.0f, 6.0f, 6.9f, 7.4f, 9.3f, 11.0f, 13.0f, 14.0f};
+        for (int i = 0; i < 12; i++) {
+          char nm[32];
+          snprintf(nm, sizeof(nm), "cat_s%d", i);
+          frame(nm, oc::CR_CAT, TS[i], 1, 0);
+        }
+      }
+      frame("cat_a", oc::CR_CAT, 1.9f, 1, 0);
+      frame("cat_b", oc::CR_CAT, 3.2f, 1, 0);
+      frame("cat_c", oc::CR_CAT, 1.9f, -1, 1);
+      frame("cat_d", oc::CR_CAT, 3.2f, -1, 1);
+      if (getenv("CRITTER_GIF")) {  // the animations: frames at 8 fps, put together by make_critter_gif.py
+        for (int i = 0; i < 80; i++) {
+          char nm[32];
+          snprintf(nm, sizeof(nm), "anim_ufo_%03d", i);
+          frame(nm, oc::CR_UFO, i * 0.125f, 1, 0, 2, 4);
+        }
+        for (int i = 0; i < 113; i++) {
+          char nm[32];
+          snprintf(nm, sizeof(nm), "cat_sanim_%03d", i);
+          frame(nm, oc::CR_CAT, i * 0.125f, 1, 0);
+        }
+      }
+      oc::critter = oc::CR_OCTO;
+      oc::in_dx = 1, oc::in_dy = 0, oc::out_dx = -1, oc::out_dy = 0;
+      oc::hover_x = 260, oc::hover_y = 262;  // (the UFO frames moved it)
+      oc::n_ctg = 0;
+    }
     {  // UI-85 the octopus
       namespace oc = sat::octo;
       sat::live.events.clear();
@@ -3141,6 +3279,7 @@ int main() {
       oc::set_enabled(true);
       // the timeline: in from the edge, on screen while it talks, out to the left
       oc::st.kind = 0;
+      oc::in_dx = 1, oc::in_dy = 0, oc::out_dx = -1, oc::out_dy = 0;  // (a visit picks them at random)
       oc::Model m0;
       oc::build(0, m0);
       CHECK(m0.x0 > 479, "octopus starts off the screen, beyond the right edge (%.0f)", m0.x0);

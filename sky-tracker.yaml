@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.59"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.60"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -1641,6 +1641,24 @@ button:
     icon: mdi:moon-waning-crescent
     on_press:
       - lambda: sat::eclipse::open(2, true);
+  - platform: template           # EASTER EGG, web UI only (see Octopus Visits). UI-90: a UFO that beams something up
+    id: btn_play_ufo
+    name: Play UFO Animation
+    web_server:
+      sorting_group_id: grp_animations
+      sorting_weight: 15
+    icon: mdi:ufo
+    on_press:
+      - lambda: sat::octo::play_critter(1);
+  - platform: template           # EASTER EGG, web UI only (see Octopus Visits). UI-90: a cat riding a comet
+    id: btn_play_cat
+    name: Play Cat Animation
+    web_server:
+      sorting_group_id: grp_animations
+      sorting_weight: 16
+    icon: mdi:cat
+    on_press:
+      - lambda: sat::octo::play_critter(2);
   - platform: template           # UI-68b: the Settings Upgrade Check, from the web UI and HA
     id: btn_upgrade_check
     name: Upgrade Check
