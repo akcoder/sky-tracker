@@ -25,7 +25,7 @@ inline constexpr double STEP_PX = 9.75;      // one of the four walk poses per t
 inline constexpr uint32_t ROAR_DELAY_MS = 300, ROAR_STEP_MS = 250;
 inline constexpr uint32_t GAP_MIN_MS = 3u * 60000u, GAP_MAX_MS = 12u * 60000u;   // between walks
 
-enum Pose : uint8_t { WALK0 = 0, WALK1, WALK2, WALK3, STAND, ROAR_HALF, ROAR_OPEN, N_POSES };
+enum Pose : uint8_t { WALK0 = 0, WALK1, WALK2, WALK3, STAND, ROAR_HALF, ROAR_OPEN, DIP_HALF, DIP_OPEN, N_POSES };  // DIP: the head down at the food, the mouth half open / open
 
 inline constexpr int N_WORDS = 10;
 inline const char *const WORDS[N_WORDS] = {"Rawr!", "RAWR!", "Grrr!", "Roarrr!", "Raaawr!",
@@ -86,7 +86,8 @@ struct Walk {
 };
 
 inline constexpr uint32_t HUNGRY_MS = 1900, CHEW_MS = 1800, TASTY_MS = 1900, EATEN_AT_MS = 800;  // EATEN_AT: into the chewing
-inline constexpr int SNOUT_REACH = 22;     // the sprite's blank margin at the snout: its edge reaches the object's rim
+inline constexpr int SNOUT_REACH = 26;     // how far the sprite's edge is from the snout with the head down: the snout reaches the object's rim
+inline constexpr int MOUTH_Y = 42;         // where the mouth is on the sprite with the head down: the object's centre is level with it
 
 struct Target {   // what a hunting walk is for: the object's centre and radius on the screen
   int x = 0, y = 0, r = 8;
@@ -109,7 +110,7 @@ inline Walk make_walk(uint32_t seed, const Target *tg = nullptr) {
   if (tg) {   // hunting: from the side the target is on (the dinosaur stands between it and the near edge), snout at it
     w.eat = true;
     w.flip = tg->x < SCREEN_W / 2;
-    w.lane = std::max(0, std::min(SCREEN_H - SH, tg->y - SH * 6 / 10));
+    w.lane = std::max(0, std::min(SCREEN_H - SH, tg->y - MOUTH_Y));
     const int left = w.flip ? tg->x + tg->r - SNOUT_REACH : tg->x - tg->r - SW + SNOUT_REACH;   // the sprite's left edge on screen
     w.stop_x = w.flip ? SCREEN_W - SW - left : left;
     w.pause_ms = ROAR_DELAY_MS + HUNGRY_MS + CHEW_MS + TASTY_MS + 200;
@@ -141,7 +142,7 @@ inline Frame at(const Walk &w, uint32_t t_ms) {
       if (u >= ROAR_DELAY_MS && u < chew0) {
         f.bubble = 1;
       } else if (u >= chew0 && u < chew1) {
-        f.pose = ((u - chew0) / 200) % 2 ? ROAR_HALF : ROAR_OPEN;     // chewing
+        f.pose = ((u - chew0) / 200) % 2 ? DIP_HALF : DIP_OPEN;     // chewing: the head down at the target
         f.eaten = u >= chew0 + EATEN_AT_MS;
       } else if (u >= chew1) {
         f.bubble = 2;

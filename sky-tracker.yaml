@@ -5,7 +5,7 @@
 
 substitutions:
   manifest_url: https://akcoder.github.io/sky-tracker/manifest.json  # UI-68
-  fw_version: "4.6.60"      # project version: HA device info and the settings page (bump on every install)
+  fw_version: "4.6.61"      # project version: HA device info and the settings page (bump on every install)
   name: sky-tracker
   friendly_name: Sky Tracker
   observer_lat: "61.581"     # defaults only; the live values are the Observer Latitude /
@@ -1500,7 +1500,7 @@ switch:
       - lambda: sat::rocket::set_enabled(false);
   - platform: template           # EASTER EGG, web UI only: never on screen, never in docs outside requirements.md. UI-85: a mimic octopus visits the map now and then
     id: octopus_visits
-    name: Octopus Visits
+    name: Critter Visits
     web_server:
       sorting_group_id: grp_animations
       sorting_weight: 2
@@ -1581,7 +1581,7 @@ button:
     name: Play Undocking Animation
     web_server:
       sorting_group_id: grp_animations
-      sorting_weight: 8
+      sorting_weight: 9
     icon: mdi:space-station
     on_press:
       - lambda: sat::rocket::play_undock_now();
@@ -1590,7 +1590,7 @@ button:
     name: Play Docking Animation
     web_server:
       sorting_group_id: grp_animations
-      sorting_weight: 9
+      sorting_weight: 8
     icon: mdi:space-station
     on_press:
       - lambda: sat::rocket::play_dock_now();
@@ -1608,16 +1608,16 @@ button:
     name: Play Dinosaur Animation
     web_server:
       sorting_group_id: grp_animations
-      sorting_weight: 11
+      sorting_weight: 12
     icon: mdi:dinosaur-pixel
     on_press:
-      - lambda: sat::dino::walk(esphome::millis() * 2654435761u + 12345u);
+      - lambda: sat::octo::play_dino();
   - platform: template           # UI-85: the octopus, now
     id: btn_play_octopus
     name: Play Octopus Animation
     web_server:
       sorting_group_id: grp_animations
-      sorting_weight: 12
+      sorting_weight: 13
     icon: mdi:jellyfish
     on_press:
       - lambda: sat::octo::play_now();
@@ -1627,7 +1627,7 @@ button:
     internal: true
     web_server:
       sorting_group_id: grp_animations
-      sorting_weight: 13
+      sorting_weight: 15
     icon: mdi:weather-sunny-alert
     on_press:
       - lambda: sat::eclipse::open(1, true);
@@ -1646,7 +1646,7 @@ button:
     name: Play UFO Animation
     web_server:
       sorting_group_id: grp_animations
-      sorting_weight: 15
+      sorting_weight: 16
     icon: mdi:ufo
     on_press:
       - lambda: sat::octo::play_critter(1);
@@ -1655,7 +1655,7 @@ button:
     name: Play Cat Animation
     web_server:
       sorting_group_id: grp_animations
-      sorting_weight: 16
+      sorting_weight: 11
     icon: mdi:cat
     on_press:
       - lambda: sat::octo::play_critter(2);

@@ -369,7 +369,7 @@ struct Ui {
     uint8_t poly;                 // which sky::FIG polyline (UI-46b: a selected constellation's lines)
   };
   std::vector<StarPt> star_pts;   // disc coordinates, recomputed every STAR_PERIOD
-  int star_skip_x = INT_MIN, star_skip_y = INT_MIN;  // UI-90: a star the UFO has taken is not drawn (disc coordinates; INT_MIN: none)
+  int star_skip_x[4] = {INT_MIN, INT_MIN, INT_MIN, INT_MIN}, star_skip_y[4] = {INT_MIN, INT_MIN, INT_MIN, INT_MIN};  // UI-90: the stars the UFO or the cat has taken are not drawn (disc coordinates; INT_MIN: none)
   struct DsoPt {
     int16_t x, y;
     uint8_t idx;                  // ev::DSO
@@ -2213,7 +2213,10 @@ inline void fig_draw_cb(lv_event_t *e) {
     d.bg_opa = LV_OPA_COVER;
     d.radius = LV_RADIUS_CIRCLE;
     for (const auto &p : ui.star_pts) {
-      if (std::abs(p.x - ui.star_skip_x) <= 2 && std::abs(p.y - ui.star_skip_y) <= 2)
+      bool skip = false;
+      for (int k = 0; k < 4; k++)
+        skip = skip || (std::abs(p.x - ui.star_skip_x[k]) <= 2 && std::abs(p.y - ui.star_skip_y[k]) <= 2);
+      if (skip)
         continue;
       const int x0 = ox + (int) lroundf(p.x - p.size / 2.0f), y0 = oy + (int) lroundf(p.y - p.size / 2.0f);
       const lv_area_t a = {x0, y0, x0 + p.size - 1, y0 + p.size - 1};
@@ -8254,6 +8257,7 @@ void countdown_show(int launch);  // the launch countdown for that listed launch
 namespace octo {
 bool play_now();  // sky_octopus.h
 const char *last_log();
+void stop();
 bool play_critter(int who);
 bool playing();
 }  // namespace octo
@@ -8734,6 +8738,7 @@ inline void sntp_hold() {
 
 inline void ota_begin() {
   ui.ota = true;
+  octo::stop();  // a critter's visit in progress ends: nothing animates while the firmware is written
   net_pause(true);
 }
 inline void ota_error() {
