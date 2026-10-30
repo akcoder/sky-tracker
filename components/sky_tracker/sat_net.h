@@ -3498,8 +3498,8 @@ inline int w = 0, h = 0;
 }  // namespace hpic
 inline void hist_pic_release() {
   hpic::open = false;
-  if (hpic::state == 1)
-    return;  // the job frees it when it ends
+  if (hpic::state == 1 || hpic::state == 4)
+    return;  // the job frees it when it ends (it is still writing the picture)
   heap_caps_free(hpic::px.exchange(nullptr));
   hpic::state = 0;
   hpic::have = -1;
@@ -3532,6 +3532,7 @@ inline int jpeg_size(const uint8_t *d, size_t n, int &w, int &h) {
 }
 inline void do_histpic() {
   using namespace hpic;
+  const uint32_t t_job = (uint32_t) (net_us() / 1000);
   const int idx = req;
   const char *path = idx >= 0 ? hist::pic_path(idx) : nullptr;
   if (path == nullptr || path[0] == 0) {
@@ -3606,6 +3607,7 @@ inline void do_histpic() {
   }
   heap_caps_free(jpg);
   heap_caps_free(acc);
+  ESP_LOGI(TAG, "event picture %d: %s in %u ms", idx, ok ? "loaded" : "failed", (unsigned) ((uint32_t) (net_us() / 1000) - t_job));
   if (ok)
     have = idx;
   state = ok ? 2 : 3;

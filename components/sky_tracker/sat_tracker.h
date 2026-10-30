@@ -542,8 +542,9 @@ inline void set_text_if(lv_obj_t *l, const char *s) {
     lv_label_set_text(l, s);  // PERF-6a
 }
 // UI-88: a label whose text changes fades out, takes the new text and fades back in (the status-bar clock, once a minute)
-inline char fade_text[2][16];
-inline void fade_text_set(lv_obj_t *l, const char *s) {
+inline constexpr int FADE_SLOTS = 8;  // (a text for each label that fades: the clock, the layer counts, the almanac)
+inline char fade_text[FADE_SLOTS][64];
+inline void fade_text_set(lv_obj_t *l, const char *s, int slot = 0) {
   if (l == nullptr)
     return;
   const char *cur = lv_label_get_text(l);
@@ -553,17 +554,20 @@ inline void fade_text_set(lv_obj_t *l, const char *s) {
     lv_label_set_text(l, s);  // the first text, or a change while one is fading: just take it
     return;
   }
-  snprintf(fade_text[0], sizeof(fade_text[0]), "%s", s);
+  char *buf = fade_text[slot % FADE_SLOTS];
+  snprintf(buf, sizeof(fade_text[0]), "%s", s);
   lv_anim_t a;
   lv_anim_init(&a);
   lv_anim_set_var(&a, l);
   lv_anim_set_values(&a, 0, 1000);
   lv_anim_set_duration(&a, 500);
   lv_anim_set_path_cb(&a, lv_anim_path_linear);
+  a.user_data = buf;
   lv_anim_set_custom_exec_cb(&a, [](lv_anim_t *an, int32_t v) {
     lv_obj_t *o = (lv_obj_t *) an->var;
-    if (v >= 500 && strcmp(lv_label_get_text(o), fade_text[0]) != 0)
-      lv_label_set_text(o, fade_text[0]);
+    const char *nt = (const char *) an->user_data;
+    if (v >= 500 && strcmp(lv_label_get_text(o), nt) != 0)
+      lv_label_set_text(o, nt);
     const int32_t k = v < 500 ? 1000 - v * 2 : v * 2 - 1000;  // 1000 .. 0 .. 1000
     lv_obj_set_style_text_opa(o, (lv_opa_t) (255 * k / 1000), 0);
   });
@@ -2324,13 +2328,13 @@ inline void draw_almanac(double t) {
     } else {
       b[0] = 0;
     }
-    set_text_if(l, b);
+    fade_text_set(l, b, l == ui.w.alm_sun ? 4 : 5);
   };
   line(ui.w.alm_sun, ui.sun_ev, "Sun");
   line(ui.w.alm_moon, ui.moon_ev, "Moon");
   snprintf(b, sizeof(b), "%s %.0f%%", astro::phase_name(ui.sm.moon_illum, ui.sm.moon_elong),
            std::max(0.0f, std::min(1.0f, ui.sm.moon_illum)) * 100.0f);
-  set_text_if(ui.w.alm_phase, b);
+  fade_text_set(ui.w.alm_phase, b, 6);
   draw_moon_icon(ui.sm.moon_illum, ui.sm.moon_elong < 180.0f, c.lat < 0);
 }
 
@@ -2467,7 +2471,7 @@ inline void draw_counts(const Config &c) {
     }
     snprintf(num, sizeof(num), "%d", rows[i].n);
     const bool new_icon = strcmp(lv_label_get_text(count_icon[i]), rows[i].icon) != 0;
-    set_text_if(count_num[i], num);
+    fade_text_set(count_num[i], num, 1 + i);  // (a count that changes crossfades)
     if (new_icon) {
       lv_label_set_text(count_icon[i], rows[i].icon);
       lv_obj_set_style_text_color(count_icon[i], lv_color_hex(rows[i].col), 0);
@@ -5292,7 +5296,7 @@ inline bool hist_pic_card(int idx) {
   if (req != idx || state == 0) {
     req = idx;
     state = 1;
-    if (!enqueue(JOB_HISTIMG))
+    if (!enqueue(JOB_HISTIMG, true))  // (a picture someone is waiting for goes ahead of the background refreshes)
       state = 0;
   }
   uint16_t *p = px.load();
@@ -8067,9 +8071,16 @@ inline void setup(const Config &cfg, const Widgets &w) {
 #else
   lv_timer_create(pools_timer_cb, 10, nullptr);  // BOOT-3
   lv_timer_create(img_prog_timer_cb, 250, nullptr);  // UI-59f
-  lv_timer_create([](lv_timer_t *) {  // UI-77b: the On this day picture's rows, as they arrive
-    if (net::hpic::state == 4 && ui.sel_kind == K_INFO && info_alert.info == AI_HISTORY)
-      hist_pic_card(info_alert.idx);
+  lv_timer_create([](lv_timer_t *) {  // UI-77b: the On this day picture's rows, as they arrive; the card's text (the "Loading" line) follows at once
+    static int8_t seen = -1;
+    const int8_t stt = net::hpic::state;
+    if (ui.sel_kind == K_INFO && info_alert.info == AI_HISTORY) {
+      if (stt != seen)
+        info_card_update(clock_now());
+      else if (stt == 4)
+        hist_pic_card(info_alert.idx);
+    }
+    seen = stt;
   }, 150, nullptr);
   astro_start();                                 // PERF-15
 #endif
