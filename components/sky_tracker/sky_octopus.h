@@ -713,8 +713,11 @@ inline void critter_box(float t, int32_t &x1, int32_t &y1, int32_t &x2, int32_t 
     const bool beam = cat_aim(t, x, ax, ay, f);
     const float S = cat_scale(t);  // the comet's glow, the cat above it (ears 178 px up at full size), its head and tail to either side
     x1 = (int32_t) (x - 125 * S), x2 = (int32_t) (x + 125 * S), y1 = (int32_t) (y - 190 * S), y2 = (int32_t) (y + 70 * S);
-    if (beam)
-      x1 = std::min(x1, (int32_t) ax - 60), x2 = std::max(x2, (int32_t) ax + 60), y1 = std::min(y1, (int32_t) ay - 60), y2 = std::max(y2, (int32_t) ay + 60);
+    if (beam) {  // (the beam runs from its eyes to what it hits: all of that, not just its ends)
+      const float ey = y - 74 * S;
+      x1 = std::min(x1, (int32_t) std::min(ax, x) - 60), x2 = std::max(x2, (int32_t) std::max(ax, x) + 60);
+      y1 = std::min(y1, (int32_t) std::min(ay, ey) - 60), y2 = std::max(y2, (int32_t) std::max(ay, ey) + 60);
+    }
     for (int i = 0; i < n_ctg; i++)
       if (t >= shot_hit(i) - 0.05f && t < shot_hit(i) + 1.2f)
         x1 = std::min(x1, (int32_t) (ctg[i].x - 160)), x2 = std::max(x2, (int32_t) (ctg[i].x + 160)), y1 = std::min(y1, (int32_t) (ctg[i].y - 160)),
@@ -995,11 +998,60 @@ inline void tri_fill(const Rz &r, float x0, float y0, float x1, float y1, float 
       row(r, y, lo, hi, c);
   }
 }
+// the layer counts on the right (SAT, SL, GEO) crossfade to zero as the disc is destroyed and back to their numbers as it comes back
+inline bool counts_active(float t) { return t >= cp.t_hit + 0.9f && t < cp.t_rest + 0.9f; }
+inline float counts_u(float t) {  // 0: the numbers, 1: zeros
+  if (t < cp.t_rest)
+    return seg(t, cp.t_hit + 0.9f, cp.t_hit + 1.4f);
+  return 1 - seg(t, cp.t_rest + 0.4f, cp.t_rest + 0.9f);
+}
+inline void paint_counts_bg(const Rz &r, float t) {  // the numbers as the page has them are covered (the screen's own background beside them)
+  if (!counts_active(t) || st.clean == nullptr)
+    return;
+  for (int i = 0; i < COUNT_ROWS; i++) {
+    if (count_num[i] == nullptr || lv_obj_has_flag(count_num[i], LV_OBJ_FLAG_HIDDEN))
+      continue;
+    lv_area_t a;
+    lv_obj_get_coords(count_num[i], &a);
+    const int32_t ya = std::max<int32_t>(0, a.y1 - 1), yb = std::min<int32_t>(479, a.y2 + 1);
+    if (ya > yb)
+      continue;
+    const uint16_t bg = ((const uint16_t *) ((const uint8_t *) st.clean->data + (size_t) ya * st.clean->header.stride))[477];
+    for (int32_t y = ya; y <= yb; y++)
+      row(r, y, (float) (a.x2 - 40), 478.0f, bg);
+  }
+}
+inline void paint_counts(lv_layer_t *layer, float t) {
+  if (!counts_active(t))
+    return;
+  const float u = counts_u(t);
+  for (int i = 0; i < COUNT_ROWS; i++) {
+    if (count_num[i] == nullptr || lv_obj_has_flag(count_num[i], LV_OBJ_FLAG_HIDDEN))
+      continue;
+    lv_area_t a;
+    lv_obj_get_coords(count_num[i], &a);
+    const lv_area_t da = {a.x2 - 40, a.y1, a.x2, a.y2};
+    for (int k = 0; k < 2; k++) {  // the number fading out, the zero fading in
+      const float w = k ? u : 1 - u;
+      if (w <= 0.0f)
+        continue;
+      lv_draw_label_dsc_t l;
+      lv_draw_label_dsc_init(&l);
+      l.font = lv_obj_get_style_text_font(count_num[i], LV_PART_MAIN);
+      l.color = lv_color_hex(C_DIM);
+      l.opa = (lv_opa_t) (255 * w);
+      l.align = LV_TEXT_ALIGN_RIGHT;
+      l.text = k ? "0" : lv_label_get_text(count_num[i]);
+      lv_draw_label(layer, &l, &da);
+    }
+  }
+}
 inline void paint_cat(const Rz &r, float t) {
   float hx, hy, ax, ay, f;
   cat_xy(t, hx, hy);
   const bool beam = cat_aim(t, hx, ax, ay, f);
   paint_boom(r, t);  // (under everything else)
+  paint_counts_bg(r, t);
   for (int i = 0; i < n_ctg; i++)
     paint_zap(r, ctg[i], t - shot_hit(i), i);
   const float S = cat_scale(t);
@@ -1605,6 +1657,7 @@ inline uint32_t cat_events(float t) {
   for (int i = 0; i < n_ctg; i++)
     if (!ctg[i].gone && t >= shot_hit(i)) {
       ctg[i].gone = true;
+      vlogf("cat t %.1f: shot %d lands on kind %d at %d,%d", t, i, (int) ctg[i].kind, (int) ctg[i].x, (int) ctg[i].y);
       if (pt_ok)
         patch_apply(i, true);
       else
@@ -1727,11 +1780,13 @@ inline void frame() {
     paint_octopus(rz, st.m);
     paint_ink(rz, t);
   }
-  if (st.bw > 0) {
+  if (st.bw > 0 || (critter == CR_CAT && counts_active(t))) {
     lv_layer_t layer;
     lv_canvas_init_layer(st.cv, &layer);
     layer._clip_area = reg;
     paint_bubble(&layer);
+    if (critter == CR_CAT)
+      paint_counts(&layer, t);
     lv_canvas_finish_layer(st.cv, &layer);
   }
   const uint32_t us = rocket::now_us() - t_paint;
@@ -1839,7 +1894,6 @@ inline bool begin(uint32_t seed, int force = -2, int who = CR_OCTO) {
   critter = who;
   disc_origin();
   vlog[0] = 0;
-  vlogf("%s: %d targets", who == CR_UFO ? "UFO" : who == CR_CAT ? "cat" : "octopus", n_ctg);
   if (who == CR_CAT) {  // out by the opposite side or corner; 2 to 4 things on the map to shoot
     out_dx = -in_dx, out_dy = -in_dy;
     cat_spots();
@@ -1848,6 +1902,7 @@ inline bool begin(uint32_t seed, int force = -2, int who = CR_OCTO) {
     cat_fill_stars(want);
     cat_plan();
   }
+  vlogf("%s: %d targets", who == CR_UFO ? "UFO" : who == CR_CAT ? "cat" : "octopus", n_ctg);
   st.meal = who == CR_OCTO ? pick_meal(force) : M_NONE;
   is_meal = st.meal != M_NONE;
   if (!is_meal && force != -2 && who == CR_OCTO)
