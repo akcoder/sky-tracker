@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.63 (released): an axolotl and Audrey (a man-eating plant) visit the map with the octopus, the dinosaur, the UFO and the cat: a visit in six each (UI-91, UI-92). the Moon no longer shows outside the sky disc as it rises or sets: the rim mask followed the Moon's last place, not its new one (UI-6b). Every critter paints a little faster (the soft-edged line primitive skips a square root and a division a pixel). the Moon-near-a-planet-or-star alert ("Moon near Regulus this morning") opens a details card saying when they are closest, how far apart, and what the star is (constellation, magnitude, distance, a fact) (UI-49b).
 - 4.6.62 (released): a value that changes on the screen crossfades (the old text fades out, the new one fades in over half a second): the layer counts on the right (SAT, SL, GEO) and the almanac lines (Sun and Moon rise and set, the Moon phase), as the clock and the alerts already did (UI-88). When the cat destroys the disc the layer counts crossfade to zero and back as it returns (UI-90). The cat's beams are drawn along their whole length (the redraw box covered only their ends, so the disc seemed to blow up before the beam reached it); the visit log says which shot lands on what. The On this day card's picture is asked for at the front of the network queue (it waited behind the background refreshes), the card's "Loading the picture..." line goes as soon as the picture starts to arrive (it stayed up to 1.6 s under a picture that was already showing), and closing the card while the picture is arriving no longer frees the buffer the download is writing to (UI-77b).
 - 4.6.61 (released): a firmware update stops a visit that is playing (nothing animates while it is written). the cat (UI-90): lines before the big shot and on leaving (including the Alderaan one), it weaves and bobs on its way, picks targets that are not under it where it hovers and fires, fires the big shot from the edge or corner it leaves by (outside the disc), and its bubble sits above its ears or, with no room, beside it. The cat redraws only the box round the comet and cat (was nearly the whole screen: 184 kpx a frame, 11.7 fps; now 91 kpx, 13.9 fps), the blast's flash and debris stay inside the shock and the disc, a shot that lands and the disc coming back copy a patch of the map into the backdrop (taken once when the visit starts, 160 ms before it plays) instead of retaking the whole screen, which stopped the cat for 155 ms a time (longest gap 331 ms, now 100 to 170 ms); the cat always has 2 to 4 targets (bright stars make up what the map has too few of); and the visit log prints a line a second (frames, painting time, longest gap). The dinosaur dips its head to eat what it hunts (two new head-down poses, made by tools/gen_dino_dip.py from the standing pose; it chews with the head down at the target, which is now level with its mouth) (UI-85c). The Octopus Visits switch is now Critter Visits (it gates the octopus, UFO and cat visits), and the Animations section's order is: the two switches, the launch, docking, undocking and splashdown buttons, then Cat, Dinosaur, Octopus, Lunar Eclipse, Solar Eclipse and UFO (NET-6).
 - 4.6.60 (released): a UFO and a cat riding a comet visit the map at random, with the octopus and the dinosaur: a visit in four each (UI-90). a visible ISS pass starting within 10 minutes or under way is drawn on the map as its path, without selecting the ISS (UI-89).
@@ -993,6 +994,8 @@ UI-49  Moon near a planet (magnitude 1.5 or brighter) or Aldebaran, Regulus, Spi
        Antares, Pollux: searched every 10 min over the next 18 h, hourly, dark sky (Sun
        below -6°) with both at least 5° up; within 5°: "Moon near Jupiter tonight - 2°
        apart", or "Moon 2° from Jupiter now".
+UI-49b Its alert's details card: "Moon & Regulus", when they are closest and how far
+       apart, and for a star its constellation, magnitude, distance and fact.
 UI-50  Named bright stars (ev::BRIGHT, 20): a tap within ~15 px of one (stars shown)
        opens a card: Az/El, magnitude, distance in light years, constellation, one fact.
 UI-51  Eclipses seen from here, the next three within 3 years, found one syzygy every 2 s
@@ -1038,6 +1041,28 @@ UI-90  Two more critters visit as the octopus and the dinosaur do (UI-85, UI-85b
        Sun, a Moon and Mars that are shot, stay gone and come back; the host cannot hide a real map object or take the screen again) and cat.gif (the host test writes the frames to
        tools/host_test/out/renders/critter_*.ppm; CRITTER_GIF=1 adds the gifs' frames). The Octopus Visits switch turns all four kinds of visit off; the Play UFO Animation and Play Cat Animation
        buttons (web Animations group, HA) play one now. Debug: "anim ufo", "anim cat".
+UI-91  An axolotl visits (a visit in five, with the dinosaur, octopus, UFO and cat; the Play Axolotl Animation button, web Animations group; debug "anim axo").
+       It swims in from an edge or corner on a smooth curved path: it slows to a stop at each target, turns round (its body foreshortens through the turn) when it
+       must, and beats its tail harder the faster it goes. Its body is a bendable spine, not a stiff piece: the head leads into a climb or a dive and each part behind
+       it takes the heading the head had a moment earlier, so the tail trails along the path (a little wave runs through it as it swims). It picks 2 to 4 small things on the map (the ISS and satellites,
+       bright stars; not the Sun, Moon, planets or constellations), nearest first, stalks each for half a second, lunges, gapes and sucks it into its mouth (the
+       thing shrinks as it flies in), puffs its cheeks and blows bubbles. When it has eaten them all they regrow on the map with a sparkle and it swims off by
+       another edge. Its lines: before the first gulp ("Snack time.", "Is that a worm?", "Blub.") and as they regrow ("Regrows nicely.", "Don't worry, I can regrow
+       that."); the bubble sits above its head (beside it if there is no room), at its calm course's height. It reuses the cat's map patches (a thing taken off, and
+       put back, by copying a patch of the map), 24 fps on the unit (the visit's step is 25 ms for it, 50 ms for the others), 43 to 60 kpx a frame. Not eaten yet:
+       a Starlink train's row of cars. Comps: docs/comps/axolotl_strip.png (poses and four colours), axolotl_visit_strip.png and axolotl_visit.gif (the planned visit
+       on the real map; the host test with CRITTER_GIF=1).
+UI-92  Audrey, a man-eating plant, visits (a visit in six; the Play Audrey Animation button, web Animations group; debug "anim audrey"). A pot sits at the foot of the screen
+       (somewhere in its middle), cracked, with leaves, a stem and curling tentacles. Audrey grows out of it, then for each of 2 to 4 small things on the map within its reach
+       (the ISS and satellites, bright stars; not the Sun, Moon, planets or constellations; none too near the pot), nearest first, it reaches its head over (turning round if
+       the thing is on the other side), opens its mouth, slithers a long tongue out to it (the tongue waves, and goes still as it touches), takes it on the tongue's tip and
+       reels it in (it shrinks as it goes), shuts its jaws and swallows (a lump runs down the stem). When it has eaten them all it settles, they regrow on the map with a
+       sparkle, it says a line and sinks back into the pot. Lines before: "Feed me!", "Feed me, Seymour!", "I'm hungry. Feed me.", "Is that dinner?"; after: "Mmm. More.",
+       "Burp. Pardon me.", "That was just a starter.", "Now we're talking." Its head is one round disc with the mouth cut out as a wedge from just behind its middle (lips on
+       the wedge's edges, teeth along them), and the neck ends well inside the disc, so head and neck are one shape. 18 fps on the unit (the step is 25 ms), 100 kpx a frame:
+       the redraw box is worked from what it paints (pot and tentacles, the stem with its leaves, the head, the tongue, the sparkles), and the host test checks that nothing
+       is painted outside it, for it and the axolotl, over a whole visit (anything outside is clipped away and smears). Comps: docs/comps/audrey_strip.png, audrey_neck_closeup.png,
+       audrey_anim_strip.png and audrey_anim.gif (tools/host_test/make_critter_comps.py after the host test with CRITTER_GIF=1).
 UI-89  A visible ISS pass that starts within 10 minutes or is under way is drawn on the map as its path (the selected pass's
        arc, with the rise dot), with nothing selected and the ISS alerts on. Selecting the ISS or Tiangong, or a Sun or Moon
        card, shows its own arc as before.

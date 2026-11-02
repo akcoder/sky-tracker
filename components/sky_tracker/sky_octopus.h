@@ -32,7 +32,7 @@ namespace sat {
 namespace octo {
 void set_enabled(bool on);
 bool play_now();  // the button
-bool play_critter(int who);  // the debug command: 1 UFO, 2 cat
+bool play_critter(int who);  // the debug command: 1 UFO, 2 cat, 3 axolotl, 4 Audrey
 bool play_eat(int meal);  // the debug command: a meal (0 crab, 1 fish, 2 bull) if one is up on the map
 bool play_dino();  // the web button: a dinosaur walk as a random visit has it (hunting, three in four, when something is up)
 bool playing();
@@ -55,7 +55,9 @@ constexpr float DUR_S = 10.0f;
 constexpr float SC = 0.75f;  // its size: the screen blit costs ~0.8 us a pixel, so the box it covers (and its fps) is set by this
 constexpr int N = 12;  // segments an arm is kept in
 constexpr uint32_t MIN_GAP_S = 15 * 60, MAX_GAP_S = 35 * 60, FIRST_MIN_S = 8 * 60, FIRST_MAX_S = 15 * 60;
-constexpr uint32_t MODEL_MS = 50;  // the model steps at up to ~14 fps (a step is ~45 ms to paint and ~30 ms to refresh)
+constexpr uint32_t MODEL_MS_SLOW = 50;  // the model steps at up to ~14 fps (a step is ~45 ms to paint and ~30 ms to refresh)
+inline int critter_id();
+inline uint32_t model_ms() { return critter_id() >= 3 ? 25u : MODEL_MS_SLOW; }  // (the axolotl, CR_AXO, paints in ~17 ms and refreshes in ~20: a step every 25 ms at most)
 constexpr uint32_t C_BODY = 0x80583C, C_BAND = 0xEEE0C0, C_DARK = 0x3C2820, C_ISS_BODY = 0x3E5CA0, C_ISS_BAND = 0xDECC82,
                    C_LION = 0xA04E34, C_SNAKE = 0x2C2630, C_SNAKE_BAND = 0xF4F0E8;
 
@@ -505,8 +507,9 @@ inline bool ink_box(float t, int &x1, int &y1, int &x2, int &y2) {
 
 // ---- the other critters (they share this file's timeline, backdrop, composite and rasteriser): a UFO that hovers and
 // beams down, and a cat riding a comet across the map
-enum { CR_OCTO = 0, CR_UFO = 1, CR_CAT = 2 };
+enum { CR_OCTO = 0, CR_UFO = 1, CR_CAT = 2, CR_AXO = 3, CR_AUDREY = 4 };
 inline int critter = CR_OCTO;
+inline int critter_id() { return critter; }
 // The cat's visit is a story (UI-90): it comes in on its comet and hovers, fires 2 to 4 laser shots, each vaporising a Sun,
 // Moon, planet or satellite that is up on the map; moves out of the way, charges, and blows up the whole sky disc (flash,
 // shock ring, debris, dark); two seconds later the disc fades back, with everything that was shot.
@@ -540,6 +543,34 @@ struct CatPlan {
   float shot0 = 1.8f, dt = 0.9f, t_move = 0, t_charge = 0, t_fire = 0, t_hit = 0, t_leave = 0, t_rest = 0, t_end = 0;  // t_leave: the cat flies off; t_rest: the disc starts to come back
 };
 inline CatPlan cp;
+// The axolotl's visit (UI-91): it swims in on a smooth path, stalks each of 2 to 4 small things on the map (satellites, the ISS, bright stars),
+// lunges, opens wide and gulps it down (the thing is sucked into its mouth), puffs its cheeks and blows bubbles; when it has eaten them all
+// they regrow on the map, with a sparkle, and it swims off.
+constexpr float AXO_K = 1.6f, AXO_MOUTH = 49.0f;  // its size (px a unit); the mouth's tip, in units ahead of its middle
+struct AxoSeg {
+  float t0, t1, x0, y0, x1, y1, bow, f0, f1, l0, len;  // a smooth arc from (x0, y0) to (x1, y1); f: which way it faces (a change: it turns round); l0, len: path length
+  bool burst;
+};
+struct AxoPlan {
+  AxoSeg s[24];
+  int n = 0;
+  float pull[4] = {}, regrow[4] = {}, t_stalk = 0, t_regrow = 0, t_exit = 0, t_end = 0;  // (pull, regrow: by target)
+  bool back[4] = {};
+};
+inline AxoPlan ap;
+// Audrey's visit (UI-92): see audrey_plan below
+constexpr float AUD_K = 1.7f, AUD_DT = 110.0f, AUD_RH = 38.0f;  // its size (px a unit); how far its tongue reaches (px)
+struct AudreySeg {
+  float t0, t1, hx0, hy0, hx1, hy1, tl0, tl1, f0, f1;  // the head's hinge moves from (hx0, hy0) to (hx1, hy1), tilting from tl0 to tl1; f: which way it faces (a change: it turns round)
+};
+struct AudreyPlan {
+  AudreySeg s[14];
+  int n = 0;
+  float bx = 240, by = 412;  // the pot
+  float t_open[4] = {}, t_out[4] = {}, pull[4] = {}, regrow[4] = {}, t_stalk = 0, t_regrow = 0, t_sink = 0, t_end = 0;  // (by target)
+  bool back[4] = {};
+};
+inline AudreyPlan pl;
 inline float disc_ox = 0, disc_oy = 0;  // where the sky disc's square sits on the screen (ui.cx, ui.cy and the stars are relative to it)
 inline void disc_origin() {
   lv_area_t a;
@@ -559,6 +590,8 @@ inline void cat_spots() {  // where it hovers and where it fires the big shot: t
 }
 // is (x, y) under the cat where it hovers or fires (its body and comet would hide a blast there)
 inline bool cat_under(float x, float y, float r) {
+  if (critter != CR_CAT)
+    return false;
   auto u = [&](float hx, float hy) { return std::fabs(x - hx) < 120 + r && y > hy - 160 - r && y < hy + 80 + r; };
   return u(cat_x1, cat_y1) || u(cat_x2, cat_y2);
 }
@@ -580,8 +613,22 @@ inline void cat_lines() {
   st.say[1] = pick_line(SAY_CAT_BEFORE, sizeof(SAY_CAT_BEFORE) / sizeof(*SAY_CAT_BEFORE), last_cat_before);
   st.say[2] = pick_line(SAY_CAT_LEAVE, sizeof(SAY_CAT_LEAVE) / sizeof(*SAY_CAT_LEAVE), last_cat_leave);
 }
-inline bool cat_on() { return critter == CR_CAT; }
+inline bool cat_on() { return critter == CR_CAT || critter == CR_AXO || critter == CR_AUDREY; }
 inline float cat_beat(int i, bool end) {  // beat 1: from while it backs away to just before the big shot; beat 2: after the blast, till it flies off
+  if (critter == CR_AUDREY) {  // Audrey's: as it reaches for the first thing, and as they regrow
+    if (i == 1)
+      return end ? pl.t_stalk + 2.2f : pl.t_stalk + 0.2f;
+    if (i == 2)
+      return end ? std::max(pl.t_regrow + 1.0f, pl.t_sink - 0.1f) : pl.t_regrow + 0.2f;
+    return -10.0f;
+  }
+  if (critter == CR_AXO) {  // the axolotl's: while it stalks the first thing, and as the things regrow
+    if (i == 1)
+      return end ? ap.t_stalk + 1.9f : ap.t_stalk - 0.1f;
+    if (i == 2)
+      return end ? std::max(ap.t_regrow + 1.0f, ap.t_end - 0.2f) : ap.t_regrow + 0.2f;
+    return -10.0f;
+  }
   if (i == 1)
     return end ? cp.t_fire + 0.3f : cp.t_move + 0.3f;
   if (i == 2)
@@ -589,7 +636,7 @@ inline float cat_beat(int i, bool end) {  // beat 1: from while it backs away to
   return -10.0f;
 }
 inline float ufo_delay = 0;  // a cow is there first: the UFO comes in this long after the start (its own clock is t - ufo_delay)
-inline float dur_s() { return critter == CR_CAT ? cp.t_end : critter == CR_UFO ? DUR_S + ufo_delay : DUR_S; }
+inline float dur_s() { return critter == CR_AUDREY ? pl.t_end : critter == CR_AXO ? ap.t_end : critter == CR_CAT ? cp.t_end : critter == CR_UFO ? DUR_S + ufo_delay : DUR_S; }
 inline float shot_hit(int i) { return cp.shot0 + cp.dt * i + 0.4f; }  // when shot i's beam arrives
 // the comet's head (where the cat rides): in from its edge, hovering, over to where it fires at the disc, out by the other edge
 inline void cat_xy(float t, float &x, float &y, bool calm = false) {  // calm: without the weave and the sway (where the bubble goes)
@@ -694,7 +741,17 @@ inline void ufo_setup() {  // after ufo_pick(): it hovers over what it has and r
   ufo_lines();
 }
 // the box to redo
+inline void axo_box(float t, int32_t &x1, int32_t &y1, int32_t &x2, int32_t &y2);
+inline void audrey_box(float t, int32_t &x1, int32_t &y1, int32_t &x2, int32_t &y2);
 inline void critter_box(float t, int32_t &x1, int32_t &y1, int32_t &x2, int32_t &y2) {
+  if (critter == CR_AXO) {
+    axo_box(t, x1, y1, x2, y2);
+    return;
+  }
+  if (critter == CR_AUDREY) {
+    audrey_box(t, x1, y1, x2, y2);
+    return;
+  }
   if (critter == CR_UFO) {
     const float tu = t - ufo_delay;  // the UFO's own clock
     float cx = 240, cy = 0;
@@ -893,16 +950,17 @@ inline void tapered(const Rz &r, float x0, float y0, float r0, float x1, float y
   const float rm = std::max(r0, r1) + 1;
   const int ya = std::max(r.cy1, ifloor(std::min(y0, y1) - rm)), yb = std::min(r.cy2, iceil(std::max(y0, y1) + rm));
   const int xa = std::max(r.cx1, ifloor(std::min(x0, x1) - rm)), xb = std::min(r.cx2, iceil(std::max(x0, x1) + rm));
-  const float dx = x1 - x0, dy = y1 - y0, l2 = std::max(1.0f, dx * dx + dy * dy);
+  const float dx = x1 - x0, dy = y1 - y0, l2 = std::max(1.0f, dx * dx + dy * dy), il2 = 1.0f / l2;  // (the FPU has no divide: one reciprocal, not one division a pixel)
   for (int y = ya; y <= yb; y++) {
     uint16_t *row_p = (uint16_t *) (r.base + (size_t) y * r.stride);
     for (int x = xa; x <= xb; x++) {
       const float px = x - x0, py = y - y0;
-      const float u = std::min(1.0f, std::max(0.0f, (px * dx + py * dy) / l2));
+      const float u = std::min(1.0f, std::max(0.0f, (px * dx + py * dy) * il2));
       const float qx = px - dx * u, qy = py - dy * u, rad = r0 + (r1 - r0) * u, d2 = qx * qx + qy * qy;
       if (d2 >= (rad + 0.5f) * (rad + 0.5f))
         continue;
-      const float edge = std::min(1.0f, std::max(0.0f, rad + 0.5f - std::sqrt(d2)));  // one pixel of soft edge
+      const float rin = rad - 0.5f;  // (inside it the edge is not needed: no square root, a software call on the S3)
+      const float edge = rin > 0 && d2 <= rin * rin ? 1.0f : std::min(1.0f, std::max(0.0f, rad + 0.5f - std::sqrt(d2)));  // one pixel of soft edge
       const uint32_t a5 = (uint32_t) ((a0 + (a1 - a0) * u) * edge);
       if (a5)
         row_p[x] = a5 >= 32 ? c : blend565(c, row_p[x], a5);
@@ -1124,9 +1182,751 @@ inline void paint_cat(const Rz &r, float t) {
   }
 }
 
+// a thin line, two pixels wide, no soft edge (the axolotl's gill filaments: sixty of them a frame)
+inline void thin_line(const Rz &r, float x0, float y0, float x1, float y1, uint16_t c) {
+  const int n = std::max(1, (int) std::max(std::fabs(x1 - x0), std::fabs(y1 - y0)));
+  for (int i = 0; i <= n; i++) {
+    const int x = ifloor(x0 + (x1 - x0) * i / n), y = ifloor(y0 + (y1 - y0) * i / n);
+    for (int dy = 0; dy < 2; dy++) {
+      if (y + dy < r.cy1 || y + dy > r.cy2)
+        continue;
+      uint16_t *row_p = (uint16_t *) (r.base + (size_t) (y + dy) * r.stride);
+      for (int dx = 0; dx < 2; dx++)
+        if (x + dx >= r.cx1 && x + dx <= r.cx2)
+          row_p[x + dx] = c;
+    }
+  }
+}
+// ---- the axolotl (UI-91): seen from the side; (cx, cy) the middle of its body, K px a unit (it is about 150 units long), fx: +1 faces right, -1 left, and
+// in between it is turning round (its length foreshortened); pitch: nose down in radians; ph: the tail's wave; amp: how hard it swims;
+// pal: 0 leucistic pink, 1 wild (dark olive), 2 golden, 3 mosaic (pink, dark patches); open: the mouth gaping; puff: the cheeks full
+struct AxoPal {
+  uint32_t body, belly, gill, gill2, fin, eye, patch;
+};
+inline const AxoPal AXO_PAL[4] = {{0xF2B3C6, 0xFBD6E0, 0xE5506F, 0xC23E5C, 0xF7C6D4, 0x181018, 0xF2B3C6},
+                                  {0x4C4A3A, 0x7A745C, 0xA85A58, 0x7E3E40, 0x625E48, 0x0E0E0A, 0x4C4A3A},
+                                  {0xF2C45A, 0xFBE3A0, 0xE98A4A, 0xC4683A, 0xF7D88A, 0x181008, 0xF2C45A},
+                                  {0xF2B3C6, 0xFBD6E0, 0xE5506F, 0xC23E5C, 0xF7C6D4, 0x181018, 0x5A5648}};
+// The body is a spine of nodes (a bendable curve, 6 units apart, the middle one the path's point): each node has an angle (nose down, radians), and
+// a point of the body (lx units ahead of the middle, ly below) is put on the screen through the spine, so it bends instead of turning stiffly.
+constexpr int AXO_N = 28, AXO_MID = 18;
+constexpr float AXO_X0 = -108.0f, AXO_DX = 6.0f;  // node k is at local x AXO_X0 + AXO_DX * k
+struct AxoSp {
+  float x[AXO_N], y[AXO_N], a[AXO_N], K, fx;
+};
+inline void axo_sp_make(AxoSp &sp, float cx, float cy, float K, float fx, const float *bend, float pitch) {
+  sp.K = K, sp.fx = fx;
+  for (int k = 0; k < AXO_N; k++)
+    sp.a[k] = bend ? bend[k] : pitch;
+  sp.x[AXO_MID] = cx, sp.y[AXO_MID] = cy;
+  for (int k = AXO_MID; k + 1 < AXO_N; k++) {
+    const float a = (sp.a[k] + sp.a[k + 1]) / 2;
+    sp.x[k + 1] = sp.x[k] + K * AXO_DX * fx * std::cos(a), sp.y[k + 1] = sp.y[k] + K * AXO_DX * std::sin(a);
+  }
+  for (int k = AXO_MID; k > 0; k--) {
+    const float a = (sp.a[k] + sp.a[k - 1]) / 2;
+    sp.x[k - 1] = sp.x[k] - K * AXO_DX * fx * std::cos(a), sp.y[k - 1] = sp.y[k] - K * AXO_DX * std::sin(a);
+  }
+}
+inline void axo_wp(const AxoSp &sp, float lx, float ly, float &x, float &y) {
+  const float f = std::min((float) AXO_N - 1.001f, std::max(0.0f, (lx - AXO_X0) / AXO_DX));
+  const int k = (int) f;
+  const float fr = f - (float) k, a = sp.a[k] + (sp.a[k + 1] - sp.a[k]) * fr;
+  x = sp.x[k] + (sp.x[k + 1] - sp.x[k]) * fr + sp.K * sp.fx * (-ly * std::sin(a));
+  y = sp.y[k] + (sp.y[k + 1] - sp.y[k]) * fr + sp.K * ly * std::cos(a);
+}
+inline void paint_axolotl_sp(const Rz &r, const AxoSp &sp, float ph, int pal, float open, float puff, float amp) {
+  const float K = sp.K;
+  const AxoPal &P = AXO_PAL[pal & 3];
+  auto shade = [](uint32_t c) { return (std::max(0, (int) ((c >> 16) & 255) - 21) << 16) | (std::max(0, (int) ((c >> 8) & 255) - 21) << 8) | std::max(0, (int) (c & 255) - 21); };
+  const uint16_t body = c565(P.body), belly = c565(P.belly), gill = c565(P.gill), gill2 = c565(P.gill2), fin = c565(P.fin), eye = c565(P.eye), patch = c565(P.patch), dk = c565(shade(P.body));
+  auto W = [&](float lx, float ly, float &x, float &y) { axo_wp(sp, lx, ly, x, y); };
+  // the tail: eight segments from the rump, a wave running down it, with a tall thin fin above and below
+  float lxs[9], lys[9], trk[9], tx[9], ty[9];
+  lxs[0] = -10, lys[0] = 0, trk[0] = 11.5f;  // (it starts inside the body at the body's full width, so there is no step where they join)
+  for (int i = 1; i < 9; i++) {
+    const float u = i / 8.0f;
+    lxs[i] = lxs[i - 1] - 11.0f, trk[i] = 11.5f - 9.0f * u;
+    lys[i] = 7.0f * amp * u * std::sin(ph - u * 3.4f);
+  }
+  for (int i = 0; i < 9; i++)
+    W(lxs[i], lys[i], tx[i], ty[i]);
+  for (int i = 0; i < 8; i++) {  // the fin first (behind the tail)
+    const float h0 = 3 + 11 * std::sin(i * 0.38f + 0.25f), h1 = 3 + 11 * std::sin((i + 1) * 0.38f + 0.25f);
+    for (int sgn = -1; sgn <= 1; sgn += 2) {
+      const float k0 = sgn < 0 ? 0.8f : 0.8f;
+      float ax, ay, bx, by, cx2, cy2, dx, dy;
+      W(lxs[i], lys[i] + sgn * (trk[i] + h0 * k0), ax, ay);
+      W(lxs[i + 1], lys[i + 1] + sgn * (trk[i + 1] + h1 * k0), bx, by);
+      W(lxs[i], lys[i] + sgn * trk[i] * 0.5f, cx2, cy2);
+      W(lxs[i + 1], lys[i + 1] + sgn * trk[i + 1] * 0.5f, dx, dy);
+      tri_fill(r, ax, ay, bx, by, cx2, cy2, fin);
+      tri_fill(r, bx, by, dx, dy, cx2, cy2, fin);
+    }
+  }
+  for (int i = 0; i < 8; i++) {  // the tail: a strip (each step is two triangles) with a round tip
+    float ax, ay, bx, by, cx2, cy2, dx, dy;
+    W(lxs[i], lys[i] - trk[i], ax, ay);
+    W(lxs[i + 1], lys[i + 1] - trk[i + 1], bx, by);
+    W(lxs[i], lys[i] + trk[i], cx2, cy2);
+    W(lxs[i + 1], lys[i + 1] + trk[i + 1], dx, dy);
+    tri_fill(r, ax, ay, bx, by, cx2, cy2, body);
+    tri_fill(r, bx, by, dx, dy, cx2, cy2, body);
+  }
+  disc(r, tx[8], ty[8], K * trk[8], body);
+  // the legs: stubby, angled down and back, with three toes; the far pair a shade darker and behind the body
+  auto leg = [&](float lx, float ly, float sw, uint16_t c) {
+    const float exl = lx - (4 + 1.5f * sw), eyl = ly + 8;
+    float x0, y0, x1, y1;
+    W(lx, ly, x0, y0);
+    W(exl, eyl, x1, y1);
+    tapered(r, x0, y0, K * 4.8f, x1, y1, K * 3.0f, c, 32, 32);
+    for (int k = -1; k <= 1; k++) {
+      float x2, y2;
+      W(exl + (k * 1.2f - 1.0f), eyl + 3.6f + 0.3f * (k == 0), x2, y2);
+      tapered(r, x1, y1, K * 1.5f, x2, y2, K * 1.1f, c, 32, 32);
+    }
+  };
+  leg(12, 6, std::sin(ph + 3.0f), dk);
+  leg(-10, 6, std::sin(ph), dk);
+  // the body, a paler belly, a crest along the back (running into the tail's fin), and (mosaic) dark patches
+  float ax, ay, bx, by;
+  W(-22, -11, ax, ay);
+  W(8, -11, bx, by);
+  tapered(r, ax, ay, K * 3.2f, bx, by, K * 3.2f, fin, 32, 32);
+  W(-22, 0, ax, ay);
+  W(0, 0, bx, by);
+  tapered(r, ax, ay, K * 11.5f, bx, by, K * 11.5f, body, 32, 32);
+  W(22, 0, ax, ay);
+  tapered(r, bx, by, K * 11.5f, ax, ay, K * 11.5f, body, 32, 32);
+  W(-20, 5.5f, ax, ay);
+  W(0, 5.5f, bx, by);
+  tapered(r, ax, ay, K * 6.0f, bx, by, K * 6.0f, belly, 26, 26);
+  W(18, 5.5f, ax, ay);
+  tapered(r, bx, by, K * 6.0f, ax, ay, K * 6.0f, belly, 26, 26);
+  if (pal == 3)
+    for (int i = 0; i < 7; i++) {
+      W((i - 3) * 8.5f + (i * 5) % 3, -(4 + (i * 3) % 4), ax, ay);
+      disc(r, ax, ay, K * (3.5f + (i % 3)), patch, 26);
+    }
+  leg(14, 7, std::sin(ph + 4.6f), body);
+  leg(-12, 7, std::sin(ph + 1.6f), body);
+  // the head: broad and flat, with a small blunt snout
+  W(17, -1, ax, ay);
+  W(36, 0.5f, bx, by);
+  tapered(r, ax, ay, K * 13.5f, bx, by, K * 11.0f, body, 32, 32);
+  W(20, 5, ax, ay);
+  W(34, 5.5f, bx, by);
+  tapered(r, ax, ay, K * 5.5f, bx, by, K * 5.0f, belly, 26, 26);
+  if (puff > 0.0f) {  // the cheeks puffed out after a gulp
+    W(22, 3, ax, ay);
+    W(34, 4, bx, by);
+    tapered(r, ax, ay, K * (9 + 5 * puff), bx, by, K * (8 + 5 * puff), body, 32, 32);
+    tapered(r, ax, ay + K * 3, K * (4 + 3 * puff), bx, by + K * 3, K * (3.5f + 2.5f * puff), belly, 26, 26);
+  }
+  if (pal == 3) {
+    W(24, -7, ax, ay);
+    disc(r, ax, ay, K * 4, patch, 26);
+  }
+  // the gills: three feathered stalks on each side of the head (the far three darker, behind it), fanned back and up, fluttering
+  for (int side = 0; side < 2; side++)
+    for (int k = 0; k < 3; k++) {
+      const float blx = 29 - (6 + 3.5f * k) + (side ? 4 : 0), bly = -1 - (7 + 0.8f * k) - (side ? 2 : 0);
+      const float ang = 0.1f - 0.72f * k + 0.1f * std::sin(ph * 2.0f + k * 1.3f + side) - (side ? 0.12f : 0.0f), len = 29 - 3.0f * k;
+      float sx0, sy0, sx1, sy1;
+      W(blx, bly, sx0, sy0);
+      W(blx - len * std::cos(ang), bly + len * std::sin(ang), sx1, sy1);
+      const uint16_t gc = side ? gill2 : gill;
+      for (int q = 0; q < 3; q++)  // (in three pieces: the box of a long slanted stroke is mostly empty)
+        tapered(r, sx0 + (sx1 - sx0) * q / 3, sy0 + (sy1 - sy0) * q / 3, K * (2.0f - 0.37f * q), sx0 + (sx1 - sx0) * (q + 1) / 3, sy0 + (sy1 - sy0) * (q + 1) / 3,
+                K * (2.0f - 0.37f * (q + 1)), gc, 32, 32);
+      const float nx = -(sy1 - sy0), ny = sx1 - sx0, nl = std::max(1.0f, std::hypot(nx, ny));
+      for (int q = 1; q <= 5; q++) {  // the filaments, in pairs along the stalk
+        const float u = q / 6.0f, px = sx0 + (sx1 - sx0) * u, py = sy0 + (sy1 - sy0) * u, fl = K * (7.5f - 5.0f * u);
+        for (int sgn = -1; sgn <= 1; sgn += 2)
+          thin_line(r, px, py, px + sgn * nx / nl * fl + (sx1 - sx0) * 0.08f, py + sgn * ny / nl * fl + (sy1 - sy0) * 0.08f, gc);
+      }
+    }
+  // the face: the eye (small and dark), the blush, and the smile every axolotl has (or the mouth wide open)
+  W(40, -7, ax, ay);
+  disc(r, ax, ay, K * 2.4f, eye);
+  W(40.5f, -7.7f, bx, by);
+  disc(r, bx, by, K * 0.65f, c565(0xFFFFFF));
+  W(34, 0.5f, ax, ay);
+  ellipse(r, ax, ay, K * 3.4f, K * 2.1f, c565(0xF08BA2), 14);
+  if (open > 0.02f) {
+    W(44, 2.5f, ax, ay);
+    ellipse(r, ax, ay, K * (3 + 6 * open), K * (1.5f + 6.5f * open), c565(0x7A2038));
+    W(44, 3.5f + 3 * open, ax, ay);
+    ellipse(r, ax, ay, K * (2 + 3 * open), K * (1 + 2.5f * open), c565(0xE87A90));  // the tongue
+  } else {
+    for (int i = 0; i <= 12; i++) {
+      const float u = i / 12.0f;
+      W(49 - 17 * u, 1 + 4.0f * u - 7.5f * u * u, ax, ay);
+      disc(r, ax, ay, K * 0.7f, eye);
+    }
+  }
+}
+
+// (a stiff pose, for the preview sheet: the whole body at one pitch)
+inline void paint_axolotl(const Rz &r, float cx, float cy, float K, float fx, float ph, int pal = 0, float open = 0.0f, float puff = 0.0f, float pitch = 0.0f, float amp = 1.0f) {
+  AxoSp sp;
+  axo_sp_make(sp, cx, cy, K, fx, nullptr, pitch);
+  paint_axolotl_sp(r, sp, ph, pal, open, puff, amp);
+}
+
+// ---- where it is, when: the plan's segments (a smooth arc each, slowing at either end) -> its middle, which way it faces, how fast it moves
+inline void axo_pos(float t, float &x, float &y, float &fx, float &dist, bool calm = false) {
+  int j = 0;
+  for (int i = 0; i < ap.n; i++)
+    if (t >= ap.s[i].t0)
+      j = i;
+  const AxoSeg &g = ap.s[j];
+  const float u = std::min(1.0f, std::max(0.0f, (t - g.t0) / std::max(0.01f, g.t1 - g.t0)));
+  const float k = g.burst ? 1 - (1 - u) * (1 - u) * (1 - u) : u * u * (3 - 2 * u);  // (a burst starts fast and glides to a stop)
+  const float dx = g.x1 - g.x0, dy = g.y1 - g.y0, len = std::max(1.0f, std::hypot(dx, dy));
+  const float mx = (g.x0 + g.x1) / 2 - dy / len * g.bow, my = (g.y0 + g.y1) / 2 + dx / len * g.bow;
+  x = (1 - k) * (1 - k) * g.x0 + 2 * (1 - k) * k * mx + k * k * g.x1;
+  y = (1 - k) * (1 - k) * g.y0 + 2 * (1 - k) * k * my + k * k * g.y1;
+  if (!calm)
+    x += 2 * std::sin(t * 1.3f + 1.0f), y += 3 * std::sin(t * 2.1f);  // (it never holds quite still)
+  if (g.f0 != g.f1)
+    fx = g.f0 * std::cos(3.14159f * ease(std::min(1.0f, std::max(0.0f, (t - g.t0) / 0.8f))));  // (it turns round over its first 0.8 s)
+  else
+    fx = g.f1;
+  dist = g.l0 + g.len * k;
+}
+// how fast it moves (px/s) and the pitch of its body (nose down, radians) from the way it heads
+inline void axo_motion(float t, float &pitch, float &amp) {
+  float x0, y0, x1, y1, f0, f1, d0, d1;
+  axo_pos(t - 0.08f, x0, y0, f0, d0, true);
+  axo_pos(t + 0.08f, x1, y1, f1, d1, true);
+  const float vx = (x1 - x0) / 0.16f, vy = (y1 - y0) / 0.16f, sp = std::hypot(vx, vy);
+  float fx, d;
+  axo_pos(t, x0, y0, fx, d, true);
+  const float sgn = (vx * (fx >= 0 ? 1.0f : -1.0f)) >= 0 ? 1.0f : -1.0f;  // (backing up tips it the other way)
+  pitch = std::max(-0.5f, std::min(0.5f, std::atan2(vy, std::fabs(vx) + 1.0f) * sgn)) * std::min(1.0f, sp / 50.0f);
+  amp = 0.45f + 0.6f * std::min(1.0f, sp / 120.0f);
+}
+// the whole pose at time t: the spine bends along the course the head took: each part of the body is at the heading the head had a moment earlier
+// (the tail's is the oldest), with a little wave through it as it swims
+inline void axo_pose(float t, AxoSp &sp, float &ph, float &amp) {
+  float x, y, fx, d, pitch;
+  axo_pos(t, x, y, fx, d);
+  axo_motion(t, pitch, amp);
+  ph = d / (AXO_K * 4.0f) + t * 2.0f;
+  float bend[AXO_N];
+  for (int k = 0; k < AXO_N; k++) {
+    const float lx = AXO_X0 + AXO_DX * k, lag = lx < 0 ? -lx * AXO_K / 160.0f : -lx * 0.004f;  // (the head looks ahead, the tail trails)
+    float p, a2;
+    axo_motion(t - lag, p, a2);
+    bend[k] = p + 0.07f * amp * std::sin(ph - lx * 0.07f);
+  }
+  axo_sp_make(sp, x, y, AXO_K, fx, bend, 0);
+}
+// the mouth's tip on the screen at time t
+inline void axo_mouth(float t, float &mx, float &my) {
+  AxoSp sp;
+  float ph, amp;
+  axo_pose(t, sp, ph, amp);
+  axo_wp(sp, AXO_MOUTH, 1.0f, mx, my);
+}
+inline void axo_plan() {
+  const float K = AXO_K, MO = K * AXO_MOUTH;
+  auto edge = [](int d, float other) { return d < 0 ? -270.0f : d > 0 ? 750.0f : other; };
+  const float ex0 = edge(in_dx, 140 + (float) (rnd() % 200)), ey0 = in_dy < 0 ? -200.0f : in_dy > 0 ? 680.0f : 150 + (float) (rnd() % 180);
+  const float ex1 = edge(out_dx, 140 + (float) (rnd() % 200)), ey1 = out_dy < 0 ? -200.0f : out_dy > 0 ? 680.0f : 150 + (float) (rnd() % 180);
+  float cx = ex0, cy = ey0, f = 1, t = 0, L = 0;
+  int done[4] = {}, order[4], n = 0;
+  float px = cx, py = cy;
+  for (int k = 0; k < n_ctg; k++) {  // nearest first
+    int best = -1;
+    float bd = 1e9f;
+    for (int i = 0; i < n_ctg; i++)
+      if (!done[i] && std::hypot(ctg[i].x - px, ctg[i].y - py) < bd)
+        bd = std::hypot(ctg[i].x - px, ctg[i].y - py), best = i;
+    done[best] = 1, order[n++] = best, px = ctg[best].x, py = ctg[best].y;
+  }
+  ap.n = 0;
+  auto add = [&](float dur, float nx, float ny, float nf, float bow, bool burst) {
+    AxoSeg &g = ap.s[ap.n++];
+    const float ch = std::hypot(nx - cx, ny - cy);
+    g = {t, t + dur, cx, cy, nx, ny, bow, f, nf, L, ch * (1 + 2 * (bow / std::max(ch, 1.0f)) * (bow / std::max(ch, 1.0f))), burst};
+    L += g.len, t += dur, cx = nx, cy = ny, f = nf;
+  };
+  ap.t_stalk = 1.5f;
+  f = n > 0 ? (ctg[order[0]].x > ex0 ? 1.0f : -1.0f) : (ex1 > ex0 ? 1.0f : -1.0f);
+  for (int k = 0; k < n; k++) {
+    const CatTgt &g = ctg[order[k]];
+    float bf = 1, bc = 1e9f, ax = 0;
+    for (int d = -1; d <= 1; d += 2) {  // which side to come at it from: the nearer approach, without turning round if it can
+      const float a = g.x - d * (MO + 70), c = std::hypot(a - cx, g.y - K - cy) + (d != (int) f ? 140.0f : 0.0f) + (a < -120 || a > 600 ? 300.0f : 0.0f);
+      if (c < bc)
+        bc = c, bf = (float) d, ax = a;
+    }
+    const float ay = g.y - K, dist = std::hypot(ax - cx, ay - cy);
+    add(std::min(3.4f, std::max(0.9f, dist / 140)), ax, ay, bf, (k % 2 ? 1 : -1) * 0.16f * dist, false);
+    if (k == 0)
+      ap.t_stalk = t;
+    add(0.5f, ax, ay, bf, 0, false);  // it stalks it
+    ap.pull[order[k]] = t + 0.2f;
+    add(0.32f, g.x - bf * (MO + 14), ay, bf, 0, true);  // the lunge
+    add(0.8f, g.x - bf * (MO + 14), ay, bf, 0, false);  // the gulp, the cheeks
+  }
+  ap.t_regrow = t + 0.4f;
+  for (int k = 0; k < n; k++)
+    ap.regrow[order[k]] = ap.t_regrow + 0.35f * k;
+  ap.t_exit = t;
+  const float dist = std::hypot(ex1 - cx, ey1 - cy);
+  add(std::min(3.4f, std::max(1.8f, dist / 170)), ex1, ey1, ex1 > cx ? 1.0f : -1.0f, (n % 2 ? 1 : -1) * 0.14f * dist, false);
+  ap.t_end = std::max(t, ap.t_regrow + 0.35f * n + 0.8f);
+  for (int i = 0; i < 4; i++)
+    ap.back[i] = false;
+}
+inline void patch_apply(int i, bool gone);
+inline void axo_events(float t) {  // a target that is pulled in comes off the map; it is back (with a sparkle) when it regrows
+  for (int i = 0; i < n_ctg; i++) {
+    if (!ctg[i].gone && t >= ap.pull[i]) {
+      ctg[i].gone = true;
+      vlogf("axolotl t %.1f: gulps target %d (kind %d)", t, i, (int) ctg[i].kind);
+      if (pt_ok)
+        patch_apply(i, true);
+    } else if (!ctg[i].gone && ctg[i].o[0]) {  // (a satellite moves: the mouth was aimed at where it was)
+      lv_area_t a;
+      lv_obj_get_coords(ctg[i].o[0], &a);
+      ctg[i].x = (a.x1 + a.x2) / 2.0f, ctg[i].y = (a.y1 + a.y2) / 2.0f;
+    }
+    if (ctg[i].gone && !ap.back[i] && t >= ap.regrow[i]) {
+      ap.back[i] = true;
+      if (pt_ok)
+        patch_apply(i, false);
+    }
+  }
+}
+inline void axo_box(float t, int32_t &x1, int32_t &y1, int32_t &x2, int32_t &y2) {
+  AxoSp sp;
+  float ph, amp;
+  axo_pose(t, sp, ph, amp);
+  static const float PT[8][2] = {{56, -22}, {56, 24}, {-104, -34}, {-104, 34}, {30, -42}, {-6, -42}, {0, 28}, {-40, 34}};
+  float x0 = 1e9f, y0 = 1e9f, xe = -1e9f, ye = -1e9f;
+  for (const auto &p : PT) {
+    float wx, wy;
+    axo_wp(sp, p[0], p[1], wx, wy);
+    x0 = std::min(x0, wx), xe = std::max(xe, wx), y0 = std::min(y0, wy), ye = std::max(ye, wy);
+  }
+  auto grow = [&](float a, float b, float c, float e) { x0 = std::min(x0, a), y0 = std::min(y0, b), xe = std::max(xe, c), ye = std::max(ye, e); };
+  for (int i = 0; i < n_ctg; i++) {
+    const float u = t - ap.pull[i], rg = t - ap.regrow[i];
+    float mx, my;
+    if (u > -0.05f && u < 0.4f) {  // the target on its way to the mouth
+      axo_mouth(t, mx, my);
+      grow(std::min(ctg[i].x, mx) - 24, std::min(ctg[i].y, my) - 24, std::max(ctg[i].x, mx) + 24, std::max(ctg[i].y, my) + 24);
+    }
+    if (u > 0.4f && u < 2.3f) {  // the bubbles it blows (where the mouth was)
+      axo_mouth(ap.pull[i] + 0.5f, mx, my);
+      grow(mx - 30, my - 125, mx + 30, my + 15);
+    }
+    if (rg > -0.05f && rg < 0.75f)
+      grow(ctg[i].x - 32, ctg[i].y - 32, ctg[i].x + 32, ctg[i].y + 32);  // the sparkle where it is back
+  }
+  x1 = (int32_t) x0 - 8, y1 = (int32_t) y0 - 8, x2 = (int32_t) xe + 8, y2 = (int32_t) ye + 8;
+}
+inline void paint_axo(const Rz &r, float t) {
+  AxoSp sp;
+  float ph, amp, mx, my;
+  axo_pose(t, sp, ph, amp);
+  axo_wp(sp, AXO_MOUTH, 1.0f, mx, my);
+  float open = 0, puff = 0;
+  for (int i = 0; i < n_ctg; i++) {
+    const float u = t - ap.pull[i];
+    open = std::max(open, u < -0.15f ? 0.0f : u < 0.05f ? (u + 0.15f) / 0.2f : u < 0.3f ? 1.0f : u < 0.45f ? 1 - (u - 0.3f) / 0.15f : 0.0f);
+    if (u >= 0.3f && u < 1.2f)
+      puff = std::max(puff, std::sin((u - 0.3f) / 0.9f * 3.14159f));
+  }
+  for (int i = 0; i < n_ctg; i++) {  // a target in flight, pulled into the mouth; a sparkle where it is back
+    const float u = (t - ap.pull[i]) / 0.3f, q = (t - ap.regrow[i]) / 0.6f;
+    if (u >= 0 && u < 1 && !ap.back[i]) {
+      const float k = ease(u), rad = std::max(2.0f, ctg[i].r * 0.45f) * (1 - 0.8f * k), px = ctg[i].x + (mx - ctg[i].x) * k, py = ctg[i].y + (my - ctg[i].y) * k;
+      disc(r, px, py, rad + 2.5f, c565(0xDDE8FF), 8);
+      disc(r, px, py, rad, c565(ctg[i].kind == 5 ? 0xFFFFFF : 0xE8F0FF));
+    }
+    if (q >= 0 && q < 1)
+      ring_fill(r, ctg[i].x, ctg[i].y, 5 + 20 * q, 3 + 19 * q, c565(0xFFF0B0), (uint32_t) (22 * (1 - q)));
+  }
+  paint_axolotl_sp(r, sp, ph, 0, open, puff, amp);
+  for (int i = 0; i < n_ctg; i++) {  // the bubbles after each gulp
+    const float u = t - ap.pull[i] - 0.5f;
+    if (u < 0 || u > 1.7f)
+      continue;
+    float bx, by;
+    axo_mouth(ap.pull[i] + 0.5f, bx, by);
+    for (int b = 0; b < 3; b++) {
+      const float ub = u - b * 0.18f;
+      if (ub < 0)
+        continue;
+      const float px = bx + 6 + 6 * std::sin(ub * 5 + b), py = by - ub * 55 - b * 6, rr = 3.0f + b;
+      ring_fill(r, px, py, rr, rr - 1.2f, c565(0xC8E8FF), 26);
+      disc(r, px - rr * 0.3f, py - rr * 0.3f, 1.0f, c565(0xFFFFFF), 20);
+    }
+  }
+}
+inline const char *const SAY_AXO_BEFORE[] = {"Snack time.", "Is that a worm?", "Blub.", "Hold still,\nlittle snack."};
+inline const char *const SAY_AXO_LEAVE[] = {"Regrows nicely.", "Still smiling.", "Don't worry,\nI can regrow that.", "Blub blub."};
+inline int last_axo_before = -1, last_axo_leave = -1;
+inline void axo_lines() {
+  st.say[0] = nullptr;
+  st.say[1] = pick_line(SAY_AXO_BEFORE, sizeof(SAY_AXO_BEFORE) / sizeof(*SAY_AXO_BEFORE), last_axo_before);
+  st.say[2] = pick_line(SAY_AXO_LEAVE, sizeof(SAY_AXO_LEAVE) / sizeof(*SAY_AXO_LEAVE), last_axo_leave);
+}
+
+// the stem's 11 points (from the pot, 0, to the head's hinge, 10) and the radius at each: an S curve rising and bending over, swaying (the painter's and the redraw box's)
+inline void audrey_stem(float bx, float by, float K, float fx, float ex, float ey, float sway, float *sx, float *sy, float *sr) {
+  const float c1x = bx - fx * 40 * K + 10 * K * std::sin(sway), c1y = by + (ey - by) * 0.75f;
+  for (int k = 0; k <= 10; k++) {
+    const float u = k / 10.0f, a = (1 - u) * (1 - u), b = 2 * (1 - u) * u, c = u * u;
+    sx[k] = a * bx + b * c1x + c * ex + 3 * K * std::sin(sway * 1.3f + u * 5) * u * (1 - u) * 4;
+    sy[k] = a * (by - 3) + b * c1y + c * ey;
+    sr[k] = K * (14.0f - 3.5f * u);
+  }
+}
+// ---- Audrey (UI-92): a man-eating plant in a pot at the foot of the screen. The pot is at (bx, by) (the middle of its rim), the head's hinge at
+// (ex, ey) on the end of a curving stem; fx: 1 faces right, -1 left; tilt: the head's nose down (radians); open: the jaws (0 shut .. 1 wide); sway: the
+// stem and leaves swaying (radians of phase); lump: where a swallowed thing is on its way down the stem (0 at the head .. 1 at the pot, <0 none)
+inline void paint_audrey(const Rz &r, float bx, float by, float K, float fx, float ex, float ey, float tilt, float open, float sway, float lump, float tongue = 0.0f, float tph = 0.0f,
+                        float *tipx = nullptr, float *tipy = nullptr, float tamp = 1.0f) {  // tongue: how far it is out of the mouth (px), undulating at phase tph (tamp: how much, 0 straight); tip: where its end is
+  const uint16_t pot = c565(0xB5532E), potd = c565(0x8E3E22), crack = c565(0x5E2814), green = c565(0x3F9B45), greend = c565(0x2B7433), greenl = c565(0x6CC873), lipc = c565(0xD2354F),
+                 tonguec = c565(0xF06A8A), tooth = c565(0xFFF8E8), spot = c565(0x2E7A38), band = c565(0x2F8238);
+  float sx[11], sy[11], sr[11];
+  audrey_stem(bx, by, K, fx, ex, ey, sway, sx, sy, sr);
+  // leaves: low on the stem, fanned out round the pot, swaying
+  struct Lf {
+    int k;
+    float an, len, wid;
+  };
+  const Lf LF[4] = {{3, fx * 1.0f, 56, 11}, {4, -fx * 1.0f, 56, 11}, {2, fx * 0.45f, 46, 9}, {5, -fx * 0.5f, 48, 9}};
+  for (int lf = 0; lf < 4; lf++) {
+    const float an = LF[lf].an + 0.12f * std::sin(sway * 1.1f + lf * 2.0f), len = K * LF[lf].len;
+    const float x0 = sx[LF[lf].k], y0 = sy[LF[lf].k], x1 = x0 + std::sin(an) * len, y1 = y0 - std::cos(an) * len * 0.9f + len * 0.15f;
+    {  // a leaf: a kite from its base to its tip, widest 40% of the way (filled triangles: much cheaper than fat soft-edged strokes)
+      const float dx = x1 - x0, dy = y1 - y0, dl = std::max(1.0f, std::hypot(dx, dy)), nx = -dy / dl * K * LF[lf].wid * 1.15f, ny = dx / dl * K * LF[lf].wid * 1.15f;
+      const float sx1 = x0 + dx * 0.4f + nx, sy1 = y0 + dy * 0.4f + ny, sx2 = x0 + dx * 0.4f - nx, sy2 = y0 + dy * 0.4f - ny;
+      tri_fill(r, x0, y0, sx1, sy1, sx2, sy2, greend);
+      tri_fill(r, sx1, sy1, x1, y1, sx2, sy2, greend);
+      thin_line(r, x0, y0, x1, y1, greenl);  // the midrib
+    }
+  }
+  // the pot, cracked
+  tri_fill(r, bx - 24 * K, by, bx + 24 * K, by, bx - 15 * K, by + 24 * K, pot);
+  tri_fill(r, bx + 24 * K, by, bx + 15 * K, by + 24 * K, bx - 15 * K, by + 24 * K, pot);
+  tri_fill(r, bx + 6 * K, by, bx + 24 * K, by, bx + 15 * K, by + 24 * K, potd);
+  tri_fill(r, bx - 27 * K, by - 2 * K, bx + 27 * K, by - 2 * K, bx - 27 * K, by + 7 * K, pot);
+  tri_fill(r, bx + 27 * K, by - 2 * K, bx + 27 * K, by + 7 * K, bx - 27 * K, by + 7 * K, pot);
+  tri_fill(r, bx - 27 * K, by + 5 * K, bx + 27 * K, by + 5 * K, bx - 27 * K, by + 7 * K, potd);
+  tri_fill(r, bx + 27 * K, by + 5 * K, bx + 27 * K, by + 7 * K, bx - 27 * K, by + 7 * K, potd);
+  thin_line(r, bx - 6 * K, by + 8 * K, bx - 2 * K, by + 13 * K, crack);
+  thin_line(r, bx - 2 * K, by + 13 * K, bx - 8 * K, by + 17 * K, crack);
+  thin_line(r, bx - 8 * K, by + 17 * K, bx - 5 * K, by + 22 * K, crack);
+  {  // the stem as a strip (each step two triangles): much cheaper than ten fat soft-edged strokes
+    auto nrm = [&](int k, float &nx, float &ny) {
+      const int k0 = std::max(0, k - 1), k1 = std::min(10, k + 1);
+      const float tx = sx[k1] - sx[k0], ty = sy[k1] - sy[k0], tl = std::max(1.0f, std::hypot(tx, ty));
+      nx = -ty / tl, ny = tx / tl;
+    };
+    disc(r, sx[0], sy[0], sr[0], green);
+    for (int k = 0; k < 10; k++) {
+      float n0x, n0y, n1x, n1y;
+      nrm(k, n0x, n0y);
+      nrm(k + 1, n1x, n1y);
+      tri_fill(r, sx[k] + n0x * sr[k], sy[k] + n0y * sr[k], sx[k + 1] + n1x * sr[k + 1], sy[k + 1] + n1y * sr[k + 1], sx[k] - n0x * sr[k], sy[k] - n0y * sr[k], green);
+      tri_fill(r, sx[k + 1] + n1x * sr[k + 1], sy[k + 1] + n1y * sr[k + 1], sx[k + 1] - n1x * sr[k + 1], sy[k + 1] - n1y * sr[k + 1], sx[k] - n0x * sr[k], sy[k] - n0y * sr[k], green);
+      disc(r, sx[k + 1], sy[k + 1], sr[k + 1], green);  // (a joint: the bends of the strip stay closed)
+    }
+  }
+  if (lump >= 0.0f) {  // a swallowed thing going down: the stem bulges
+    const float f = std::min(9.99f, (1.0f - lump) * 10.0f);  // (the stem's points run from the pot, 0, up to the head, 10: the lump goes from the head down)
+    const int k = (int) f;
+    const float lx = sx[k] + (sx[k + 1] - sx[k]) * (f - k), ly = sy[k] + (sy[k + 1] - sy[k]) * (f - k);
+    disc(r, lx, ly, K * 16.0f, green);
+    disc(r, lx - 3 * K * fx, ly - 2 * K, K * 9.0f, greenl, 18);
+  }
+  // the tentacles over the pot's rim: curling, swaying (a long one and a short one a side)
+  for (int side = -1; side <= 1; side += 2)
+    for (int tt = 0; tt < 2; tt++) {
+      float x = bx + side * (21 - 9 * tt) * K, y = by - 1 * K, an = side * (1.0f - 0.55f * tt) + 0.1f * std::sin(sway + side + tt);
+      const int n = 10 - 2 * tt;
+      const float w0 = tt ? 4.6f : 6.0f;
+      for (int q = 0; q < n; q++) {
+        const float len = K * (9 - 0.3f * q) * (tt ? 0.8f : 1.0f), nx = x + std::sin(an) * len, ny = y - std::cos(an) * len;
+        tapered(r, x, y, K * (w0 - 0.38f * q), nx, ny, K * (w0 - 0.38f * (q + 1)), green, 32, 32);
+        x = nx, y = ny, an += side * (0.07f + 0.05f * q);  // (it curls over more as it goes)
+      }
+    }
+  // the head: one round head (a disc) with the mouth cut out of it as a wedge from its middle, so the neck runs into the middle of its back and
+  // cannot stick out past it; the wedge's two edges are the lips, with teeth along them pointing into the mouth; the head's axis tilted
+  const float ct = std::cos(tilt), st_ = std::sin(tilt);
+  constexpr float Rh = AUD_RH;  // the head's radius (units)
+  auto HW = [&](float u, float v, float &x, float &y) {  // (the middle of the head, where the lips meet, is 28 units on from the stem's end: the neck ends well inside the disc)
+    u += 28;
+    x = ex + K * fx * (u * ct - v * st_);
+    y = ey + K * (u * st_ + v * ct);
+  };
+  const float aj[2] = {-(0.04f + 0.80f * open), 0.05f + 0.98f * open};  // the upper and lower lips' angles from the head's axis
+  constexpr float Ax = -14.0f;  // where the lips meet: 14 units behind the head's middle, so the wedge is deep and the mouth opens wide at the rim
+  float cx0, cy0, ax_, ay_;
+  HW(0, 0, cx0, cy0);
+  HW(Ax, 0, ax_, ay_);
+  float lt[2], thc[2];  // each lip's length (from where they meet to the rim) and the angle of its end on the rim, seen from the head's middle
+  for (int j = 0; j < 2; j++) {
+    const float du = std::cos(aj[j]), dv = std::sin(aj[j]), dd = du * Ax;
+    lt[j] = -dd + std::sqrt(dd * dd - Ax * Ax + Rh * Rh);
+    thc[j] = std::atan2(dv * lt[j], Ax + du * lt[j]);
+  }
+  {  // the head: a fan from where the lips meet round everything but the mouth's wedge
+    const float sweep = 6.28318f - (thc[1] - thc[0]);
+    float qx0, qy0;
+    HW(std::cos(thc[0]) * Rh, std::sin(thc[0]) * Rh, qx0, qy0);
+    for (int q = 1; q <= 44; q++) {
+      const float an = thc[0] - sweep * q / 44;
+      float qx1, qy1;
+      HW(std::cos(an) * Rh, std::sin(an) * Rh, qx1, qy1);
+      tri_fill(r, ax_, ay_, qx0, qy0, qx1, qy1, green);
+      qx0 = qx1, qy0 = qy1;
+    }
+    float h0x, h0y;  // a soft highlight and a few spots on the hood
+    HW(std::cos(aj[0] - 0.95f) * Rh * 0.52f, std::sin(aj[0] - 0.95f) * Rh * 0.52f, h0x, h0y);
+    disc(r, h0x, h0y, K * Rh * 0.42f, greenl, 9);
+    disc(r, h0x, h0y, K * Rh * 0.24f, greenl, 9);
+    for (int q = 0; q < 3; q++) {
+      float sx0, sy0;
+      HW(std::cos(aj[0] - 0.55f - 0.42f * q) * Rh * 0.66f, std::sin(aj[0] - 0.55f - 0.42f * q) * Rh * 0.66f, sx0, sy0);
+      disc(r, sx0, sy0, K * (3.6f - 0.6f * q), spot);
+    }
+  }
+  if (tongue > 1.0f) {  // the tongue slithers out of the mouth, along the middle of the opening, in a wave that grows towards its tip
+    const float ab = (aj[0] + aj[1]) / 2, bu = std::cos(ab), bv = std::sin(ab), nu = -bv, nv = bu, lu = tongue / K;
+    const int N = 16;
+    float qx = 0, qy = 0;
+    for (int k = 0; k <= N; k++) {
+      const float sdist = lu * k / N, wave = 6.5f * tamp * std::sin(tph - sdist * 0.11f) * std::min(1.0f, sdist / 28.0f), u = 4 + sdist;
+      float x, y;
+      HW(Ax + bu * u + nu * wave, bv * u + nv * wave, x, y);
+      if (k > 0) {
+        tapered(r, qx, qy, K * (5.8f - 2.4f * (k - 1) / N), x, y, K * (5.8f - 2.4f * k / N), tonguec, 32, 32);
+        thin_line(r, qx, qy, x, y, c565(0xC8456A));  // (the groove down its middle)
+      }
+      qx = x, qy = y;
+    }
+    disc(r, qx, qy, K * 3.4f, tonguec);  // (a rounded tip)
+    if (tipx)
+      *tipx = qx, *tipy = qy;
+  }
+  for (int j = 0; j < 2; j++) {  // the lips: the wedge's two edges, from the middle out to the rim
+    float ex1, ey1;
+    HW(Ax + std::cos(aj[j]) * lt[j], std::sin(aj[j]) * lt[j], ex1, ey1);
+    tapered(r, ax_, ay_, K * 4.4f, ex1, ey1, K * 3.6f, lipc, 32, 32);
+  }
+  for (int j = 0; j < 2; j++)  // the teeth: evenly spaced triangles along each lip, pointing into the mouth (the lower row between the upper ones)
+    for (int i = 0; i < 6; i++) {
+      const float s0 = 0.20f + 0.135f * i + (j ? 0.065f : 0.0f), s1 = s0 + 0.07f, sm = (s0 + s1) / 2, h = 13.0f - 0.8f * i;
+      const float d_u = std::cos(aj[j]), d_v = std::sin(aj[j]), i_u = j ? d_v : -d_v, i_v = j ? -d_u : d_u;  // (i: into the mouth)
+      float ax0, ay0, ax1, ay1, tx, ty;
+      HW(Ax + d_u * lt[j] * s0, d_v * lt[j] * s0, ax0, ay0);
+      HW(Ax + d_u * lt[j] * s1, d_v * lt[j] * s1, ax1, ay1);
+      HW(Ax + d_u * lt[j] * sm + i_u * h, d_v * lt[j] * sm + i_v * h, tx, ty);
+      tri_fill(r, ax0, ay0, ax1, ay1, tx, ty, tooth);
+    }
+}
+
+// ---- Audrey's visit (UI-92): Audrey grows out of its pot at the foot of the screen; for each of 2 to 4 small things on the map (satellites, the ISS, bright
+// stars) it reaches its head over to it (turning round if it must), opens wide, slithers its tongue out to it, grabs it, and reels it in and swallows it (a lump
+// runs down the stem). When it has eaten them all it settles, they regrow (a sparkle), it says a line, and sinks back into the pot.
+struct AudreyPose {
+  float hx, hy, tilt, fx, open, tongue, tamp, lump, ph, tph;  // the head's hinge (the stem's end), its tilt, which way it faces, the jaws, the tongue (px), how much it waves, the swallowed lump, the sway
+};
+inline void audrey_hinge(float t, float &hx, float &hy, float &tilt, float &fx) {
+  int j = 0;
+  for (int i = 0; i < pl.n; i++)
+    if (t >= pl.s[i].t0)
+      j = i;
+  const AudreySeg &g = pl.s[j];
+  const float u = std::min(1.0f, std::max(0.0f, (t - g.t0) / std::max(0.01f, g.t1 - g.t0))), k = u * u * (3 - 2 * u);
+  hx = g.hx0 + (g.hx1 - g.hx0) * k, hy = g.hy0 + (g.hy1 - g.hy0) * k, tilt = g.tl0 + (g.tl1 - g.tl0) * k;
+  fx = g.f0 != g.f1 ? g.f0 * std::cos(3.14159f * ease(std::min(1.0f, std::max(0.0f, (t - g.t0) / 0.6f)))) : g.f1;  // (a turn: its head's length shortens through it)
+}
+inline void audrey_pose(float t, AudreyPose &p) {
+  audrey_hinge(t, p.hx, p.hy, p.tilt, p.fx);
+  p.hx += 4 * std::sin(t * 1.3f), p.hy += 3 * std::sin(t * 1.9f);  // (it never holds still)
+  p.open = 0, p.tongue = 0, p.tamp = 1, p.lump = -1;
+  for (int i = 0; i < n_ctg; i++) {
+    const float u = t - pl.t_open[i], tc = pl.pull[i];
+    float o = u < 0 ? 0.0f : u < 0.5f ? ease(u / 0.5f) : t < tc + 0.35f ? 1.0f : t < tc + 0.5f ? 1 - ease((t - tc - 0.35f) / 0.15f) : 0.0f;
+    p.open = std::max(p.open, o);
+    if (t >= pl.t_out[i] && t < tc + 0.05f) {  // out to the thing
+      p.tongue = AUD_DT * ease((t - pl.t_out[i]) / 0.55f);
+      p.tamp = std::min(1.0f, std::max(0.0f, (tc - t) / 0.45f));
+    } else if (t >= tc + 0.05f && t < tc + 0.35f) {  // reeling it in
+      p.tongue = AUD_DT * (1 - ease((t - tc - 0.05f) / 0.3f));
+      p.tamp = std::min(1.0f, (t - tc) / 0.15f);
+    }
+    if (t >= tc + 0.45f && t < tc + 1.7f)
+      p.lump = (t - tc - 0.45f) / 1.25f;
+  }
+  p.ph = t * 1.6f, p.tph = t * 9.0f;
+}
+inline void audrey_plan() {
+  const float K = AUD_K;
+  // the pot's place: not far from the middle; targets too near the pot are left (it could not reach them)
+  pl.bx = 170 + (float) (rnd() % 140), pl.by = 412;
+  for (int i = n_ctg; i-- > 0;)
+    if (std::hypot(ctg[i].x - pl.bx, ctg[i].y - (pl.by - 80)) < 110 || ctg[i].y > pl.by - 70) {
+      ctg[i] = ctg[--n_ctg];
+    }
+  int order[4], n = 0, done[4] = {};
+  float px = pl.bx, py = pl.by - 150;
+  for (int k = 0; k < n_ctg; k++) {  // the nearest to the head first
+    int best = -1;
+    float bd = 1e9f;
+    for (int i = 0; i < n_ctg; i++)
+      if (!done[i] && std::hypot(ctg[i].x - px, ctg[i].y - py) < bd)
+        bd = std::hypot(ctg[i].x - px, ctg[i].y - py), best = i;
+    done[best] = 1, order[n++] = best, px = ctg[best].x, py = ctg[best].y;
+  }
+  // where its head must be for each: the hinge is a tongue's length (and the lips' reach) behind the thing, along the tongue's line
+  float hx_[4], hy_[4], tl_[4], f_[4];
+  for (int k = 0; k < n; k++) {
+    const CatTgt &g = ctg[order[k]];
+    const float f = g.x >= pl.bx ? 1.0f : -1.0f;
+    float tilt = 0.3f, hx = pl.bx, hy = pl.by - 150;
+    for (int it = 0; it < 4; it++) {  // (the tongue's angle depends on where the head is: a few rounds settle it)
+      const float th = tilt + 0.09f, ct = std::cos(tilt), st = std::sin(tilt);
+      hx = g.x - f * (AUD_DT + 4 * K) * std::cos(th) - f * K * 14 * ct, hy = g.y - (AUD_DT + 4 * K) * std::sin(th) - K * 14 * st;
+      const float ax = hx + f * K * 14 * ct, ay = hy + K * 14 * st;  // (where the lips meet)
+      tilt = std::max(-0.6f, std::min(0.9f, std::atan2(g.y - ay, (g.x - ax) * f) - 0.09f));
+    }
+    hy = std::min(hy, pl.by - 70);
+    hx_[k] = hx, hy_[k] = hy, tl_[k] = tilt, f_[k] = f;
+  }
+  pl.n = 0;
+  float t = 0, cx = pl.bx, cy = pl.by - 14, ct_ = 0.3f, cf = n > 0 ? f_[0] : 1.0f;
+  auto add = [&](float dur, float nx, float ny, float ntl, float nf) {
+    AudreySeg &g = pl.s[pl.n++];
+    g = {t, t + dur, cx, cy, nx, ny, ct_, ntl, cf, nf};
+    t += dur, cx = nx, cy = ny, ct_ = ntl, cf = nf;
+  };
+  add(1.4f, pl.bx + cf * 10, pl.by - 150, 0.25f, cf);  // it grows out of the pot
+  pl.t_stalk = t;
+  for (int k = 0; k < n; k++) {
+    const int i = order[k];
+    const float dist = std::hypot(hx_[k] - cx, hy_[k] - cy);
+    pl.t_open[i] = t + 0.3f;
+    const float d = std::min(1.8f, std::max(0.9f, dist / 200));
+    add(d, hx_[k], hy_[k], tl_[k], f_[k]);  // it reaches over
+    pl.t_out[i] = t;
+    pl.pull[i] = t + 0.55f;
+    add(1.05f, hx_[k], hy_[k], tl_[k], f_[k]);  // tongue out, grab, reel in, jaws shut
+  }
+  add(1.0f, pl.bx + cf * 10, pl.by - 150, 0.25f, cf);  // it settles
+  pl.t_regrow = t + 0.2f;
+  for (int k = 0; k < n; k++)
+    pl.regrow[order[k]] = pl.t_regrow + 0.35f * k;
+  const float t_after = pl.t_regrow + 0.35f * n + 1.6f;
+  add(std::max(0.5f, t_after - t), cx, cy, ct_, cf);  // (it waits while they regrow and it speaks)
+  pl.t_sink = t;
+  add(1.3f, pl.bx, pl.by - 14, 0.3f, cf);  // it sinks back into the pot
+  pl.t_end = t + 0.1f;
+  for (int i = 0; i < 4; i++)
+    pl.back[i] = false;
+}
+inline void patch_apply(int i, bool gone);
+inline void audrey_events(float t) {  // a thing it grabs comes off the map; it is back (with a sparkle) when it regrows
+  for (int i = 0; i < n_ctg; i++) {
+    if (!ctg[i].gone && t >= pl.pull[i]) {
+      ctg[i].gone = true;
+      vlogf("Audrey t %.1f: grabs target %d (kind %d)", t, i, (int) ctg[i].kind);
+      if (pt_ok)
+        patch_apply(i, true);
+    } else if (!ctg[i].gone && ctg[i].o[0]) {
+      lv_area_t a;
+      lv_obj_get_coords(ctg[i].o[0], &a);
+      ctg[i].x = (a.x1 + a.x2) / 2.0f, ctg[i].y = (a.y1 + a.y2) / 2.0f;
+    }
+    if (ctg[i].gone && !pl.back[i] && t >= pl.regrow[i]) {
+      pl.back[i] = true;
+      if (pt_ok)
+        patch_apply(i, false);
+    }
+  }
+}
+inline void audrey_box(float t, int32_t &x1, int32_t &y1, int32_t &x2, int32_t &y2) {  // everything it paints: the pot with its tentacles, the stem with its leaves, the head, the tongue, the sparkles
+  AudreyPose p;
+  audrey_pose(t, p);
+  const float K = AUD_K, fs = p.fx >= 0 ? 1.0f : -1.0f;
+  float sx[11], sy[11], sr[11];
+  audrey_stem(pl.bx, pl.by, K, fs, p.hx, p.hy, p.ph, sx, sy, sr);
+  float x0 = pl.bx - 142, xe = pl.bx + 142, y0 = pl.by - 126, ye = pl.by + 6 + 24 * K;  // the pot and the tentacles curling over its rim
+  auto grow = [&](float a, float b, float c, float e) { x0 = std::min(x0, a), y0 = std::min(y0, b), xe = std::max(xe, c), ye = std::max(ye, e); };
+  for (int k = 0; k <= 10; k++)  // the stem
+    grow(sx[k] - sr[k] - 4, sy[k] - sr[k] - 4, sx[k] + sr[k] + 4, sy[k] + sr[k] + 4);
+  for (int k = 2; k <= 5; k++)  // the leaves, up to 74 units long, swaying, sweeping out to either side and a little down
+    grow(sx[k] - 110, sy[k] - 100, sx[k] + 110, sy[k] + 30);
+  const float ct = std::cos(p.tilt), st = std::sin(p.tilt), Rh = K * (AUD_RH + 6);  // the head: its disc round its middle, 28 units on from the hinge
+  const float hcx = p.hx + fs * K * 28 * ct, hcy = p.hy + K * 28 * st;
+  grow(hcx - Rh, hcy - Rh, hcx + Rh, hcy + Rh);
+  if (p.tongue > 1.0f) {  // the tongue: out from the lips' meeting point along the tilted axis (a box round its length)
+    const float th = p.tilt + 0.09f, ex2 = p.hx + fs * (K * 14 * ct + (p.tongue + 20) * std::cos(th)), ey2 = p.hy + K * 14 * st + (p.tongue + 20) * std::sin(th);
+    grow(ex2 - 26, ey2 - 26, ex2 + 26, ey2 + 26);
+  }
+  for (int i = 0; i < n_ctg; i++)
+    if (t > pl.regrow[i] - 0.05f && t < pl.regrow[i] + 0.75f)
+      grow(ctg[i].x - 32, ctg[i].y - 32, ctg[i].x + 32, ctg[i].y + 32);  // the sparkle
+  x1 = (int32_t) x0 - 6, y1 = (int32_t) y0 - 6, x2 = (int32_t) xe + 6, y2 = (int32_t) ye + 6;
+}
+inline void paint_audrey_visit(const Rz &r, float t) {
+  AudreyPose p;
+  audrey_pose(t, p);
+  float tipx = p.hx, tipy = p.hy;
+  paint_audrey(r, pl.bx, pl.by, AUD_K, p.fx >= 0 ? 1.0f : -1.0f, p.hx, p.hy, p.tilt, p.open, p.ph, p.lump, p.tongue, p.tph, &tipx, &tipy, p.tamp);
+  for (int i = 0; i < n_ctg; i++) {  // a thing on the tongue's end, shrinking as it is reeled in; a sparkle where it is back
+    const float tc = pl.pull[i], q = (t - pl.regrow[i]) / 0.6f;
+    if (t >= tc && t < tc + 0.35f) {
+      const float rad = std::max(2.0f, ctg[i].r * 0.45f) * (1 - 0.8f * ease((t - tc - 0.25f) / 0.1f));
+      disc(r, tipx, tipy, rad + 2.5f, c565(0xDDE8FF), 8);
+      disc(r, tipx, tipy, rad, c565(ctg[i].kind == 5 ? 0xFFFFFF : 0xE8F0FF));
+    }
+    if (q >= 0 && q < 1)
+      ring_fill(r, ctg[i].x, ctg[i].y, 5 + 20 * q, 3 + 19 * q, c565(0xFFF0B0), (uint32_t) (22 * (1 - q)));
+  }
+}
+inline const char *const SAY_AUDREY_BEFORE[] = {"Feed me!", "Feed me, Seymour!", "I'm hungry.\nFeed me.", "Is that dinner?"};
+inline const char *const SAY_AUDREY_LEAVE[] = {"Mmm. More.", "Burp. Pardon me.", "That was just\na starter.", "Now we're talking."};
+inline int last_audrey_before = -1, last_audrey_leave = -1;
+inline void audrey_lines() {
+  st.say[0] = nullptr;
+  st.say[1] = pick_line(SAY_AUDREY_BEFORE, sizeof(SAY_AUDREY_BEFORE) / sizeof(*SAY_AUDREY_BEFORE), last_audrey_before);
+  st.say[2] = pick_line(SAY_AUDREY_LEAVE, sizeof(SAY_AUDREY_LEAVE) / sizeof(*SAY_AUDREY_LEAVE), last_audrey_leave);
+}
+
 // ---- the speech bubble now: its box (the same maths for the painter and the redraw box)
 inline int cat_side = 0;  // 0 the bubble is above the cat, 1 to its right (tail to the left), -1 to its left
-inline void speaker(float t, float &x, float &y) {  // where the bubble's tail points: the octopus or the UFO, or the top of the cat's ears
+inline bool spk_fixed = false;  // (the preview renders: the bubble's tail at a given place)
+inline float spk_x = 0, spk_y = 0;
+inline void speaker(float t, float &x, float &y) {
+  if (spk_fixed) {
+    x = spk_x, y = spk_y;
+    return;
+  }  // where the bubble's tail points: the octopus or the UFO, or the top of the cat's ears
+  if (critter == CR_AUDREY) {  // above its head, on its course without the bob; held where it was when it starts to sink into its pot
+    float hx, hy, tl, f;
+    audrey_hinge(std::min(t, pl.t_sink), hx, hy, tl, f);
+    x = hx + (f >= 0 ? 1.0f : -1.0f) * AUD_K * 22, y = hy - AUD_K * 70;
+    return;
+  }
+  if (critter == CR_AXO) {  // above its head, on its course without the bob; held where it was when it starts to swim off
+    float fx, d;
+    axo_pos(std::min(t, ap.t_exit), x, y, fx, d, true);
+    x += (fx >= 0 ? 1.0f : -1.0f) * AXO_K * 26, y -= AXO_K * 38;
+    return;
+  }
   if (critter != CR_CAT) {
     pos(t, x, y);
     return;
@@ -1151,7 +1951,23 @@ inline void bubble_geom(float t, int beat, float &bx, float &by, float &bw, floa
   bx = std::max(10.0f, std::min(480 - bw - 10, cx - bw / 2 + 30));
   const float above = critter == CR_UFO ? 30 * UFO_K : (46 + 66) * SC;  // (the UFO's dome tops out at 30 units)
   cat_side = 0;
-  if (critter == CR_CAT) {  // above its ears if there is room, else beside it, level with its body (the tail points at it)
+  if (critter == CR_AUDREY) {  // above its head if there is room, else beside it
+    by = std::max(10.0f, cy - bh - 22);
+    cat_side = cy - bh - 22 < 10 ? (cx < 240 ? 1 : -1) : 0;
+    if (cat_side != 0) {
+      bx = cat_side > 0 ? cx + 90 : cx - 90 - bw;
+      bx = std::max(30.0f, std::min(480 - bw - 10, bx));
+      by = std::max(46.0f, std::min(430.0f - bh, cy + AUD_K * 70 - bh / 2));
+    }
+  } else if (critter == CR_AXO) {  // above its head if there is room, else beside it
+    by = std::max(10.0f, cy - bh - 22);
+    cat_side = cy - bh - 22 < 10 ? (cx < 240 ? 1 : -1) : 0;
+    if (cat_side != 0) {
+      bx = cat_side > 0 ? cx + 90 : cx - 90 - bw;
+      bx = std::max(30.0f, std::min(480 - bw - 10, bx));
+      by = std::max(46.0f, std::min(430.0f - bh, cy + AXO_K * 38 - bh / 2));
+    }
+  } else if (critter == CR_CAT) {  // above its ears if there is room, else beside it, level with its body (the tail points at it)
     by = std::max(10.0f, cy - bh - 22);
     float hx, hy;
     cat_xy(std::min(t, cp.t_leave), hx, hy, true);  // (its course without the weave: the bubble does not bob with it)
@@ -1200,8 +2016,8 @@ inline void paint_bubble(lv_layer_t *layer) {
   speaker(tt, cx, cy);
   lv_draw_triangle_dsc_t tri;
   lv_draw_triangle_dsc_init(&tri);
-  if (cow_speaks(beat_at(tt)) || (critter == CR_CAT && cat_side != 0)) {  // the tail comes out of the bubble's side towards the cow or cat
-    const float my = by + bh / 2, d = critter == CR_CAT && cat_side < 0 ? -1.0f : 1.0f, x0 = d > 0 ? bx : bx + bw;  // (d: 1 the tail is on the left)
+  if (cow_speaks(beat_at(tt)) || ((critter == CR_CAT || critter == CR_AXO || critter == CR_AUDREY) && cat_side != 0)) {  // the tail comes out of the bubble's side towards the cow or cat
+    const float my = by + bh / 2, d = (critter == CR_CAT || critter == CR_AXO || critter == CR_AUDREY) && cat_side < 0 ? -1.0f : 1.0f, x0 = d > 0 ? bx : bx + bw;  // (d: 1 the tail is on the left)
     tri.color = lv_color_hex(0x3A4E86);
     tri.p[0].x = x0 + 3 * d, tri.p[0].y = my - 11;
     tri.p[1].x = x0 + 3 * d, tri.p[1].y = my + 11;
@@ -1408,7 +2224,7 @@ inline void cat_fill_stars(int want) {
     c[k] = c[--n];
   }
 }
-inline void cat_targets(int want, bool avoid_cat = false) {
+inline void cat_targets(int want, bool avoid_cat = false, bool small = false) {  // small: only the ISS and satellites (the axolotl's)
   struct C {
     lv_obj_t *o[2];
     uint8_t kind;
@@ -1416,11 +2232,11 @@ inline void cat_targets(int want, bool avoid_cat = false) {
   } c[2 + planets::N_PLANETS + 4];
   int n = 0;
   auto up = [](lv_obj_t *o) { return o != nullptr && !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN); };
-  if (up(ui.sun))
+  if (!small && up(ui.sun))
     c[n++] = {{ui.sun, nullptr}, 0, 0};
-  if (up(ui.moon))
+  if (!small && up(ui.moon))
     c[n++] = {{ui.moon, nullptr}, 1, 0};
-  for (int p = 0; p < planets::N_PLANETS; p++)
+  for (int p = 0; p < planets::N_PLANETS && !small; p++)
     if (up(ui.planet_img[p]))
       c[n++] = {{ui.planet_img[p], ui.planet_lbl[p]}, 2, (int8_t) p};
   if (up(ui.iss.dot))
@@ -1566,7 +2382,7 @@ inline void patch_apply(int i, bool gone) {
 inline void patches_make() {
   patches_free();
   const uint32_t t0 = rocket::now_ms();
-  if (critter != CR_CAT || n_ctg == 0 || st.clean == nullptr || st.comp == nullptr || rocket::st.back == nullptr)
+  if ((critter != CR_CAT && critter != CR_AXO && critter != CR_AUDREY) || n_ctg == 0 || st.clean == nullptr || st.comp == nullptr || rocket::st.back == nullptr)
     return;
   for (int i = 0; i < n_ctg; i++) {
     if (ctg[i].kind > 5)
@@ -1643,6 +2459,14 @@ inline void cat_undo() {
 // each frame: a shot that has landed takes its target off the map; when the disc comes back, everything is put back
 // (returns the time the retakes cost, so the timeline does not jump)
 inline uint32_t cat_events(float t) {
+  if (critter == CR_AXO) {
+    axo_events(t);
+    return 0;
+  }
+  if (critter == CR_AUDREY) {
+    audrey_events(t);
+    return 0;
+  }
   if (critter == CR_UFO) {  // the beam takes hold: the object comes off the map
     if (n_ctg == 0 || ctg[0].gone || t - ufo_delay < UFO_LIFT)
       return 0;
@@ -1692,14 +2516,14 @@ inline void frame() {
   const uint32_t now = rocket::now_ms();
   // The first step is followed by a heavy refresh (the whole screen is drawn once, from the snapshot); the time it
   // took does not count, so the entrance starts when the screen is ready (the dinosaur's ENTRY_SKIP_MS idea).
-  if (st.frames == 1 && now - st.last_model > MODEL_MS * 2)
-    st.t0 += (now - st.last_model) - MODEL_MS;
+  if (st.frames == 1 && now - st.last_model > model_ms() * 2)
+    st.t0 += (now - st.last_model) - model_ms();
   float t = (now - st.t0) / 1000.0f;
   if (t >= dur_s() || (rocket::st.back && lv_obj_get_parent(rocket::st.back) != lv_screen_active())) {
     end_visit();
     return;
   }
-  if (st.frames > 0 && now - st.last_model < MODEL_MS)
+  if (st.frames > 0 && now - st.last_model < model_ms())
     return;
   if (st.last_frame) {
     const uint32_t gap = now - st.last_frame;
@@ -1775,6 +2599,10 @@ inline void frame() {
     paint_ufo(rz, t);
   else if (critter == CR_CAT)
     paint_cat(rz, t);
+  else if (critter == CR_AXO)
+    paint_axo(rz, t);
+  else if (critter == CR_AUDREY)
+    paint_audrey_visit(rz, t);
   else {
     paint_fig(rz, t, st.m);
     paint_octopus(rz, st.m);
@@ -1902,7 +2730,20 @@ inline bool begin(uint32_t seed, int force = -2, int who = CR_OCTO) {
     cat_fill_stars(want);
     cat_plan();
   }
-  vlogf("%s: %d targets", who == CR_UFO ? "UFO" : who == CR_CAT ? "cat" : "octopus", n_ctg);
+  if (who == CR_AUDREY) {  // 2 to 4 small things on the map within its reach
+    cat_targets(4, false, true);
+    cat_fill_stars(4);
+    const int want = (int) (2 + rnd() % 3);
+    n_ctg = std::min(n_ctg, want + 2);  // (some are left out in the plan: too near the pot)
+    audrey_plan();
+  }
+  if (who == CR_AXO) {  // 2 to 4 small things on the map to eat (the ISS and satellites, bright stars)
+    const int want = (int) (2 + rnd() % 3);
+    cat_targets(want, false, true);
+    cat_fill_stars(want);
+    axo_plan();
+  }
+  vlogf("%s: %d targets", who == CR_UFO ? "UFO" : who == CR_CAT ? "cat" : who == CR_AXO ? "axolotl" : who == CR_AUDREY ? "audrey" : "octopus", n_ctg);
   st.meal = who == CR_OCTO ? pick_meal(force) : M_NONE;
   is_meal = st.meal != M_NONE;
   if (!is_meal && force != -2 && who == CR_OCTO)
@@ -1948,6 +2789,10 @@ inline bool begin(uint32_t seed, int force = -2, int who = CR_OCTO) {
     ufo_pick();
     ufo_setup();
   }
+  if (who == CR_AUDREY)
+    audrey_lines();
+  if (who == CR_AXO)
+    axo_lines();
   if (who == CR_CAT)
     cat_lines();  // (after the octopus's lines above, which would otherwise be the cat's)
   const uint32_t keep = st.rng;
@@ -1985,13 +2830,13 @@ inline bool begin(uint32_t seed, int force = -2, int who = CR_OCTO) {
   }
   st.timer = lv_timer_create(
       [](lv_timer_t *) {  // the clock: a step skipped by the throttle invalidates nothing, so no refresh would come to wake it
-        if (rocket::now_ms() - st.last_model >= MODEL_MS)
+        if (rocket::now_ms() - st.last_model >= model_ms())
           frame();
       },
       20, nullptr);
   frame();
   if (critter != CR_OCTO)
-    ESP_LOGI("octo", "visit: %s", critter == CR_UFO ? "UFO" : "cat on a comet");
+    ESP_LOGI("octo", "visit: %s", critter == CR_UFO ? "UFO" : critter == CR_AXO ? "axolotl" : critter == CR_AUDREY ? "audrey" : "cat on a comet");
   else
   ESP_LOGI("octo", "visit: %s, \"%s\" / \"%s\"", st.kind == K_LION ? "lionfish" : st.kind == K_SNAKE ? "sea snake" : st.kind == K_MEAL ? "a meal" : "ISS", st.say[1], st.say[2]);
   return true;
@@ -2085,9 +2930,9 @@ void check() {
     return;
   if (dino::walking())
     return;
-  const uint32_t who = rnd() % 4;  // UI-85b, UI-90: a visit in four each: the dinosaur's walk (sky_dino.h), the octopus, a UFO, a cat on a comet
+  const uint32_t who = rnd() % 6;  // UI-85b, UI-90..92: a visit in six each: the dinosaur's walk (sky_dino.h), the octopus, a UFO, a cat on a comet, an axolotl, Audrey
   if (who >= 2)
-    begin(st.rng ^ rocket::now_us(), -2, who == 2 ? CR_UFO : CR_CAT);
+    begin(st.rng ^ rocket::now_us(), -2, who == 2 ? CR_UFO : who == 3 ? CR_CAT : who == 4 ? CR_AXO : CR_AUDREY);
   else if (who == 0) {
     const uint32_t seed = st.rng ^ rocket::now_us();
     if (rnd() % 4 == 0 || !dino_hunt(seed))  // UI-85c: and three in four of those are hunting walks (a plain one when nothing is up)

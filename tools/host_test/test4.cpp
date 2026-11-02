@@ -3250,6 +3250,237 @@ int main() {
           frame(nm, oc::CR_CAT, TS[i], 1, 0);
         }
       }
+      {  // UI-91 the axolotl: the poses and colours, on a dark water backdrop (the strip is made from these by make_axolotl_strip.py)
+        static const float PH[4] = {0.0f, 1.6f, 3.1f, 4.7f};
+        for (int v = 0; v < 4; v++)
+          for (int k = 0; k < 4; k++) {
+            for (int y = 0; y < 480; y++)
+              for (int x = 0; x < 480; x++)
+                buf[y * 480 + x] = oc::c565(0x0B1A2C + ((y * 12 / 480) << 8) + ((y * 18 / 480) << 0));
+            const oc::Rz rz = {(uint8_t *) buf, 480 * 2, 0, 0, 479, 479};
+            oc::paint_axolotl(rz, 240, 250, 2.3f, k == 3 ? -1.0f : 1.0f, PH[k], v, 0.0f);
+            char path[160];
+            snprintf(path, sizeof(path), OUT_DIR "/renders/axolotl_%d_%d.ppm", v, k);
+            FILE *fp = fopen(path, "wb");
+            fprintf(fp, "P6\n480 480\n255\n");
+            for (int i = 0; i < 480 * 480; i++) {
+              const uint16_t c = buf[i];
+              fputc(((c >> 11) & 31) * 255 / 31, fp), fputc(((c >> 5) & 63) * 255 / 63, fp), fputc((c & 31) * 255 / 31, fp);
+            }
+            fclose(fp);
+          }
+      }
+      if (getenv("CRITTER_GIF")) {  // the axolotl swimming: one tail wave in 24 frames, drifting a little (axolotl.gif)
+        for (int i = 0; i < 24; i++) {
+          for (int y = 0; y < 480; y++)
+            for (int x = 0; x < 480; x++)
+              buf[y * 480 + x] = oc::c565(0x0B1A2C + ((y * 12 / 480) << 8) + ((y * 18 / 480) << 0));
+          const oc::Rz rz = {(uint8_t *) buf, 480 * 2, 0, 0, 479, 479};
+          const float ph = i * 6.2832f / 24;
+          oc::paint_axolotl(rz, 240 + 6 * std::sin(ph), 250 + 5 * std::sin(ph * 2), 2.3f, 1.0f, ph, 0, 0.0f);
+          char path[160];
+          snprintf(path, sizeof(path), OUT_DIR "/renders/axolotl_anim_%03d.ppm", i);
+          FILE *fp = fopen(path, "wb");
+          fprintf(fp, "P6\n480 480\n255\n");
+          for (int q = 0; q < 480 * 480; q++) {
+            const uint16_t c = buf[q];
+            fputc(((c >> 11) & 31) * 255 / 31, fp), fputc(((c >> 5) & 63) * 255 / 63, fp), fputc((c & 31) * 255 / 31, fp);
+          }
+          fclose(fp);
+        }
+      }
+      {  // UI-91 the axolotl's visit as the code plans it, on the real map (axolotl_visit_NNN.ppm at 10 fps with CRITTER_GIF; one frame of it always)
+        oc::critter = oc::CR_AXO;
+        oc::in_dx = -1, oc::in_dy = 1, oc::out_dx = 1, oc::out_dy = -1;
+        oc::n_ctg = 3;
+        oc::ctg[0] = {345, 140, 5, {nullptr, nullptr}, false, 4, 0};  // a satellite
+        oc::ctg[1] = {150, 215, 4, {nullptr, nullptr}, false, 5, 0};  // a star
+        oc::ctg[2] = {300, 335, 5, {nullptr, nullptr}, false, 3, 0};  // the ISS
+        oc::axo_plan();
+        oc::axo_lines();
+        if (!rk::st.font)
+          rk::st.font = &mono18;
+        CHECK(oc::ap.t_end > 8 && oc::ap.t_end < 30, "the axolotl's visit takes %.1f s", oc::ap.t_end);
+        for (int q = 0; q < 3; q++)
+          CHECK(oc::ap.pull[q] > 1.0f && oc::ap.regrow[q] > oc::ap.pull[q] + 1.0f && oc::ap.regrow[q] < oc::ap.t_end, "target %d is gulped at %.1f and regrows at %.1f", q, oc::ap.pull[q], oc::ap.regrow[q]);
+        float mxx = 0;  // a smooth path: no jump between frames (px in 0.1 s)
+        for (float t = 0.1f; t < oc::ap.t_end; t += 0.1f) {
+          float xa, ya, fa, da, xb, yb, fb, db;
+          oc::axo_pos(t - 0.1f, xa, ya, fa, da, true);
+          oc::axo_pos(t, xb, yb, fb, db, true);
+          mxx = std::max(mxx, std::hypot(xb - xa, yb - ya));
+        }
+        CHECK(mxx < 75, "the axolotl never jumps (%.0f px in 0.1 s at most)", mxx);
+        const int NF = getenv("CRITTER_GIF") ? (int) (oc::ap.t_end * 10) + 6 : 0;
+        for (int fr = 0; fr < NF; fr++) {
+          const float t = fr * 0.1f;
+          memcpy(buf, bgmap, sizeof(buf));
+          const oc::Rz rz = {(uint8_t *) buf, 480 * 2, 0, 0, 479, 479};
+          for (int i = 0; i < 3; i++) {  // what it eats: on the map till gulped, back when it regrows (the host cannot take it off the real map)
+            if (t >= oc::ap.pull[i] && t < oc::ap.regrow[i])
+              continue;
+            oc::disc(rz, oc::ctg[i].x, oc::ctg[i].y, 6, oc::c565(0xDDE8FF), 8);
+            oc::disc(rz, oc::ctg[i].x, oc::ctg[i].y, 3.2f, oc::c565(0xFFFFFF));
+          }
+          for (int i = 0; i < 3; i++)
+            oc::ap.back[i] = t >= oc::ap.regrow[i];
+          oc::paint_axo(rz, t);
+          oc::st.t = t;
+          oc::bubble_geom(t, oc::beat_at(t), oc::st.bx, oc::st.by, oc::st.bw, oc::st.bh);
+          if (oc::st.bw > 0) {
+            static lv_draw_buf_t db;
+            static lv_obj_t *cv = nullptr;
+            lv_draw_buf_init(&db, 480, 480, LV_COLOR_FORMAT_RGB565, 960, buf, sizeof(buf));
+            if (!cv)
+              cv = lv_canvas_create(lv_screen_active());
+            lv_canvas_set_draw_buf(cv, &db);
+            lv_layer_t layer;
+            lv_canvas_init_layer(cv, &layer);
+            oc::paint_bubble(&layer);
+            lv_canvas_finish_layer(cv, &layer);
+          }
+          char path[160];
+          snprintf(path, sizeof(path), OUT_DIR "/renders/axolotl_visit_%03d.ppm", fr);
+          FILE *fp = fopen(path, "wb");
+          fprintf(fp, "P6\n480 480\n255\n");
+          for (int q = 0; q < 480 * 480; q++) {
+            const uint16_t c = buf[q];
+            fputc(((c >> 11) & 31) * 255 / 31, fp), fputc(((c >> 5) & 63) * 255 / 63, fp), fputc((c & 31) * 255 / 31, fp);
+          }
+          fclose(fp);
+        }
+        oc::critter = oc::CR_OCTO;
+        oc::n_ctg = 0;
+      }
+      {  // UI-92 Audrey: poses on a dark backdrop (audrey_N.ppm), and a feeding scripted for the preview (audrey_anim_NNN.ppm with CRITTER_GIF)
+        auto save = [&](const char *path) {
+          FILE *fp = fopen(path, "wb");
+          fprintf(fp, "P6\n480 480\n255\n");
+          for (int q = 0; q < 480 * 480; q++) {
+            const uint16_t c = buf[q];
+            fputc(((c >> 11) & 31) * 255 / 31, fp), fputc(((c >> 5) & 63) * 255 / 63, fp), fputc((c & 31) * 255 / 31, fp);
+          }
+          fclose(fp);
+        };
+        auto bg = [&]() {
+          for (int y = 0; y < 480; y++)
+            for (int x = 0; x < 480; x++)
+              buf[y * 480 + x] = oc::c565(0x0B1A2C + ((y * 12 / 480) << 8) + ((y * 18 / 480) << 0));
+        };
+        const oc::Rz rz = {(uint8_t *) buf, 480 * 2, 0, 0, 479, 479};
+        struct P {
+          float ex, ey, tilt, open, sway, fx;
+        };
+        const P PS[4] = {{275, 215, 0.25f, 0.1f, 0.0f, 1}, {290, 190, 0.2f, 1.0f, 1.0f, 1}, {360, 255, 0.5f, 0.5f, 2.0f, 1}, {190, 210, 0.3f, 0.8f, 3.0f, -1}};
+        for (int i = 0; i < 4; i++) {
+          bg();
+          oc::paint_audrey(rz, 240, 420, 1.7f, PS[i].fx, PS[i].ex, PS[i].ey, PS[i].tilt, PS[i].open, PS[i].sway, -1);
+          char path[160];
+          snprintf(path, sizeof(path), OUT_DIR "/renders/audrey_%d.ppm", i);
+          save(path);
+        }
+        if (getenv("CRITTER_GIF"))
+          for (int i = 0; i < 70; i++) {
+            const float t = i * 0.1f;
+            bg();
+            const float TX = 340, TY = 190, KK = 1.7f, DT = 120;  // the satellite it eats; how far the tongue reaches
+            auto ez = [](float u) { u = std::min(1.0f, std::max(0.0f, u)); return u * u * (3 - 2 * u); };
+            const float lean = ez((t - 0.8f) / 1.0f) * (1 - ez((t - 3.0f) / 1.0f));  // reaches for it, and comes back
+            const float tilt = 0.25f + 0.2f * lean, ct = std::cos(tilt), st2 = std::sin(tilt), th = tilt + 0.09f;  // (th: the tongue's way, the middle of the open jaws)
+            const float peakx = TX - (DT + 4 * KK) * std::cos(th) - KK * 14 * ct, peaky = TY - (DT + 4 * KK) * std::sin(th) - KK * 14 * st2;  // where the hinge is so the tongue's line reaches the satellite
+            const float ex = 262 + (peakx - 262) * lean + 6 * std::sin(t * 1.3f), ey = 222 + (peaky - 222) * lean + 4 * std::sin(t * 1.9f);
+            const float open = t < 1.4f ? 0.0f : t < 1.9f ? ez((t - 1.4f) / 0.5f) : t < 2.55f ? 1.0f : t < 2.7f ? 1 - ez((t - 2.55f) / 0.15f) : 0.0f;  // (open till the satellite is in)
+            const float tongue = t < 1.6f ? 0.0f : t < 2.25f ? DT * ez((t - 1.6f) / 0.55f) : DT * (1 - ez((t - 2.25f) / 0.3f));  // slithers out, takes the satellite, reels it in
+            const float lump = t >= 2.75f && t < 4.0f ? (t - 2.75f) / 1.25f : -1.0f;
+            float tipx = TX, tipy = TY;
+            const float tamp = t < 2.2f ? std::min(1.0f, std::max(0.0f, (2.2f - t) / 0.45f)) : std::min(1.0f, (t - 2.2f) / 0.15f);  // (the wave dies away as it reaches the satellite, and comes back as it reels it in)
+            oc::paint_audrey(rz, 240, 420, 1.7f, 1, ex, ey, tilt, open, t * 1.6f, lump, tongue, t * 9.0f, &tipx, &tipy, tamp);
+            if (t < 2.55f) {  // the satellite: where it is, then on the tongue's tip, shrinking as it is reeled in
+              const float k = t < 2.2f ? 0.0f : 1.0f, px = TX + (tipx - TX) * k, py = TY + (tipy - TY) * k, rad = 4.5f * (1 - 0.8f * ez((t - 2.45f) / 0.1f));
+              oc::disc(rz, px, py, rad + 3, oc::c565(0xDDE8FF), 8);
+              oc::disc(rz, px, py, rad, oc::c565(0xFFFFFF));
+            }
+            if (t >= 5.2f)  // it regrows
+              oc::ring_fill(rz, TX, TY, 5 + 20 * std::min(1.0f, (t - 5.2f) / 0.6f), 3 + 19 * std::min(1.0f, (t - 5.2f) / 0.6f), oc::c565(0xFFF0B0), (uint32_t) (22 * (1 - std::min(1.0f, (t - 5.2f) / 0.6f))));
+            if (t >= 5.2f) {
+              oc::disc(rz, TX, TY, 7.5f, oc::c565(0xDDE8FF), 8);
+              oc::disc(rz, TX, TY, 4.5f, oc::c565(0xFFFFFF));
+            }
+            {  // what it says: "Feed me!" as it reaches, a line after the swallow
+              const bool l0 = t >= 0.5f && t < 2.2f, l1 = t >= 3.0f && t < 5.0f;
+              if (l0 || l1) {
+                if (!rk::st.font)
+                  rk::st.font = &mono18;
+                oc::st.say[0] = "Feed me!";
+                oc::st.say[1] = "Burp. Pardon me.";
+                oc::st.t = l0 ? 3.0f : 6.0f;
+                oc::is_meal = false;
+                lv_point_t sz;
+                lv_text_get_size(&sz, oc::st.say[l0 ? 0 : 1], rk::st.font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+                oc::st.bw = (float) sz.x + 28, oc::st.bh = (float) sz.y + 18;
+                oc::st.bx = std::max(10.0f, std::min(480 - oc::st.bw - 10, ex - oc::st.bw / 2 + 20)), oc::st.by = std::max(10.0f, ey - oc::st.bh - 62);
+                oc::spk_fixed = true, oc::spk_x = ex + 20, oc::spk_y = ey - 40;
+                static lv_draw_buf_t db;
+                static lv_obj_t *cv = nullptr;
+                lv_draw_buf_init(&db, 480, 480, LV_COLOR_FORMAT_RGB565, 960, buf, sizeof(buf));
+                if (!cv)
+                  cv = lv_canvas_create(lv_screen_active());
+                lv_canvas_set_draw_buf(cv, &db);
+                lv_layer_t layer;
+                lv_canvas_init_layer(cv, &layer);
+                oc::paint_bubble(&layer);
+                lv_canvas_finish_layer(cv, &layer);
+                oc::spk_fixed = false;
+              }
+            }
+            char path[160];
+            snprintf(path, sizeof(path), OUT_DIR "/renders/audrey_anim_%03d.ppm", i);
+            save(path);
+          }
+      }
+      {  // the redraw box must hold everything a critter paints (anything outside it is clipped away and leaves smears): paint onto a marked buffer, count marks outside
+        static uint16_t mk[480 * 480];
+        const oc::Rz rz = {(uint8_t *) mk, 480 * 2, 0, 0, 479, 479};
+        for (int who = oc::CR_AXO; who <= oc::CR_AUDREY; who++) {
+          oc::critter = who;
+          oc::in_dx = -1, oc::in_dy = 1, oc::out_dx = 1, oc::out_dy = -1;
+          oc::n_ctg = 3;
+          oc::ctg[0] = {345, 140, 5, {nullptr, nullptr}, false, 4, 0};
+          oc::ctg[1] = {150, 215, 4, {nullptr, nullptr}, false, 5, 0};
+          oc::ctg[2] = {300, 300, 5, {nullptr, nullptr}, false, 3, 0};
+          if (who == oc::CR_AXO)
+            oc::axo_plan();
+          else
+            oc::audrey_plan();
+          const float te = who == oc::CR_AXO ? oc::ap.t_end : oc::pl.t_end;
+          int worst = 0;
+          float wt = 0;
+          for (float t = 0; t < te; t += 0.1f) {
+            for (int i = 0; i < 480 * 480; i++)
+              mk[i] = 0x1234;
+            for (int q = 0; q < oc::n_ctg; q++)
+              oc::pl.back[q] = oc::ap.back[q] = t >= (who == oc::CR_AXO ? oc::ap.regrow[q] : oc::pl.regrow[q]);
+            if (who == oc::CR_AXO)
+              oc::paint_axo(rz, t);
+            else
+              oc::paint_audrey_visit(rz, t);
+            int32_t bx1, by1, bx2, by2;
+            oc::critter_box(t, bx1, by1, bx2, by2);
+            int out = 0, ox = -1, oy = -1;
+            for (int y = 0; y < 480; y++)
+              for (int x = 0; x < 480; x++)
+                if (mk[y * 480 + x] != 0x1234 && (x < bx1 || x > bx2 || y < by1 || y > by2))
+                  out++, ox = x, oy = y;
+            if (out > worst) {
+              worst = out, wt = t;
+              printf("  [box] t %.1f: %d px outside, last at %d,%d; box %d,%d..%d,%d\n", t, out, ox, oy, (int) bx1, (int) by1, (int) bx2, (int) by2);
+            }
+          }
+          CHECK(worst == 0, "%s: everything painted is inside its redraw box (worst %d px outside, at %.1f s)", who == oc::CR_AXO ? "axolotl" : "Audrey", worst, wt);
+        }
+        oc::critter = oc::CR_OCTO;
+        oc::n_ctg = 0;
+      }
       frame("cat_a", oc::CR_CAT, 1.9f, 1, 0);
       frame("cat_b", oc::CR_CAT, 3.2f, 1, 0);
       frame("cat_c", oc::CR_CAT, 1.9f, -1, 1);
