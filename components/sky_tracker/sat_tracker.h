@@ -1755,15 +1755,17 @@ inline void draw_sun_moon(double t, double tv) {
       order_sun_moon();
     }
   }
-  rim_update();
-  if (!ui.moon_map)
+  if (!ui.moon_map) {
+    rim_update();
     return;
+  }
   const int mpx = (int) lroundf(mdx) - MOON_PX / 2, mpy = (int) lroundf(mdy) - MOON_PX / 2;
   if (mpx != ui.moon_x || mpy != ui.moon_y) {
     ui.moon_x = mpx;
     ui.moon_y = mpy;
     lv_obj_set_pos(ui.moon, mpx, mpy);
   }
+  rim_update();  // (after the Moon is placed: the mask follows where it is now, not where it was)
   // UI-6 phase: redrawn when the lit fraction or the Sun's direction on the map moves
   float ux = sx - mx, uy = sy - my;
   const float len = sqrtf(ux * ux + uy * uy);
@@ -2501,7 +2503,7 @@ inline bool is_splashdown(const net::EventRec &e) {
   return strstr(e.type, "Landing") != nullptr && (strstr(e.name, "plashdown") || strstr(e.name, "plash Down"));
 }
 enum AlertInfo : uint8_t { AI_NONE, AI_ISS_PASS, AI_CSS_PASS, AI_AURORA, AI_WIND, AI_LAUNCH, AI_EVENT, AI_CONJ, AI_PARADE,
-                           AI_ECLIPSE, AI_SEASON, AI_SWX, AI_REENTRY, AI_HISTORY, AI_STATUS, AI_FULLMOON };
+                           AI_ECLIPSE, AI_SEASON, AI_SWX, AI_REENTRY, AI_HISTORY, AI_STATUS, AI_FULLMOON, AI_MOONNEAR };
 inline Alert shown_alert;          // UI-41d the alert on the status line now
 inline bool shown_alert_ok = false;
 inline Alert info_alert;           // the one whose details card is open (K_INFO)
@@ -4600,7 +4602,7 @@ inline int collect_alerts(double t, Alert *out, int max) {
     // UI-49 the Moon near a planet or bright star
     if (ui.lunar_alerts && sev.conj_with)
       if (Alert *a = add(C_MOON, "\xF3\xB0\xBD\xA2", nullptr)) {
-        a->kind = K_MOON;
+        a->info = AI_MOONNEAR;  // UI-49b: a card saying what it is near
         if (sev.conj_t - t < 1800)
           snprintf(a->text, sizeof(a->text), "Moon %.0f° from %s now", sev.conj_sep, sev.conj_with);
         else {
@@ -5472,6 +5474,20 @@ inline void info_card_update(double t) {
         n += snprintf(body + n, sizeof(body) - n, "\n%s", sev.full_blood_vis ? "You can see it from here." : "It is not visible from here.");
       if (sev.full_super && n < (int) sizeof(body) - 140)
         snprintf(body + n, sizeof(body) - n, "\nA supermoon: full near its closest point to Earth, so it looks a little bigger and brighter.");
+      break;
+    }
+    case AI_MOONNEAR: {  // UI-49b
+      snprintf(title, sizeof(title), "Moon & %s", sev.conj_with ? sev.conj_with : "?");
+      local_hm((int64_t) sev.conj_t, h0, sizeof(h0));
+      local_md(sev.conj_t, d0, sizeof(d0));
+      int n = snprintf(body, sizeof(body), "Closest %s %s, %.0f\xC2\xB0 apart (a thumb's width at arm's length is about 2\xC2\xB0).",
+                       d0, h0, sev.conj_sep);
+      for (int i = 0; i < ev::N_BRIGHT && sev.conj_with && n < (int) sizeof(body); i++)
+        if (!strcmp(ev::BRIGHT[i].name, sev.conj_with))
+          n += snprintf(body + n, sizeof(body) - n, "\n%s is a star in %s, magnitude %.1f, %s light years away.\n%s", ev::BRIGHT[i].name,
+                        ev::BRIGHT[i].where, ev::BRIGHT[i].mag, ev::BRIGHT[i].dist, ev::BRIGHT[i].fact);
+      if (n < (int) sizeof(body))
+        snprintf(body + n, sizeof(body) - n, "\nThey only look close: they line up as seen from Earth.");
       break;
     }
     case AI_SWX: {  // UI-73: every current notice, in plain words
@@ -8445,8 +8461,8 @@ inline void run(const char *cmd) {
       rocket::play_splash_now();
     else if (!strcmp(a, "octopus"))
       ESP_LOGI(UI_TAG, "dbg: octopus %s", octo::play_now() ? "started" : "NOT started");
-    else if (!strcmp(a, "ufo") || !strcmp(a, "cat"))
-      ESP_LOGI(UI_TAG, "dbg: %s %s", a, octo::play_critter(a[0] == 'u' ? 1 : 2) ? "started" : "NOT started");
+    else if (!strcmp(a, "ufo") || !strcmp(a, "cat") || !strcmp(a, "axo") || !strcmp(a, "audrey"))
+      ESP_LOGI(UI_TAG, "dbg: %s %s", a, octo::play_critter(!strcmp(a, "ufo") ? 1 : !strcmp(a, "cat") ? 2 : !strcmp(a, "axo") ? 3 : 4) ? "started" : "NOT started");
     ESP_LOGI(UI_TAG, "dbg: anim %s", a);
   } else if (!strncmp(cmd, "eclipse ", 8)) {  // UI-87: the eclipse view, replayed: solar | annular | lunar | close
     const char *a = cmd + 8;
