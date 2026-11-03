@@ -37,7 +37,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: files
           merge-multiple: true
@@ -79,7 +79,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: docs
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: files
           merge-multiple: true
