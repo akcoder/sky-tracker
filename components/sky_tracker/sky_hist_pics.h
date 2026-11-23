@@ -92,7 +92,7 @@ static const char *const PIC[108] = {
     "2/26/ISS-32_American_EVA_b3_Aki_Hoshide.jpg/330px-ISS-32_American_EVA_b3_Aki_Hoshide.jpg",  // 88 The first crew moves into the ISS: ISS-32 American EVA b3 Aki Hoshide.jpg, Public domain
     "5/53/Photograph_of_Sputnik_2_taken_from_Patrick_AFB_in_March_1958.jpg/330px-Photograph_of_Sputnik_2_taken_from_Patrick_AFB_in_March_1958.jpg",  // 89 Laika rides Sputnik 2 into orbit: Photograph of Sputnik 2 taken from Patrick AFB in March, Public domain
     nullptr,  // 90 Philae lands on comet 67P/Churyumov-
-    "7/7a/Ascraeus_Mons_M9_PIA02999.jpg/330px-Ascraeus_Mons_M9_PIA02999.jpg",  // 91 Mariner 9 becomes the first craft to: Ascraeus Mons M9 PIA02999.jpg, Public domain
+    "9/9b/Mariner_9_undergoes_final_checks.jpg/330px-Mariner_9_undergoes_final_checks.jpg",  // 91 Mariner 9 becomes the first craft to: Mariner 9 undergoes final checks.jpg, Public domain
     "b/b2/Buran_on_An-225_%28Le_Bourget_1989%29_%28cropped%29.JPEG/330px-Buran_on_An-225_%28Le_Bourget_1989%29_%28cropped%29.JPEG",  // 92 The shuttle Buran makes its only fli: Buran on An-225 (Le Bourget 1989) (cropped).JPEG, Public domain
     "c/c0/Apollo_12_and_Surveyor_7135.jpg/330px-Apollo_12_and_Surveyor_7135.jpg",  // 93 Apollo 12 lands on the Moon: Apollo 12 and Surveyor 7135.jpg, Public domain
     "c/ca/Unity-Zarya-Zvezda_STS-106_%283%29.jpg/330px-Unity-Zarya-Zvezda_STS-106_%283%29.jpg",  // 94 Zarya, the first ISS module, is laun: Unity-Zarya-Zvezda STS-106 (3).jpg, Public domain

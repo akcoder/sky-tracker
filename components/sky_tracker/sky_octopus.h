@@ -88,7 +88,9 @@ inline const char *const MEAL_AFTER[3][6] = {
     {"All bull.\nNo shit.", "", "", "", "", ""}};
 constexpr int N_BEATS = 3;  // arrival, the morph, the ink
 constexpr float BEAT_A[N_BEATS] = {2.2f, 5.5f, 8.4f}, BEAT_B[N_BEATS] = {4.5f, 7.4f, 9.4f};
-constexpr float EXIT_T = 8.4f, EAT_T = 6.1f;  // EAT_T: the gulp (a meal: the figure has been pulled into the beak)
+constexpr float EXIT_T = 8.4f, EAT_T = 6.1f, UFO_EXIT_T = 9.9f;  // (the UFO stays till its last line has been read)
+inline float exit_t() { return critter_id() == 1 ? UFO_EXIT_T : EXIT_T; }
+// EAT_T: the gulp (a meal: the figure has been pulled into the beak)
 constexpr float REACH0 = 3.9f, REACH1 = 4.8f, PULL0 = 4.9f;  // a meal: the arms reach the figure, grab it, pull it in
 constexpr float MEAL_A[3] = {2.2f, 6.3f, 8.4f}, MEAL_B[3] = {4.4f, 8.1f, 9.4f};  // a meal's lines: before, after, the ink  // the ink, then off to the left
 
@@ -131,11 +133,11 @@ inline void pos(float t, float &x, float &y) {
     const float sx = edge_x(in_dx, hover_x), sy = edge_y(in_dy, hover_y);
     x = sx + (hover_x - sx) * k;
     y = sy + (hover_y - sy) * k + 6 * std::sin(t * 5);
-  } else if (t < EXIT_T) {  // hovers
+  } else if (t < exit_t()) {  // hovers
     x = hover_x + 10 * std::sin((t - 2.2f) * 0.9f);
     y = hover_y + 9 * std::sin((t - 2.2f) * 1.7f);
   } else {  // jets off
-    const float k = std::pow(seg(t, EXIT_T, EXIT_T + 1.5f), 1.3f);
+    const float k = std::pow(seg(t, exit_t(), exit_t() + 1.5f), 1.3f);
     x = hover_x + (edge_x(out_dx, hover_x) - hover_x) * k;
     y = hover_y + (edge_y(out_dy, hover_y - 40) - hover_y) * k;
   }
@@ -155,8 +157,8 @@ inline float vel_y(float t) {
 inline float jet(float t) {
   if (t < 1.8f)
     return std::pow(std::max(0.0f, std::sin(2 * (float) M_PI * 1.5f * t)), 2.0f);
-  if (t > EXIT_T)
-    return std::pow(std::max(0.0f, std::sin(2 * (float) M_PI * 2.6f * (t - EXIT_T))), 2.0f);
+  if (t > exit_t())
+    return std::pow(std::max(0.0f, std::sin(2 * (float) M_PI * 2.6f * (t - exit_t()))), 2.0f);
   if (is_meal && t > EAT_T - 0.3f && t < EAT_T + 0.5f)  // the gulp: it squeezes, once
     return std::pow(std::sin((t - (EAT_T - 0.3f)) / 0.8f * (float) M_PI), 2.0f);
   return 0.25f * (0.5f + 0.5f * std::sin(t * 2.2f));
@@ -164,8 +166,8 @@ inline float jet(float t) {
 inline float w_morph(float t) { return seg(t, 4.8f, 5.3f) * (1 - seg(t, 7.6f, 8.1f)); }  // 0 octopus .. 1 the thing
 inline float cat_beat(int i, bool end);  // (the cat's lines: before the big shot, and on leaving)
 inline bool cat_on();
-inline float beat_a(int i) { return cat_on() ? cat_beat(i, false) : is_meal ? MEAL_A[i] : BEAT_A[i]; }
-inline float beat_b(int i) { return cat_on() ? cat_beat(i, true) : is_meal ? MEAL_B[i] : BEAT_B[i]; }
+inline float beat_a(int i) { return critter_id() == 1 && i == 2 ? 7.6f : cat_on() ? cat_beat(i, false) : is_meal ? MEAL_A[i] : BEAT_A[i]; }
+inline float beat_b(int i) { return critter_id() == 1 && i == 2 ? UFO_EXIT_T : cat_on() ? cat_beat(i, true) : is_meal ? MEAL_B[i] : BEAT_B[i]; }
 inline int beat_at(float t) {
   for (int i = 0; i < N_BEATS; i++)
     if (t >= beat_a(i) && t <= beat_b(i))
@@ -622,11 +624,11 @@ inline float cat_beat(int i, bool end) {  // beat 1: from while it backs away to
       return end ? std::max(pl.t_regrow + 1.0f, pl.t_sink - 0.1f) : pl.t_regrow + 0.2f;
     return -10.0f;
   }
-  if (critter == CR_AXO) {  // the axolotl's: while it stalks the first thing, and as the things regrow
+  if (critter == CR_AXO) {  // the axolotl's: while it stalks the first thing, and as it swims off
     if (i == 1)
       return end ? ap.t_stalk + 1.9f : ap.t_stalk - 0.1f;
     if (i == 2)
-      return end ? std::max(ap.t_regrow + 1.0f, ap.t_end - 0.2f) : ap.t_regrow + 0.2f;
+      return end ? ap.t_regrow : ap.t_exit + 0.6f;  // (as it swims off, till it is gone)
     return -10.0f;
   }
   if (i == 1)
@@ -636,7 +638,7 @@ inline float cat_beat(int i, bool end) {  // beat 1: from while it backs away to
   return -10.0f;
 }
 inline float ufo_delay = 0;  // a cow is there first: the UFO comes in this long after the start (its own clock is t - ufo_delay)
-inline float dur_s() { return critter == CR_AUDREY ? pl.t_end : critter == CR_AXO ? ap.t_end : critter == CR_CAT ? cp.t_end : critter == CR_UFO ? DUR_S + ufo_delay : DUR_S; }
+inline float dur_s() { return critter == CR_AUDREY ? pl.t_end : critter == CR_AXO ? ap.t_end : critter == CR_CAT ? cp.t_end : critter == CR_UFO ? UFO_EXIT_T + 1.7f + ufo_delay : DUR_S; }
 inline float shot_hit(int i) { return cp.shot0 + cp.dt * i + 0.4f; }  // when shot i's beam arrives
 // the comet's head (where the cat rides): in from its edge, hovering, over to where it fires at the disc, out by the other edge
 inline void cat_xy(float t, float &x, float &y, bool calm = false) {  // calm: without the weave and the sway (where the bubble goes)
@@ -934,7 +936,8 @@ inline void paint_ufo(const Rz &r, float t) {
     }
     if (tu >= UFO_LIFT && ufo_item != IT_NONE && n_ctg > 0) {  // the thing rises from where it was up the beam, small as it goes up, and is gone into the saucer
       const float k = seg(tu, UFO_LIFT + 0.1f, 6.6f), y0 = ctg[0].y, y1 = cy + BEAM_TOP + 6, x0 = ufo_item == IT_COW ? cow_x(t) : ctg[0].x;
-      paint_item(r, x0 + (cx - x0) * k + 2 * std::sin(tu * 4), y0 + (y1 - y0) * k, (ufo_item == IT_COW ? 1.5f : 1.0f) * (1.0f - 0.6f * k), tu);
+      const float s0 = ufo_item == IT_COW ? 1.5f : ufo_item == IT_PLANET ? 0.45f : ufo_item == IT_MOON ? 0.77f : ufo_item == IT_SUN ? 0.61f : 1.0f;  // (as big as it was on the map)
+      paint_item(r, x0 + (cx - x0) * k + 2 * k * std::sin(tu * 4), y0 + (y1 - y0) * k, s0 * (1.0f - 0.6f * k), tu);
     }
   }
   ellipse(r, cx, cy + 5 * K, 30 * K, 7 * K, c565(0x6C7690));      // the underside
@@ -1473,12 +1476,12 @@ inline void axo_plan() {
     add(0.32f, g.x - bf * (MO + 14), ay, bf, 0, true);  // the lunge
     add(0.8f, g.x - bf * (MO + 14), ay, bf, 0, false);  // the gulp, the cheeks
   }
-  ap.t_regrow = t + 0.4f;
-  for (int k = 0; k < n; k++)
-    ap.regrow[order[k]] = ap.t_regrow + 0.35f * k;
   ap.t_exit = t;
   const float dist = std::hypot(ex1 - cx, ey1 - cy);
   add(std::min(3.4f, std::max(1.8f, dist / 170)), ex1, ey1, ex1 > cx ? 1.0f : -1.0f, (n % 2 ? 1 : -1) * 0.14f * dist, false);
+  ap.t_regrow = t + 0.2f;  // (the things come back once it has swum off the screen, not while it is leaving)
+  for (int k = 0; k < n; k++)
+    ap.regrow[order[k]] = ap.t_regrow + 0.35f * k;
   ap.t_end = std::max(t, ap.t_regrow + 0.35f * n + 0.8f);
   for (int i = 0; i < 4; i++)
     ap.back[i] = false;

@@ -13,6 +13,7 @@
 //        task --swap under mutex--> pending --drain() on the loop tick--> loop copies
 #pragma once
 
+#include "sky_gray.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -322,7 +323,7 @@ constexpr size_t MEO_CAP = 200;                  // UI-28: GNSS lists, ~130 toda
 constexpr size_t GEO_CAP = 740;                  // geosynchronous, ~560 today (cache region D)          // ~11,000 today
 constexpr size_t STARLINK_PUB_CAP = 700;        // DATA-3: published per scan (whole sky)
 constexpr float RISING_EL = -2.0f;              // publish slightly below the horizon so risers appear promptly
-constexpr uint32_t STACK = 12288;               // ARCH-8, internal RAM (TLS is in PSRAM; 6 KB used at most, measured by `mem`)
+constexpr uint32_t STACK = 10240;               // ARCH-8, internal RAM (TLS is in PSRAM; 7 KB used at most, measured by `mem`); NET-16d: was 12 KB
 
 inline Config cfg;  // written only by the loop, under `mutex`
 inline Config jc;   // task-only snapshot of cfg, taken under `mutex` at the start of each job
@@ -333,6 +334,7 @@ inline volatile bool paused = false;   // BUILD-6
 // left cannot hold beside the data task's kept connection and a request in flight ("sock < 0", "esp-aes: Failed
 // to allocate memory"). It asks the data task to drop the kept connection and stay off the network for a while.
 inline volatile uint32_t hold_until_ms = 0;
+inline volatile bool hold_cut = true;  // true: a request in flight is cut short too (the install); false: it finishes (the check)
 inline volatile bool job_busy = false;
 inline uint32_t net_ms() { return (uint32_t) (net_us() / 1000); }
 inline bool hold_active() { return (int32_t) (hold_until_ms - net_ms()) > 0; }
@@ -365,6 +367,7 @@ struct LaunchRec {
   bool webcast = false;   // UI-76: Launch Library says its webcast is live
   char watch[128] = "";   // UI-80/80c: where to watch it, or else its info page (the best-ranked link), for the QR code
   char id[40] = "";       // UI-80c: Launch Library's id, to ask for its links
+  uint8_t tower = 0;      // UI-94: a Starship whose booster (1) and/or ship (2) is to be caught by the launch tower
 };
 // UI-54c: an upcoming space event (Launch Library 2 events: dockings, undockings, EVAs...)
 struct EventRec {
@@ -376,6 +379,10 @@ struct EventRec {
   char cc[4] = "";        // UI-54d: the spacecraft's country, from its name (Dragon -> USA...)
   char watch[128] = "";   // UI-80b/80c: where to watch it, or else its info page (best-ranked link), for the card's QR code
 };
+// UI-94: Launch Library's "Starship Orbital Catch Attempt" (type Spacecraft Landing): the tower is to catch the upper stage at this time
+inline bool event_catch(const EventRec &e) {
+  return e.exact && strstr(e.name, "Catch") != nullptr && strstr(e.type, "Landing") != nullptr;
+}
 // UI-69p: an exact-time docking at the ISS (not an undocking: "Docking" is not in "Undocking")
 inline bool event_docking(const EventRec &e) {
   return e.iss && e.exact && strstr(e.type, "Docking") != nullptr && strstr(e.type, "Undocking") == nullptr;
@@ -738,7 +745,7 @@ inline HttpResult http_stream(const char *url, const char *what, const std::func
       sink_us += net_us() - s0;
       if (stop && *stop)
         break;
-      if (hold_active() || paused) {  // NET-14/BUILD-6: the firmware check or install wants the network now
+      if ((hold_active() && hold_cut) || paused) {  // NET-14/BUILD-6: the install wants the network now (a check waits for the request)
         ESP_LOGW(TAG, "%s: stopped after %ld bytes for the firmware %s", what, res.bytes, paused ? "install" : "check");
         failed = true;
         break;
@@ -2220,10 +2227,23 @@ inline void launches_rll(char *buf, double now) {
 // UI-80c: Launch Library's list has no links; one launch's own reply has its video and info links (48 KB, one of the
 // 15 calls an hour). The links are kept per id, so each launch costs one call, up to two per list refresh, only when
 // no launch is inside its dense polling window (the 90 min before it), and a reboot keeps them (the flash cache).
+// UI-94: Launch Library's landing type of each stage is "Return to Launch Site" for a Starship booster (bit 1) or ship
+// (bit 2) that the tower is to catch (an ocean splashdown says "Ocean"). Only asked of a Starship: a Falcon's RTLS is a pad.
+inline uint8_t tower_bits(JsonVariantConst rocket) {
+  uint8_t bits = 0;
+  for (JsonVariantConst st : rocket["launcher_stage"].as<JsonArrayConst>())
+    if (!strcmp(st["landing"]["type"]["name"] | "", "Return to Launch Site"))
+      bits |= 1;
+  for (JsonVariantConst st : rocket["spacecraft_stage"].as<JsonArrayConst>())
+    if (!strcmp(st["landing"]["type"]["name"] | "", "Return to Launch Site"))
+      bits |= 2;
+  return bits;
+}
 struct LinkRec {
   char id[40] = "";
   char watch[128] = "";
   double at = 0;
+  uint8_t tower = 0;  // UI-94 (see LaunchRec)
 };
 inline LinkRec link_recs[16];
 inline void launch_links(pvector<LaunchRec> &out, char *buf, double now) {
@@ -2255,6 +2275,8 @@ inline void launch_links(pvector<LaunchRec> &out, char *buf, double now) {
         filter["vid_urls"][0]["priority"] = true;
         filter["info_urls"][0]["url"] = true;
         filter["info_urls"][0]["priority"] = true;
+        filter["rocket"]["launcher_stage"][0]["landing"]["type"]["name"] = true;  // UI-94
+        filter["rocket"]["spacecraft_stage"][0]["landing"]["type"]["name"] = true;
         JsonDocument doc(&psram_alloc);
         if (!deserializeJson(doc, buf, (size_t) len, DeserializationOption::Filter(filter),
                              DeserializationOption::NestingLimit(24))) {
@@ -2264,12 +2286,15 @@ inline void launch_links(pvector<LaunchRec> &out, char *buf, double now) {
           }
           best_link(doc["vid_urls"].as<JsonArray>(), doc["info_urls"].as<JsonArray>(), rec->watch, sizeof(rec->watch));
           rec->at = now;
+          rec->tower = strstr(l.rocket, "Starship") ? tower_bits(doc["rocket"]) : 0;
           ESP_LOGI(TAG, "launch links: %s -> %s", l.name, rec->watch[0] ? rec->watch : "(none)");
         }
       }
     }
     if (rec != nullptr)
       copy_cstr(l.watch, sizeof(l.watch), rec->watch);
+    if (rec != nullptr)
+      l.tower = rec->tower;
   }
 }
 inline void do_launches(double now) {
@@ -3006,11 +3031,12 @@ struct JpgStream {
 #ifndef SAT_HOST_TEST
   static void task(void *a) {
     ((JpgStream *) a)->run(jpg_cap, true);
+    ESP_LOGI(TAG, "jpgdec: stack used %u of 3584 bytes", (unsigned) (3584 - uxTaskGetStackHighWaterMark(nullptr)));  // NET-16d
     vTaskDelete(nullptr);  // (nothing of the job is touched after done)
   }
   // the first bytes are in and look like a JPEG: decode alongside the rest of the download
   void start() {
-    started = xTaskCreatePinnedToCore(task, "jpgdec", 6144, this, 1, nullptr, 0) == pdPASS;
+    started = xTaskCreatePinnedToCore(task, "jpgdec", 3584, this, 1, nullptr, 0) == pdPASS;
   }
 #else
   void start() {}
@@ -3504,7 +3530,7 @@ inline void hist_pic_release() {
   hpic::state = 0;
   hpic::have = -1;
 }
-// the first SOF marker's size: 1 baseline (w, h set), -1 another kind of JPEG, 0 not in the bytes yet
+// the first SOF marker's size: 1 baseline colour (w, h set), -1 another kind of JPEG, -2 a greyscale one, 0 not in the bytes yet
 inline int jpeg_size(const uint8_t *d, size_t n, int &w, int &h) {
   size_t i = 2;
   while (i + 9 < n) {
@@ -3524,7 +3550,9 @@ inline int jpeg_size(const uint8_t *d, size_t n, int &w, int &h) {
     if (m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC) {
       h = d[i + 5] << 8 | d[i + 6];
       w = d[i + 7] << 8 | d[i + 8];
-      return m == 0xC0 || m == 0xC1 ? 1 : -1;
+      if (m != 0xC0 && m != 0xC1)
+        return -1;
+      return d[i + 9] == 3 ? 1 : -2;  // (the ROM's decoder takes colour only: a greyscale file, one component, is -2)
     }
     i += 2 + (d[i + 2] << 8 | d[i + 3]);
   }
@@ -3572,7 +3600,7 @@ inline void do_histpic() {
         n += k;
         int sw = 0, sh = 0;
         if (!sized && !bad && n >= 64 && (sized = jpeg_size(jpg, n, sw, sh)) != 0) {
-          if (sized < 0 || sw <= 0 || sh <= 0) {
+          if (sized == -1 || sw <= 0 || sh <= 0) {  // (-2, a greyscale file, goes to sky_gray after the download)
             bad = true;
             return;
           }
@@ -3594,11 +3622,11 @@ inline void do_histpic() {
       js.abandon();
       vTaskDelay(pdMS_TO_TICKS(4000 * (attempt + 1)));
     }
-    if (!r.ok || big || bad || sized <= 0) {
+    if (!r.ok || big || bad || sized == 0) {
       js.abandon();
       ESP_LOGW(TAG, "event picture %d: %s (HTTP %d, %u bytes)", idx, big ? "larger than expected" : bad || sized < 0 ? "not a baseline JPEG" : "no picture",
                r.status, (unsigned) n);
-    } else if (const char *de = js.finish(n)) {
+    } else if (const char *de = sized == -2 ? sky_gray_decode(jpg, n, dst, w, h, [](int done, void *) { hpic::rows = done; }, nullptr) : js.finish(n)) {  // (a greyscale file: sky_gray, the ROM's decoder takes colour only)
       ESP_LOGW(TAG, "event picture %d: %s", idx, de);
     } else {
       rows = h;
@@ -3607,6 +3635,10 @@ inline void do_histpic() {
   }
   heap_caps_free(jpg);
   heap_caps_free(acc);
+#ifndef SAT_HOST_TEST
+  if (!heap_caps_check_integrity(MALLOC_CAP_INTERNAL, false))  // internal RAM only: quick; PSRAM's walk would stall the panel (FAIL-9)
+    ESP_LOGE(TAG, "event picture %d: internal heap CORRUPT after decode", idx);
+#endif
   ESP_LOGI(TAG, "event picture %d: %s in %u ms", idx, ok ? "loaded" : "failed", (unsigned) ((uint32_t) (net_us() / 1000) - t_job));
   if (ok)
     have = idx;
@@ -4407,7 +4439,7 @@ inline void mem_report(const char *why, bool walk = true) {
     int m = snprintf(st, sizeof(st), "internal total %u KB, DMA-capable free %u KB; stack used/size KB:",
                      (unsigned) (heap_caps_get_total_size(MALLOC_CAP_INTERNAL) / 1024),
                      (unsigned) (heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA) / 1024));
-    static const struct { const char *name; unsigned size; } T[] = {{"sat_net", (unsigned) net::STACK}, {"astro", 5120}, {"jpgdec", 6144},
+    static const struct { const char *name; unsigned size; } T[] = {{"sat_net", (unsigned) net::STACK}, {"astro", 5120}, {"jpgdec", 3584},
                                                                   {"loopTask", 8192}, {"async_tcp", 0}, {"mdns", 0}, {"tiT", 0}, {"wifi", 0}};
     for (const auto &t : T)
       if (TaskHandle_t h = xTaskGetHandle(t.name))
@@ -4415,6 +4447,11 @@ inline void mem_report(const char *why, bool walk = true) {
                       t.size / 1024);
     ESP_LOGI(net::TAG, "mem (%s): %s", why, st);
   }
+#endif
+#ifndef SAT_HOST_TEST
+  if (walk)  // a damaged heap block (a write past the end of an allocation) shows here, before a later free aborts
+    ESP_LOGI(net::TAG, "mem (%s): heap integrity internal %s, PSRAM %s", why, heap_caps_check_integrity(MALLOC_CAP_INTERNAL, true) ? "ok" : "CORRUPT",
+             heap_caps_check_integrity(MALLOC_CAP_SPIRAM, true) ? "ok" : "CORRUPT");
 #endif
   ESP_LOGI(net::TAG, "mem (%s): KB in PSRAM:%s vectors %u (peak %u); named %u, other %d", why, line, (unsigned) (memtrack::vec_bytes / 1024),
            (unsigned) (memtrack::vec_peak / 1024), (unsigned) ((tracked - memtrack::vec_bytes) / 1024),
@@ -4445,7 +4482,8 @@ inline bool net_init(const Config &c) {
 // NET-14: keep the data task off the network for `ms` (a request in flight finishes first); it drops its kept
 // connection as it wakes. net_quiet(): it is idle and holds no connection. Never blocks.
 inline bool enqueue(Job j, bool front = false);
-inline void net_hold(uint32_t ms) {
+inline void net_hold(uint32_t ms, bool cut = true) {
+  net::hold_cut = cut;
   net::hold_until_ms = net::net_ms() + ms;
   enqueue(JOB_DROP);
 }

@@ -29,6 +29,7 @@ void set_last_fps(float fps);  // the dinosaur's walk (sky_dino.h) reports its r
 float last_fps();  // PERF-17: the frame rate of the last animation played (NaN before the first)
 void play_boot();  // UI-69k on the boot screen: no banner, smoke over black
 void play_splash_now();  // UI-69m button: the next splashdown's name (or a generic one)
+void play_catch_now();   // UI-93 button: the Starship catch
 // UI-76: the launch countdown, from T-10 min to liftoff
 void set_countdown(bool on);
 void countdown_fonts(const lv_font_t *digits, const lv_font_t *title, const lv_font_t *body, const lv_font_t *small);
@@ -127,6 +128,13 @@ constexpr int CAN_W = 22, CAN_H = 11;     // one canopy: a striped half-ellipse 
 // where each canopy's rim middle hangs from the nose where the four sets of lines meet
 constexpr float CAN_OX[4] = {-27, -9, 9, 27}, CAN_OY[4] = {-40, -47, -47, -40}, CAN_HW = 10.0f;
 constexpr uint32_t C_SEA = 0x1C4E80, C_SEA_LIGHT = 0x3F7FB8;
+// UI-93 Starship catch: a ship comes down tail-first on its engines, slows, hovers, settles between the tower's two
+// arms (open as a V), the arms swing shut under its catch pins, the engines cut in a burst of steam. No pictures: it
+// is all drawn by one object (rectangles, triangles, thick lines), so it needs no buffer.
+constexpr float CATCH_S = 8.5f, CATCH_REST = 5.2f, CATCH_CLOSE0 = 3.3f, CATCH_CUT = 5.4f;  // the ship comes to rest; the arms start closing (still slowing) and are shut by then; the engines cut
+constexpr int CT_X = 250, CT_ARM_Y = 190, CT_HINGE = 52, CT_SH_H = 120, CT_PIN = 52;  // the ship hangs at CT_X beside the tower; its catch pins are CT_PIN under its tip
+constexpr int CT_TW_X = 96, CT_TW_W = 40;  // the tower: a column on the left, its left edge and width
+constexpr float CT_Y_END = CT_ARM_Y + 4;   // where the ship's pins end up (their bottom on the arms)
 constexpr double LATE_S = 120;       // a launch is "now" for 2 min after T-0 (refresh lag)
 
 struct St {
@@ -205,6 +213,14 @@ struct St {
   uint32_t splash_key = 0;  // the last splashdown shown
   bool splashed = false;
   uint32_t undock_key = 0;  // the last undocking shown
+  uint32_t catch_key = 0;   // UI-94: the last Starship catch attempt shown
+  // UI-93
+  bool starcatch = false;
+  lv_obj_t *scene = nullptr;
+  float sc_x = 400, sc_y = -200, sc_tilt = 26, sc_deg = 1, sc_fl = 0;  // the ship's pins' place, its tilt (degrees, nose to the right), how open the arms are, the plume's length
+  int sc_fi = 0;
+  uint32_t sc_fat = 0;
+  lv_area_t sc_area{0, 0, -1, -1};  // what the scene last drew moving
 };
 inline St st;
 inline bool pics_ready = false, boot_pending = false;  // UI-69n: the pictures drawn; a boot launch waiting
@@ -469,7 +485,7 @@ inline void stop() {
     lv_draw_buf_destroy(st.snap);
     st.snap = nullptr;
   }
-  lv_obj_t **all[] = {&st.catcher, &st.img, &st.banner};
+  lv_obj_t **all[] = {&st.catcher, &st.img, &st.banner, &st.scene};
   for (auto **o : all)
     if (*o) {
       lv_obj_delete(*o);
@@ -500,6 +516,7 @@ inline void stop() {
   st.label = nullptr;
   st.boot = false;
   st.splash = false;
+  st.starcatch = false;
   st.sea_img = nullptr;  // (deleted with st.sea, its clip)
 }
 inline bool playing() { return st.anim != nullptr; }
@@ -1012,9 +1029,184 @@ inline void frame_splash() {
   }
 }
 
+// UI-93: the ship's pins' place, its tilt (degrees, nose to the right), how open the arms are (1 swung wide, 0 wrapped
+// round the ship) and the plume's length at ts. It comes in tail-first on a diagonal from the upper right, away from the
+// tower, tilted, straightening as it eases down and drifts sideways into its place; the arms start closing while it is
+// still slowing and are shut as it comes to rest.
+inline void catch_pose(float ts, float &x, float &y, float &tilt, float &deg, float &fl) {
+  const float u = std::max(0.0f, 1 - ts / CATCH_REST), e = u * u;  // one fall that eases to nothing as it reaches its place
+  x = CT_X + 138 * e;
+  y = CT_Y_END - (CT_Y_END + 190) * e;
+  tilt = 26 * smooth01(u / 0.6f);
+  fl = 60 + 50 * u;
+  deg = 1 - smooth01((ts - CATCH_CLOSE0) / (CATCH_REST - CATCH_CLOSE0));  // the arms close on the last of it
+  if (ts > CATCH_CUT)  // engines cut
+    fl *= std::max(0.0f, 1 - (ts - CATCH_CUT) / 0.25f);
+}
+// a point of the ship (local: x across, y down from the pins, the ship's own axis) on the screen
+inline void ct_pt(float lx, float ly, float &sx, float &sy) {
+  const float r = st.sc_tilt * (float) M_PI / 180.0f, c = std::cos(r), n = std::sin(r);
+  sx = st.sc_x + lx * c - ly * n, sy = st.sc_y + lx * n + ly * c;
+}
+inline void draw_catch(lv_event_t *e) {
+  lv_layer_t *layer = lv_event_get_layer(e);
+  const int cx = CT_X;
+  auto rect = [&](int x1, int y1, int x2, int y2, uint32_t col, int r = 0, uint32_t edge = 0) {
+    lv_draw_rect_dsc_t d;
+    lv_draw_rect_dsc_init(&d);
+    d.bg_color = lv_color_hex(col);
+    d.bg_opa = LV_OPA_COVER;
+    d.radius = r;
+    if (edge)
+      d.border_color = lv_color_hex(edge), d.border_width = 1, d.border_opa = LV_OPA_COVER;
+    const lv_area_t a = {x1, y1, x2, y2};
+    lv_draw_rect(layer, &d, &a);
+  };
+  auto tri = [&](float x1, float y1, float x2, float y2, float x3, float y3, uint32_t col) {
+    lv_draw_triangle_dsc_t d;
+    lv_draw_triangle_dsc_init(&d);
+    d.color = lv_color_hex(col);
+    d.opa = LV_OPA_COVER;
+    d.p[0] = {(lv_value_precise_t) x1, (lv_value_precise_t) y1}, d.p[1] = {(lv_value_precise_t) x2, (lv_value_precise_t) y2}, d.p[2] = {(lv_value_precise_t) x3, (lv_value_precise_t) y3};
+    lv_draw_triangle(layer, &d);
+  };
+  auto line = [&](float x1, float y1, float x2, float y2, int w, uint32_t col, bool round = false) {
+    lv_draw_line_dsc_t d;
+    lv_draw_line_dsc_init(&d);
+    d.color = lv_color_hex(col);
+    d.width = w;
+    d.round_start = d.round_end = round;
+    d.p1 = {(lv_value_precise_t) x1, (lv_value_precise_t) y1}, d.p2 = {(lv_value_precise_t) x2, (lv_value_precise_t) y2};
+    lv_draw_line(layer, &d);
+  };
+  // the ship's parts in its own frame (x across, y down from the pins): a quad is two triangles, turned with the ship
+  auto quad = [&](float x1, float y1, float x2, float y2, uint32_t col) {
+    float p[4][2];
+    ct_pt(x1, y1, p[0][0], p[0][1]), ct_pt(x2, y1, p[1][0], p[1][1]);
+    ct_pt(x2, y2, p[2][0], p[2][1]), ct_pt(x1, y2, p[3][0], p[3][1]);
+    tri(p[0][0], p[0][1], p[1][0], p[1][1], p[2][0], p[2][1], col);
+    tri(p[0][0], p[0][1], p[2][0], p[2][1], p[3][0], p[3][1], col);
+  };
+  auto ltri = [&](float x1, float y1, float x2, float y2, float x3, float y3, uint32_t col) {
+    float p[3][2];
+    ct_pt(x1, y1, p[0][0], p[0][1]), ct_pt(x2, y2, p[1][0], p[1][1]), ct_pt(x3, y3, p[2][0], p[2][1]);
+    tri(p[0][0], p[0][1], p[1][0], p[1][1], p[2][0], p[2][1], col);
+  };
+  // the pad and the tower, off to the left: a dark column with a lattice of braces
+  const int tx1 = CT_TW_X, tx2 = CT_TW_X + CT_TW_W;
+  rect(tx1 - 26, 392, cx + 120, 402, 0x3A4150, 0, 0x6B7589);
+  rect(tx1, 96, tx2, 392, 0x2A303C);
+  line(tx1 + 1, 96, tx1 + 1, 392, 3, 0x8892A6);
+  line(tx2 - 1, 96, tx2 - 1, 392, 3, 0x8892A6);
+  for (int y = 96; y < 392; y += 24) {
+    line(tx1, y, tx2, y, 2, 0x6B7589);
+    line(tx1, y, tx2, y + 24, 1, 0x566075);
+    line(tx2, y, tx1, y + 24, 1, 0x566075);
+  }
+  rect(tx1 + 8, 84, tx2 - 8, 96, 0x4B5565, 0, 0x8892A6);  // the crane head
+  // the carriage on the tower and the beam out to the arms' hinges, behind the ship
+  rect(tx1 - 8, CT_ARM_Y - 24, tx2 + 8, CT_ARM_Y + 24, 0x4B5565, 3, 0x8892A6);
+  rect(tx2 + 8, CT_ARM_Y - 11, cx + CT_HINGE + 12, CT_ARM_Y + 11, 0x4B5565, 2, 0x8892A6);
+  // the ship: silver on the left, a black heat shield on the right (pins at its origin)
+  const int hw = 17, H = CT_SH_H - CT_PIN;  // H: the engine end, below the pins
+  const int top = -CT_PIN;
+  if (st.sc_y < 700) {
+    quad(-hw - 12, 92 + top, -hw + 1, 116 + top, 0x5A606C), quad(hw - 1, 92 + top, hw + 12, 116 + top, 0x3A3F4A);  // aft flaps
+    quad(-hw - 6, 28 + top, -hw + 1, 44 + top, 0x5A606C), quad(hw - 1, 28 + top, hw + 6, 44 + top, 0x3A3F4A);     // forward flaps, tucked up
+    quad(-hw, 38 + top, 0, H, 0xD9DDE6), quad(0, 38 + top, hw, H, 0x262A33);
+    ltri(-hw, 38 + top, 0, top, 0, 38 + top, 0xD9DDE6), ltri(0, top, hw, 38 + top, 0, 38 + top, 0x262A33);
+    for (int k = 66; k < CT_SH_H; k += 20) {  // the stainless rings
+      float a1, b1, a2, b2;
+      ct_pt(-hw, k + top, a1, b1), ct_pt(0, k + top, a2, b2);
+      line(a1, b1, a2, b2, 1, 0xB3B9C6);
+    }
+    quad(-hw - 6, -6, -hw, 0, 0xB0B6C2), quad(hw, -6, hw + 6, 0, 0x6B7589);  // the catch pins
+    quad(-13, H, -7, H + 4, 0x30343C), quad(-3, H, 3, H + 4, 0x30343C), quad(7, H, 13, H + 4, 0x30343C);  // engine bells
+    if (st.sc_fl > 1) {  // the plume: long and narrow, pale pink-violet, flickering softly
+      static const float K[5] = {1.0f, 1.1f, 0.92f, 1.06f, 0.97f};
+      const float L = st.sc_fl * K[st.sc_fi % 5], by = H + 4, lean = (st.sc_fi % 3 - 1) * 1.0f;
+      ltri(-6, by, 6, by, lean, by + L, 0xD3A6EA);
+      ltri(-3.5f, by, 3.5f, by, lean * 0.6f, by + L * 0.7f, 0xEAD0F7);
+      ltri(-1.5f, by, 1.5f, by, lean * 0.3f, by + L * 0.4f, 0xFAF1FF);
+    }
+  }
+  // the two arms, in front of the ship: each hinged on the beam at its own side, at one height. Open they are
+  // short stubs pointing at the viewer and spread out; closing they sweep inward round the ship's front (hinge, elbow,
+  // tip: the screen's view of a swing in the horizontal plane) until the tips nearly meet under the pins
+  {
+    const float o = st.sc_deg, c = 1 - o;
+    for (int side = -1; side <= 1; side += 2) {
+      const float hx = cx + side * CT_HINGE, ey = CT_ARM_Y + 8 * o + 10 * c, ex = cx + side * (78 * o + 27 * c);
+      const float tx = cx + side * (84 * o + 3 * c), ty = CT_ARM_Y + 22 * o + 12 * c;
+      for (int pass = 0; pass < 2; pass++) {
+        const int w = pass ? 7 : 11;
+        const uint32_t col = pass ? 0xE08A2E : 0x8A4F14;
+        line(hx, CT_ARM_Y, ex, ey, w, col, true);
+        line(ex, ey, tx, ty, w, col, true);
+      }
+    }
+  }
+}
+inline void frame_catch() {
+  const float ts = (now_ms() - st.t0) / 1000.0f;
+  if (ts > CATCH_S) {
+    stop();
+    return;
+  }
+  if (now_ms() - st.sc_fat >= FLAME_MS) {  // flicker
+    st.sc_fat = now_ms();
+    st.sc_fi = (st.sc_fi + 1) % (int) sizeof(FLAME_SEQ);
+  }
+  float x, y, tilt, deg, fl;
+  catch_pose(ts, x, y, tilt, deg, fl);
+  // redraw the ship (old and new, with its plume) and, when the arms moved, the arms' box
+  auto ship_box = [](float x, float y, float f) -> lv_area_t {
+    const int r = 100 + (int) f;  // (a tilted ship swings its tip and plume to the side)
+    return {(int) x - r, (int) y - CT_PIN - 8, (int) x + r, (int) y + CT_SH_H - CT_PIN + 8 + (int) (f * 1.3f + 3)};
+  };
+  const float old_deg = st.sc_deg;
+  lv_area_t a = ship_box(st.sc_x, st.sc_y, st.sc_fl), b = ship_box(x, y, fl);
+  st.sc_x = x, st.sc_y = y, st.sc_tilt = tilt, st.sc_deg = deg, st.sc_fl = fl;
+  a = {std::min(a.x1, b.x1), std::min(a.y1, b.y1), std::max(a.x2, b.x2), std::max(a.y2, b.y2)};
+  lv_inv_area(nullptr, &a);
+  if (std::fabs(deg - old_deg) > 0.001f) {
+    const lv_area_t arms = {CT_X - 100, CT_ARM_Y - 14, CT_X + 100, CT_ARM_Y + 34};
+    lv_inv_area(nullptr, &arms);
+  }
+  // steam: a puff off the engines every 0.4 s on the way down, a burst of fourteen along the arms as the engines cut
+  // (puffs are short, so it is spread over 0.7 s)
+  const int due = ts < CATCH_CUT ? (int) (ts / 0.4f) : (int) (CATCH_CUT / 0.4f) + 1 + std::min(14, (int) ((ts - CATCH_CUT) / 0.05f));
+  while (st.last_emit < due) {
+    st.last_emit += 1;
+    const int n = (int) st.last_emit;
+    if (ts < CATCH_CUT) {
+      float ex, ey;
+      ct_pt((float) (n % 5 - 2) * 3, CT_SH_H - CT_PIN + 4 + fl * 0.9f, ex, ey);
+      puff_emit(ts, ex, ey);
+    } else {
+      puff_emit(ts, CT_X + (n % 2 ? 1 : -1) * (24 + (n % 4) * 14), CT_ARM_Y - 6 - (n % 3) * 5);  // along the arms
+    }
+  }
+  // the catch's steam: six big slow billows (the launch's ground-cloud discs, unused here) swelling and thinning round the arms
+  static const int BX[PADS] = {-40, 40, -30, 30, -58, 58};
+  for (int k = 0; k < PADS; k++) {
+    const float age = ts - CATCH_CUT - 0.1f * k;
+    if (age < 0)
+      continue;
+    const int a = (int) (225 - 120 * age);
+    if (a <= 70)
+      hide(k);
+    else
+      smoke_at(k, CT_X + BX[k], (int) (CT_ARM_Y + 4 - 16 * age - 4 * (k & 1)), (int) (9 + 9 * age), a, 0xF4F6FA);
+  }
+  puffs_step(ts);
+}
+
 inline void frame() {
   st.last_frame = now_ms();
-  if (st.splash)
+  if (st.starcatch)
+    frame_catch();
+  else if (st.splash)
     frame_splash();
   else if (st.dock)
     frame_dock();
@@ -1094,12 +1286,15 @@ inline void banner_text(const char *name, char *b, size_t n) {
 }
 
 // false when nothing plays (the pictures are not drawn yet, UI-69n): the caller may ask again
-inline bool play_scene(bool undock, const char *name, bool boot = false, bool splash = false, bool dock = false) {
+inline bool play_scene(bool undock, const char *name, bool boot = false, bool splash = false, bool dock = false, bool starcatch = false) {
   octo::stop();  // UI-85: a launch, docking or splashdown ends the octopus's visit
   stop();
   if (!pics_ready || !st.img_buf[0] || ((undock || dock) && !st.capsule_buf[St::CAP_PH - 1]) ||
       (splash && (!st.sea_buf || !st.cap2_buf || !st.chute_buf)))
     return false;
+  st.starcatch = starcatch;
+  if (starcatch)
+    undock = dock = splash = false;
   st.dock = dock && !splash;
   st.undock = (undock || dock) && !splash;  // (the docking is the undocking's station and capsule)
   st.splash = splash;
@@ -1155,6 +1350,14 @@ inline bool play_scene(bool undock, const char *name, bool boot = false, bool sp
     st.sp_phase = 6.283f * rnd();
     st.sp_drift = rnd() < 0.5f ? -1.0f : 1.0f;
   }
+  if (starcatch) {  // UI-93: the tower, arms and ship, one object under the steam
+    st.scene = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(st.scene);
+    lv_obj_set_size(st.scene, 480, 480);
+    lv_obj_remove_flag(st.scene, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    lv_obj_add_event_cb(st.scene, draw_catch, LV_EVENT_DRAW_MAIN, nullptr);
+    st.sc_x = 400, st.sc_y = -200, st.sc_tilt = 26, st.sc_deg = 1, st.sc_fl = 0, st.sc_fi = 0;
+  }
   smoke_create();  // over the ISS, under the rocket and the banner
   if (splash) {
     st.lines = lv_obj_create(lv_layer_top());  // the lines and canopies
@@ -1181,6 +1384,8 @@ inline bool play_scene(bool undock, const char *name, bool boot = false, bool sp
     lv_obj_add_flag(st.sea_front, LV_OBJ_FLAG_HIDDEN);
   }
   lv_obj_remove_flag(st.img, LV_OBJ_FLAG_CLICKABLE);
+  if (starcatch)
+    lv_obj_add_flag(st.img, LV_OBJ_FLAG_HIDDEN);  // (the launch picture is not used)
   char b[96] = "";
   if (!st.boot) {  // UI-69k: no banner on the boot screen
     // the banner: the mission, centred both ways in its box
@@ -1201,7 +1406,7 @@ inline bool play_scene(bool undock, const char *name, bool boot = false, bool sp
     lv_obj_set_width(st.label, 336);
     lv_label_set_long_mode(st.label, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_style_text_align(st.label, LV_TEXT_ALIGN_CENTER, 0);
-    banner_text(name && *name ? name : splash ? "Splashdown" : st.dock ? "Docking at the ISS" : undock ? "Undocking from the ISS" : "Rocket launch", b, sizeof(b));
+    banner_text(name && *name ? name : starcatch ? "Starship catch" : splash ? "Splashdown" : st.dock ? "Docking at the ISS" : undock ? "Undocking from the ISS" : "Rocket launch", b, sizeof(b));
     lv_label_set_text(st.label, b);
     // A long name wraps to two lines (no more: dots after that); the banner grows upward to hold
     // them, its bottom staying put (a fixed 46 px banner let the second line spill over the
@@ -1222,7 +1427,7 @@ inline bool play_scene(bool undock, const char *name, bool boot = false, bool sp
   st.t0 = now_ms();
   st.puff_next = 0;
   st.frames = st.max_gap = 0;
-  st.last_emit = undock ? 0 : -1;  // undocking: counts thruster bursts
+  st.last_emit = undock || starcatch ? 0 : -1;  // undocking: counts thruster bursts
   for (auto &p : st.pad_step)
     p = -1;
   // Move everything at the start of each display refresh, from the clock at that moment, so
@@ -1247,7 +1452,7 @@ inline bool play_scene(bool undock, const char *name, bool boot = false, bool sp
       },
       40, nullptr);
   frame();
-  ESP_LOGI("rocket", "%s animation: %s", splash ? "splashdown" : st.dock ? "docking" : undock ? "undocking" : st.boot ? "boot" : "launch", b);
+  ESP_LOGI("rocket", "%s animation: %s", starcatch ? "starship catch" : splash ? "splashdown" : st.dock ? "docking" : undock ? "undocking" : st.boot ? "boot" : "launch", b);
   return true;
 }
 inline bool play(const char *name) { return play_scene(false, name); }
@@ -1569,6 +1774,16 @@ inline void check() {
       st.splash_key = k;
     return;
   }
+  for (const auto &e : live.events) {  // UI-94: the tower's catch of a Starship's upper stage, at the time Launch Library gives
+    if (!net::event_catch(e) || e.t > t || t - e.t > LATE_S)
+      continue;
+    const uint32_t k = key_of(e.name, e.t);
+    if (k == st.catch_key)
+      continue;
+    if (play_scene(false, e.name, false, false, false, true))
+      st.catch_key = k;
+    return;
+  }
 }
 
 // UI-69n: the pictures are drawn after the display is up, a slice at a time (BOOT-1): drawn in
@@ -1683,6 +1898,9 @@ void play_splash_now() {  // UI-69m
       return;
     }
   play_scene(false, "Splashdown", false, true);
+}
+void play_catch_now() {  // UI-93
+  play_scene(false, "Starship catch: Ship 42 caught by the tower", false, false, false, true);
 }
 void play_undock_now() {
   const double t = clock_valid() ? clock_now() : 0;

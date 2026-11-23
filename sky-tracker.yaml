@@ -231,10 +231,19 @@ esp32:
       CONFIG_LWIP_TCP_WND_DEFAULT: "16384"
       CONFIG_LWIP_TCP_RECVMBOX_SIZE: "16"
       CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP: y
+      # NET-19: the Wi-Fi driver's hot paths are not kept in IRAM (CONFIG_ESP_WIFI_IRAM_OPT and _RX_IRAM_OPT are on by
+      # default): 18 KB of internal RAM, which the heap gets back. They run from the PSRAM the rest of the code runs from.
+      CONFIG_ESP_WIFI_IRAM_OPT: n
+      CONFIG_ESP_WIFI_RX_IRAM_OPT: n
       # UI-68: all mbedTLS memory from PSRAM. From internal RAM, the update check's second TLS
       # session (sat_net keeps one open) failed every time: "mbedtls_ssl_setup returned
       # -0x7F00" (out of memory). Going through malloc (4.6.4) was not enough.
       CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC: y
+      # NET-17: NASA's svs.gsfc.nasa.gov (the Moon picture) now answers TLS 1.2 with a "protocol version" alert and
+      # accepts only TLS 1.3 ("mbedtls_ssl_handshake returned -0x7780", "could not reach NASA"). 1.3 needs the peer
+      # certificate kept (about 4 KB, from PSRAM with the line above); the other hosts still talk 1.2.
+      CONFIG_MBEDTLS_SSL_PROTO_TLS1_3: y
+      CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE: y
       # NET-16: malloc of more than 4 KB comes from PSRAM (default 16 KB). The HTTP client's own 8 KB receive buffer
       # went to internal RAM (~44 KB free, largest block ~31 KB) and a download failed on unit A: "Failed to allocate
       # memory for storing decoded data", read failed after 0 bytes, "download was cut short". (Explicit
@@ -314,6 +323,8 @@ api:
               else ESP_LOGW("dbg", "page what? (sky list settings about debug)");
             } else {
               sat::dbg::run(cmd.c_str());
+              if (!strcmp(cmd.c_str(), "close"))  // (also off a page: the list, settings...; dbg::run closes viewers and cards)
+                id(lvgl_comp)->show_page(id(sky_page)->index, LV_SCREEN_LOAD_ANIM_NONE, 0);
             }
 
 wifi:
@@ -332,6 +343,7 @@ web_server:                      # NET-1: built-in web UI on port 80
   version: 3
   local: true                    # bundle the UI so it also works on the AP (no internet)
   include_internal: true         # UI-87: the eclipse buttons are web-only (internal: not in the API or Home Assistant)
+                                 # NET-1b: so are the Sky, Satellites and ISS entities (internal: true on each)
                                  # NET-1: firmware upload from the web page is ON
   sorting_groups:                # NET-6: sections on the web page (HA is unaffected)
     - id: grp_location           # the observer's place and the compass (the Settings > Location tab)
@@ -764,6 +776,7 @@ sensor:
     update_interval: 300s
     lambda: return sat::declination();
   - platform: template           # UI-37: planetary Kp from NOAA SWPC (latest 3-hour value)
+    internal: true
     id: s_aurora_kp
     name: Aurora Kp
     web_server:
@@ -774,6 +787,7 @@ sensor:
     update_interval: 300s
     lambda: return sat::kp_now();
   - platform: template           # UI-55: solar wind at L1 (NOAA SWPC real-time), 15-minute means
+    internal: true
     id: s_solar_wind_bz
     name: Solar Wind Bz
     web_server:
@@ -786,6 +800,7 @@ sensor:
     update_interval: 300s
     lambda: return sat::wind_bz();
   - platform: template
+    internal: true
     id: s_solar_wind_speed
     name: Solar Wind Speed
     web_server:
@@ -798,6 +813,7 @@ sensor:
     update_interval: 300s
     lambda: return sat::wind_speed();
   - platform: template           # UI-58: NOAA OVATION nowcast, chance of visible aurora overhead
+    internal: true
     id: s_aurora_chance
     name: Aurora Chance
     web_server:
@@ -810,6 +826,7 @@ sensor:
     update_interval: 300s
     lambda: return sat::aurora_chance();
   - platform: template           # UI-58: the most within ~800 km (seen low in the sky)
+    internal: true
     id: s_aurora_chance_in_view
     name: Aurora Chance In View
     web_server:
@@ -822,6 +839,7 @@ sensor:
     update_interval: 300s
     lambda: return sat::aurora_chance_view();
   - platform: template
+    internal: true
     id: s_iss_elevation
     name: ISS Elevation
     web_server:
@@ -833,6 +851,7 @@ sensor:
     update_interval: 60s
     lambda: return sat::iss_el();
   - platform: template
+    internal: true
     id: s_iss_azimuth
     name: ISS Azimuth
     web_server:
@@ -844,6 +863,7 @@ sensor:
     update_interval: 60s
     lambda: return sat::iss_az();
   - platform: template
+    internal: true
     id: s_satellites_overhead
     name: Satellites Overhead
     web_server:
@@ -855,6 +875,7 @@ sensor:
     update_interval: 60s
     lambda: return sat::sat_count();
   - platform: template
+    internal: true
     id: s_starlink_overhead
     name: Starlink Overhead
     web_server:
@@ -910,6 +931,7 @@ sensor:
       sorting_group_id: grp_location
       sorting_weight: 11
   - platform: template
+    internal: true
     id: s_orbital_data_age
     name: Orbital Data Age
     icon: mdi:clock-alert-outline
@@ -922,6 +944,7 @@ sensor:
       sorting_group_id: grp_sats
       sorting_weight: 90
   - platform: template
+    internal: true
     id: s_satellites_tracked
     name: Satellites Tracked
     icon: mdi:satellite-variant
@@ -934,6 +957,7 @@ sensor:
       sorting_group_id: grp_sats
       sorting_weight: 91
   - platform: template
+    internal: true
     id: s_starlink_tracked
     name: Starlink Tracked
     icon: mdi:satellite-uplink
@@ -1021,6 +1045,7 @@ select:
 
 number:
   - platform: template           # UI-39: LEO cone, degrees from overhead (the Starlink layer)
+    internal: true
     id: leo_cone
     name: LEO Cone
     icon: mdi:angle-acute
@@ -1165,6 +1190,7 @@ switch:
     on_turn_off:
       - lambda: sat::set_miles(false);
   - platform: template           # UI-22: off = no markers, no downloads or maths for the layer
+    internal: true
     id: show_satellites          # the LEO switch (Starlink is part of LEO)
     name: Show LEO
     web_server:
@@ -1178,6 +1204,7 @@ switch:
     on_turn_off:
       - lambda: sat::set_layers(id(show_satellites).state, id(show_starlink).state, id(show_meo).state, id(show_geo).state);
   - platform: template           # UI-22
+    internal: true
     id: show_starlink
     name: Show Starlink
     web_server:
@@ -1191,6 +1218,7 @@ switch:
     on_turn_off:
       - lambda: sat::set_layers(id(show_satellites).state, id(show_starlink).state, id(show_meo).state, id(show_geo).state);
   - platform: template           # MEO (includes HEO): GNSS lists downloaded only while on
+    internal: true
     id: show_meo
     name: Show MEO
     web_server:
@@ -1204,6 +1232,7 @@ switch:
     on_turn_off:
       - lambda: sat::set_layers(id(show_satellites).state, id(show_starlink).state, id(show_meo).state, id(show_geo).state);
   - platform: template           # GEO: dim dots, geo list downloaded only while on
+    internal: true
     id: show_geo
     name: Show GEO
     web_server:
@@ -1217,6 +1246,7 @@ switch:
     on_turn_off:
       - lambda: sat::set_layers(id(show_satellites).state, id(show_starlink).state, id(show_meo).state, id(show_geo).state);
   - platform: template           # UI-35: rocket bodies and debris (trash icons)
+    internal: true
     id: show_debris
     name: Show Orbital Debris
     web_server:
@@ -1308,6 +1338,7 @@ switch:
     on_turn_off:
       - lambda: sat::set_sky_alerts(false);
   - platform: template           # UI-52b: ISS and Tiangong on the map
+    internal: true
     id: show_stations
     name: Show Space Stations
     web_server:
@@ -1603,6 +1634,16 @@ button:
     icon: mdi:parachute
     on_press:
       - lambda: sat::rocket::play_splash_now();
+  - platform: template           # UI-93: the Starship catch, now (the web page only: no API, no Home Assistant)
+    id: btn_play_catch
+    name: Play Starship Catch Animation
+    internal: true
+    web_server:
+      sorting_group_id: grp_animations
+      sorting_weight: 17
+    icon: mdi:rocket
+    on_press:
+      - lambda: sat::rocket::play_catch_now();
   - platform: template           # EASTER EGG, web UI only (see Octopus Visits). UI-83: the About logo's dinosaur, from the web UI and HA too
     id: btn_play_dino
     name: Play Dinosaur Animation
@@ -1698,6 +1739,7 @@ button:
 
 binary_sensor:
   - platform: template
+    internal: true
     id: bs_iss_overhead
     name: ISS Overhead
     web_server:
@@ -1724,6 +1766,7 @@ text_sensor:
       sorting_group_id: grp_location
       sorting_weight: 7
   - platform: template
+    internal: true
     id: ts_next_iss_pass
     name: Next ISS Pass
     web_server:
@@ -1733,6 +1776,7 @@ text_sensor:
     update_interval: 60s
     lambda: return sat::next_pass_text();
   - platform: template           # UI-54: Launch Library 2
+    internal: true
     id: ts_next_launch
     name: Next Launch
     web_server:

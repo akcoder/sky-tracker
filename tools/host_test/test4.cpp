@@ -22,6 +22,7 @@ int host_tasks_created = 0;
 size_t host_psram_allocs = 0;
 int host_warnings = 0;
 std::map<std::string, std::string> host_http_bodies;
+static std::string key_moon_json;
 std::string host_last_url;
 
 #include "sat_tracker.h"
@@ -585,6 +586,40 @@ int main() {
         printf("launch row opened\n");
         break;
       }
+    {  // UI-94: a Starship launch whose booster / ship the tower is to catch says so on its card
+      JsonDocument d;
+      deserializeJson(d, R"({"rocket":{"launcher_stage":[{"landing":{"type":{"name":"Return to Launch Site"}}}],
+                              "spacecraft_stage":[{"landing":{"type":{"name":"Return to Launch Site"}}}]}})");
+      CHECK(sat::net::tower_bits(d["rocket"]) == 3, "booster and ship catch read");
+      deserializeJson(d, R"({"rocket":{"launcher_stage":[{"landing":{"type":{"name":"Return to Launch Site"}}}],
+                              "spacecraft_stage":[{"landing":{"type":{"name":"Ocean"}}}]}})");
+      CHECK(sat::net::tower_bits(d["rocket"]) == 1, "booster-only catch read, ocean ship ignored");
+      deserializeJson(d, R"({"rocket":{"launcher_stage":[{"landing":{"type":{"name":"Ocean"}}}]}})");
+      CHECK(sat::net::tower_bits(d["rocket"]) == 0, "no catch read");
+      {
+        const bool pushed = sat::live.launches.empty();  // (the list has no launches yet at this point of the run)
+        if (pushed) sat::live.launches.push_back(sat::net::LaunchRec{});
+        auto &l = sat::live.launches[0];
+        const auto saved = l;
+        snprintf(l.rocket, sizeof(l.rocket), "Starship");
+        l.net = sat::clock_now() + 3600;
+        const char *want[4] = {nullptr, nullptr, "Tower catch planned for the upper stage", "Tower catch planned for the upper stage"};  // (bit 1: the booster, not shown)
+        for (int k = 0; k < 4; k++) {
+          l.tower = (uint8_t) k;
+          sat::Alert a{};
+          a.info = sat::AI_LAUNCH;
+          a.idx = 0;
+          sat::info_alert = a;
+          sat::select_object(sat::K_INFO, 0);
+          sat::info_card_update(sat::clock_now());
+          const char *body = lv_label_get_text(sat::ui.card_body);
+          CHECK(want[k] ? strstr(body, want[k]) != nullptr : strstr(body, "Tower catch") == nullptr, "launch card tower line %d: %s", k, body);
+          sat::deselect();
+        }
+        l = saved;
+        if (pushed) sat::live.launches.clear();
+      }
+    }
     CHECK(tested > 5, "list rows tested (%d)", tested);
     {  // UI-10d: a cell that changes redraws only its own area; the row lines MUST survive that (LVGL draws a
        // BOTTOM border one pixel below the cell, outside the area it invalidates: the line under the row above
@@ -805,6 +840,7 @@ int main() {
     printf("\nconj %d %s-%s %.2f at %.0f; parade %d n=%d at %.0f\n", sat::conj_ev.valid, sat::conj_ev.valid ? sat::planets::name(sat::conj_ev.a) : "",
            sat::conj_ev.valid ? sat::planets::name(sat::conj_ev.b) : "", sat::conj_ev.sep, sat::conj_ev.t, sat::parade_ev.valid, sat::parade_ev.count, sat::parade_ev.t);
     CHECK(sat::parade_ev.valid && sat::parade_ev.count >= 4, "no planet parade found in 60 days");
+    CHECK(sat::parade_ev.valid && __builtin_popcount(sat::parade_ev.mask) == sat::parade_ev.count, "parade names match its count");
     CHECK(sat::conj_ev.valid && sat::conj_ev.a == sat::planets::MARS && sat::conj_ev.b == sat::planets::JUPITER && sat::conj_ev.sep < 1.5f,
           "Mars-Jupiter conjunction not found");
     // a synthetic Starlink train behind the highest Starlink in view
@@ -1604,14 +1640,33 @@ int main() {
           printf("event details: %s\n%s\n", lv_label_get_text(sat::ui.card_title), lv_label_get_text(sat::ui.card_body));
           CHECK(sat::ui.sel_kind == sat::K_INFO && strstr(lv_label_get_text(sat::ui.card_body), "SpaceX Crew-12 Crew Dragon Undocking") &&
                 strstr(lv_label_get_text(sat::ui.card_body), "International Space Station"), "event alert tap: details card");
-          {  // UI-80b: the QR code, centred under the text
+          {  // UI-80b: the QR code button, centred under the text
             lv_obj_update_layout(sat::ui.card);
             lv_area_t qa, ca;
             lv_obj_get_coords(sat::ui.card_qr, &qa);
             lv_obj_get_coords(sat::ui.card, &ca);
             const int off = (qa.x1 + qa.x2) / 2 - (ca.x1 + ca.x2) / 2;
             CHECK(!lv_obj_has_flag(sat::ui.card_qr, LV_OBJ_FLAG_HIDDEN) && std::abs(off) <= 2,
-                  "event card: the webcast QR code, centred (off by %d)", off);
+                  "event card: the QR code button, centred (off by %d)", off);
+          }
+          {  // UI-80d: a tap on the button shows the code (white all over, 424 px), a tap on that closes it
+            const uint32_t before = lv_obj_get_child_count(lv_layer_top());
+            lv_obj_send_event(sat::ui.card_qr, LV_EVENT_CLICKED, nullptr);
+            lv_obj_t *big = sat::qr_big;
+            if (big)
+              lv_obj_update_layout(big);
+            CHECK(big != nullptr && lv_obj_get_child_count(lv_layer_top()) == before + 1 && lv_obj_get_width(big) == 480 && lv_obj_get_child_count(big) == 2,
+                  "a tap on the event card's QR button shows the full-screen code");
+            if (big) {
+              lv_obj_update_layout(big);
+              lv_obj_t *q = lv_obj_get_child(big, 0);
+              CHECK(lv_obj_get_width(q) == 424, "the enlarged QR code is 424 px (%d)", (int) lv_obj_get_width(q));
+              lv_obj_invalidate(lv_screen_active());
+              lv_refr_now(disp);
+              save_ppm(OUT_DIR "/renders/r16_event_qr_big.ppm");
+              lv_obj_send_event(big, LV_EVENT_CLICKED, nullptr);
+            }
+            CHECK(sat::qr_big == nullptr && lv_obj_get_child_count(lv_layer_top()) == before && sat::qr_big_timer == nullptr, "a tap on the enlarged code closes it");
           }
           lv_obj_invalidate(lv_screen_active());
           lv_refr_now(disp);
@@ -2224,6 +2279,7 @@ int main() {
                               "\"width\":730,\"height\":730},\"image_highres\":{\"url\":\"x.tif\"},\"su_image\":{\"url\":\"https://svs.gsfc.nasa.gov/vis/a000000/a005500/a005588/frames/730x730_1x1_30p/moon.6501.jpg\"},"
                               "\"time\":\"2026-09-28T20:00\",\"phase\":94.27,\"obscuration\":0,\"age\":17.69,\"diameter\":1923.2,\"distance\":372667,\"posangle\":340.21}";
       host_http_bodies["a005587/frames/730x730_1x1_30p/moon.6501.jpg"] = slurp(HOST_DIR "/fixtures/moon_test.jpg");
+      key_moon_json = key;
       sat::select_object(sat::K_MOON, 0);
       CHECK(!lv_obj_has_flag(sat::ui.card_img_btn, LV_OBJ_FLAG_HIDDEN) && !strcmp(lv_label_get_text(sat::ui.card_img_lbl), "Image"),
             "moon card button");
@@ -2295,6 +2351,29 @@ int main() {
       sat::tick();
       CHECK(!host_http_close_kept && sat::live.img[IMG_MOON].ok, "moon: a closed kept connection is replaced (%s)",
             sat::live.img[IMG_MOON].err);
+      sat::img_view_close();
+    }
+    {  // NASA unreachable with the Moon viewer open: it asks again every IMG_RETRY_S, however long the viewer stays
+      namespace net = sat::net;
+      const std::string saved = host_http_bodies[key_moon_json];
+      host_http_bodies.erase(key_moon_json);
+      sat::img_view_open_now(IMG_MOON);
+      int asks = 0;
+      const double t0 = sat_host_now;
+      for (int i = 0; i < 30 && asks < 4; i++) {  // a minute: the viewer closes then (UI-72)
+        sat_host_now += 2;
+        sat::tick();
+        sat::img_view_update(sat_host_now);
+        if (net::queued.load() & (1u << sat::JOB_MOONIMG)) {
+          asks++;
+          net::queued.fetch_and(~(1u << sat::JOB_MOONIMG));
+          net::do_image(IMG_MOON);
+          sat::tick();
+          printf("moon retry: ask %d at +%.0f s: \"%s\"\n", asks, sat_host_now - t0, sat::live.img[IMG_MOON].err);
+        }
+      }
+      CHECK(asks >= 4, "moon: NASA unreachable, the viewer asked %d times in %.0f s (4 expected)", asks, sat_host_now - t0);
+      host_http_bodies[key_moon_json] = saved;
       sat::img_view_close();
     }
     // ---- UI-62 the Earth (GOES GeoColor), frames named by scan time (UI-59d)
@@ -2912,6 +2991,40 @@ int main() {
       CHECK(!rk::playing() && rk::st.sea == nullptr && rk::st.lines == nullptr && frames > 150, "splashdown ends (%d frames)", frames);
       sat::alert_override = nullptr;
     }
+    {  // UI-93: the Starship catch plays over the map, the arms close and it cleans up after itself
+      const bool gif = getenv("CATCH_GIF") != nullptr;
+      if (gif)
+        system("rm -rf " OUT_DIR "/cgif && mkdir -p " OUT_DIR "/cgif");
+      rk::play_catch_now();
+      CHECK(rk::playing() && rk::st.starcatch && rk::st.scene && !rk::st.splash && !rk::st.undock, "starship catch plays");
+      int frames = 0;
+      float deg_mid = -1, y_mid = -1, fl_mid = -1, x_mid = -1, tilt_mid = -1;
+      for (int f = 0; rk::playing() && f < 400; f++) {
+        sat_host_now += 0.033;
+        lv_refr_now(disp);
+        if (!rk::playing())
+          break;
+        frames++;
+        const float ts = f * 0.033f;
+        if (ts > 2.0f && deg_mid < 0)
+          deg_mid = rk::st.sc_deg, y_mid = rk::st.sc_y, fl_mid = rk::st.sc_fl, x_mid = rk::st.sc_x, tilt_mid = rk::st.sc_tilt;
+        if (gif) {
+          char fn[80];
+          snprintf(fn, sizeof(fn), OUT_DIR "/cgif/f%03d.ppm", f);
+          save_ppm(fn);
+        }
+      }
+      CHECK(deg_mid > 0.99f && y_mid > 0 && y_mid < rk::CT_Y_END && fl_mid > 40, "catch: arms wide and engines burning on the way down (%.2f open, y %.0f, flame %.0f)", deg_mid, y_mid, fl_mid);
+      CHECK(x_mid > rk::CT_X + 20 && tilt_mid > 3, "catch: coming in from the side away from the tower, tilted (x %.0f, %.0f deg)", x_mid, tilt_mid);
+      CHECK(!rk::playing() && rk::st.scene == nullptr && frames > 200, "catch ends (%d frames)", frames);
+      float x_e, y_e, t_e, d_e, f_e;
+      rk::catch_pose(4.2f, x_e, y_e, t_e, d_e, f_e);
+      CHECK(d_e > 0.05f && d_e < 0.9f && y_e < rk::CT_Y_END - 3 && x_e > rk::CT_X && f_e > 40, "catch: the arms are part-closed while the ship is still sinking and drifting in, plume burning (%.2f open, y %.0f, x %.0f)", d_e, y_e, x_e);
+      rk::catch_pose(8.0f, x_e, y_e, t_e, d_e, f_e);
+      CHECK(x_e == rk::CT_X && y_e == rk::CT_Y_END && t_e == 0 && d_e == 0 && f_e == 0, "catch: held beside the tower, wrapped in the closed arms with the engines out (y %.0f, %.2f open, flame %.0f)", y_e, d_e, f_e);
+      rk::catch_pose(0.0f, x_e, y_e, t_e, d_e, f_e);
+      CHECK(y_e + rk::CT_SH_H < 0 && d_e > 0.99f && x_e > rk::CT_X + 60 && t_e > 20, "catch: starts off the top with the arms open");
+    }
     if (getenv("ABOUT_GIF")) {  // UI-67a: the shooting star over the About page's logo
       lv_obj_t *old = lv_screen_active();
       lv_obj_t *scr = lv_obj_create(nullptr);
@@ -3053,6 +3166,36 @@ int main() {
       rk::play_undock_now();
       CHECK(rk::playing() && rk::st.undock, "undocking button");
       rk::stop();
+      sat::live.events.clear();
+    }
+    {  // UI-94: the Starship catch plays at the time of Launch Library's catch-attempt event, once, and only for such an event
+      rk::stop();
+      sat::live.events.clear();
+      sat::net::EventRec e;
+      snprintf(e.name, sizeof(e.name), "Starship Orbital Catch Attempt");
+      snprintf(e.type, sizeof(e.type), "Spacecraft Landing");
+      e.exact = false;
+      e.t = sat::clock_now() - 3;
+      sat::live.events.push_back(e);
+      rk::check();
+      CHECK(!rk::playing(), "catch event with an uncertain time does not play");
+      sat::live.events[0].exact = true;
+      sat::live.events[0].t = sat::clock_now() + 600;
+      rk::check();
+      CHECK(!rk::playing(), "catch event waits for its time");
+      sat::live.events[0].t = sat::clock_now() - 3;
+      rk::check();
+      CHECK(rk::playing() && rk::st.starcatch && !strcmp(lv_label_get_text(rk::st.label), "Starship Orbital Catch Attempt"), "catch plays at its time");
+      rk::stop();
+      rk::check();
+      CHECK(!rk::playing(), "catch plays once");
+      sat::live.events.clear();
+      snprintf(e.name, sizeof(e.name), "Dragon Landing Burn Test");
+      e.exact = true;
+      e.t = sat::clock_now() - 3;
+      sat::live.events.push_back(e);
+      rk::check();
+      CHECK(!rk::playing(), "a landing event that is not a catch does not start the catch");
       sat::live.events.clear();
     }
     {  // UI-69p docking at the ISS at its time
@@ -3303,6 +3446,11 @@ int main() {
         CHECK(oc::ap.t_end > 8 && oc::ap.t_end < 30, "the axolotl's visit takes %.1f s", oc::ap.t_end);
         for (int q = 0; q < 3; q++)
           CHECK(oc::ap.pull[q] > 1.0f && oc::ap.regrow[q] > oc::ap.pull[q] + 1.0f && oc::ap.regrow[q] < oc::ap.t_end, "target %d is gulped at %.1f and regrows at %.1f", q, oc::ap.pull[q], oc::ap.regrow[q]);
+        for (int q = 0; q < 3; q++) {  // they return only once it has swum off (its middle is 150+ px outside the screen)
+          float xe, ye, fe, de;
+          oc::axo_pos(oc::ap.regrow[q], xe, ye, fe, de, true);
+          CHECK(xe < -100 || xe > 580 || ye < -100 || ye > 580, "target %d regrows at %.1f with the axolotl still at (%.0f, %.0f)", q, oc::ap.regrow[q], xe, ye);
+        }
         float mxx = 0;  // a smooth path: no jump between frames (px in 0.1 s)
         for (float t = 0.1f; t < oc::ap.t_end; t += 0.1f) {
           float xa, ya, fa, da, xb, yb, fb, db;
@@ -3501,6 +3649,35 @@ int main() {
       oc::in_dx = 1, oc::in_dy = 0, oc::out_dx = -1, oc::out_dy = 0;
       oc::hover_x = 260, oc::hover_y = 262;  // (the UFO frames moved it)
       oc::n_ctg = 0;
+    }
+    {  // UI-77b a greyscale JPEG (the ROM's decoder takes colour only): sky_gray decodes it
+      const std::string g = slurp(HOST_DIR "/fixtures/gray_test.jpg");
+      int gw = 0, gh = 0;
+      CHECK(sat::net::jpeg_size((const uint8_t *) g.data(), g.size(), gw, gh) == -2 && gw == 330 && gh == 272, "a greyscale JPEG is told from a colour one (%dx%d)", gw, gh);
+      std::vector<uint16_t> out(240 * 198, 0xF81F);
+      int last_rows = 0;
+      std::vector<uint8_t> gj(g.begin(), g.end());
+      const char *ge = sky_gray_decode(gj.data(), gj.size(), out.data(), 240, 198, [](int d, void *c) { *(int *) c = d; }, &last_rows);
+      auto lum = [&](int x, int y) { return (out[y * 240 + x] >> 11) * 255 / 31; };
+      CHECK(ge == nullptr && last_rows == 198, "the greyscale JPEG decodes (%s, %d rows)", ge ? ge : "ok", last_rows);
+      CHECK(lum(6, 20) < 40 && lum(233, 20) > 215 && lum(120, 20) > 100 && lum(120, 20) < 160, "its gradient comes out dark to bright (%d %d %d)", lum(6, 20), lum(120, 20), lum(233, 20));
+      bool filled = true;
+      for (int i = 0; i < 240 * 198; i++)
+        filled = filled && out[i] != 0xF81F;
+      CHECK(filled, "every pixel of the greyscale picture is written");
+      {  // a real photo (Mariner 9's Ascraeus Mons): its header says 2x2 sampling for the one grey channel, which a plain TJpgDec reads as 4 blocks to the MCU
+        const std::string g2 = slurp(HOST_DIR "/fixtures/gray_2x2.jpg");
+        std::vector<uint8_t> gj2(g2.begin(), g2.end());
+        std::vector<uint16_t> o2(240 * 198, 0);
+        const char *e2 = sky_gray_decode(gj2.data(), gj2.size(), o2.data(), 240, 198, nullptr, nullptr);
+        auto l2 = [&](int x, int y) { return (o2[y * 240 + x] >> 11) * 255 / 31; };
+        const int want[6][3] = {{30, 100, 238}, {200, 40, 148}, {120, 150, 106}, {60, 185, 123}, {230, 120, 74}, {100, 20, 8}};
+        bool same = true;
+        for (const auto &q : want)
+          same = same && std::abs(l2(q[0], q[1]) - q[2]) <= 25;
+        CHECK(e2 == nullptr && same, "a grey JPEG with 2x2 sampling decodes as the picture it is (%s: %d %d %d %d %d %d)", e2 ? e2 : "ok", l2(30, 100), l2(200, 40), l2(120, 150),
+              l2(60, 185), l2(230, 120), l2(100, 20));
+      }
     }
     {  // UI-85 the octopus
       namespace oc = sat::octo;
@@ -3981,6 +4158,31 @@ int main() {
       sat_host_now = floor(t4 / 1800) * 1800 + 60;
       fake_pic(5, 25);
       alert_and_card(sat::AI_HISTORY, "r24_history3_alert", "r24_history3_card", "Kennedy");
+      {  // Mariner 9's day (Nov 14) with its real picture, decoded the way the net task does (the card as it shows on the unit)
+        net::parse_epoch("2026-11-14T18:05:00", t4);
+        sat_host_now = floor(t4 / 1800) * 1800 + 60;
+        const std::string mj = slurp(HOST_DIR "/fixtures/mariner9_card.jpg");
+        int sw = 0, sh = 0;
+        CHECK(net::jpeg_size((const uint8_t *) mj.data(), mj.size(), sw, sh) == 1, "the Mariner 9 picture is a colour baseline JPEG");
+        int tw = net::hpic::MAXW, th = (int) ((int64_t) tw * sh / sw);
+        if (th > net::hpic::MAXH)
+          th = net::hpic::MAXH, tw = (int) ((int64_t) th * sw / sh);
+        tw = std::max(tw & ~1, 16), th = std::max(th & ~1, 16);
+        uint16_t *pb = (uint16_t *) calloc((size_t) net::hpic::MAXW * net::hpic::MAXH, 2);
+        uint16_t *ac = (uint16_t *) calloc((size_t) net::hpic::MAXW * net::hpic::MAXH * 3, 2);
+        net::JpgStream js;
+        js.jpg = (const uint8_t *) mj.data(), js.work = pb, js.acc = ac, js.dim = tw, js.dimh = th;
+        js.run(mj.size(), false);
+        free(ac);
+        const sat::hist::Ev *e2[4];
+        const int k = sat::hist::on(11, 14, e2, 4);
+        net::hpic::px = pb;
+        net::hpic::w = tw, net::hpic::h = th;
+        net::hpic::req = net::hpic::have = sat::hist::index_of(e2[(int64_t) (sat_host_now / 1800) % k]);
+        net::hpic::state = 2;
+        net::hpic::open = true;
+        alert_and_card(sat::AI_HISTORY, "r24_history_mariner_alert", "r24_history_mariner_card", "Mariner 9");
+      }
     }
     sat::live.status = st0;
     sat_host_now = save_now;
