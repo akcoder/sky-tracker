@@ -1,6 +1,7 @@
 # Sky Tracker — Design Requirements (rev 4.5)
 
 ## Changes in rev 4.5
+- 4.6.64 (released): a Starship catch animation, after the real one: a ship comes in tilted on a diagonal, tail-first on a thin pale plume, straightens and drops beside the tower while its two arms close round it, with steam as the engines cut (Play Starship Catch Animation, web page only; UI-93). a picture download no longer fails part way for lack of internal RAM (the decoder's and the network task's stacks are smaller) (NET-16d). the hourly firmware check waits for a download in progress instead of cutting it off (NET-14). more free internal RAM (20 -> 33 KB) by keeping the Wi-Fi driver out of IRAM (NET-19). the Moon picture loads again: NASA's server now accepts only TLS 1.3 and the firmware spoke only TLS 1.2 ("could not reach NASA"); TLS 1.3 is on (NET-17). the axolotl's eaten things regrow on the map only after it has swum off the screen (they came back while it was still leaving) (UI-91). a picture that could not be fetched ("could not reach NASA") is asked for again after 15 s while the viewer or a card is open, not 90 s: the viewer closes after a minute untouched, so it never got a second try (UI-59g). the UFO stays until its last line has been on screen for over two seconds, before it flies off (UI-90). the planet parade alert and its card say which planets are in it (UI-43). what the UFO beams up starts at the size it had on the map and does not jump (UI-90). the black-and-white pictures on the On this day cards (14 of 106: Gagarin, Earthrise, Luna 3, Mariner 9 ...) load: the ROM's JPEG decoder takes colour only, so a private copy of the newer one decodes the greyscale files (UI-77b). Mariner 9's card shows the spacecraft, not a grey Mars photo that looked like an asteroid (UI-77b). an event or launch card has a "QR code" button instead of a 120 px code (3 px a module cannot be scanned on this screen, even with a white margin): it opens the code on a white screen, 424 px, closing on a tap or after a minute (UI-80d). The Sky, Satellites and ISS entities are on the web page only, no longer sent to Home Assistant (NET-1b). A Starship launch card says when its upper stage is to be caught by the tower, and the catch scene plays at the time Launch Library gives for the attempt (UI-94).
 - 4.6.63 (released): an axolotl and Audrey (a man-eating plant) visit the map with the octopus, the dinosaur, the UFO and the cat: a visit in six each (UI-91, UI-92). the Moon no longer shows outside the sky disc as it rises or sets: the rim mask followed the Moon's last place, not its new one (UI-6b). Every critter paints a little faster (the soft-edged line primitive skips a square root and a division a pixel). the Moon-near-a-planet-or-star alert ("Moon near Regulus this morning") opens a details card saying when they are closest, how far apart, and what the star is (constellation, magnitude, distance, a fact) (UI-49b).
 - 4.6.62 (released): a value that changes on the screen crossfades (the old text fades out, the new one fades in over half a second): the layer counts on the right (SAT, SL, GEO) and the almanac lines (Sun and Moon rise and set, the Moon phase), as the clock and the alerts already did (UI-88). When the cat destroys the disc the layer counts crossfade to zero and back as it returns (UI-90). The cat's beams are drawn along their whole length (the redraw box covered only their ends, so the disc seemed to blow up before the beam reached it); the visit log says which shot lands on what. The On this day card's picture is asked for at the front of the network queue (it waited behind the background refreshes), the card's "Loading the picture..." line goes as soon as the picture starts to arrive (it stayed up to 1.6 s under a picture that was already showing), and closing the card while the picture is arriving no longer frees the buffer the download is writing to (UI-77b).
 - 4.6.61 (released): a firmware update stops a visit that is playing (nothing animates while it is written). the cat (UI-90): lines before the big shot and on leaving (including the Alderaan one), it weaves and bobs on its way, picks targets that are not under it where it hovers and fires, fires the big shot from the edge or corner it leaves by (outside the disc), and its bubble sits above its ears or, with no room, beside it. The cat redraws only the box round the comet and cat (was nearly the whole screen: 184 kpx a frame, 11.7 fps; now 91 kpx, 13.9 fps), the blast's flash and debris stay inside the shock and the disc, a shot that lands and the disc coming back copy a patch of the map into the backdrop (taken once when the visit starts, 160 ms before it plays) instead of retaking the whole screen, which stopped the cat for 155 ms a time (longest gap 331 ms, now 100 to 170 ms); the cat always has 2 to 4 targets (bright stars make up what the map has too few of); and the visit log prints a line a second (frames, painting time, longest gap). The dinosaur dips its head to eat what it hunts (two new head-down poses, made by tools/gen_dino_dip.py from the standing pose; it chews with the head down at the target, which is now level with its mouth) (UI-85c). The Octopus Visits switch is now Critter Visits (it gates the octopus, UFO and cat visits), and the Animations section's order is: the two switches, the launch, docking, undocking and splashdown buttons, then Cat, Dinosaur, Octopus, Lunar Eclipse, Solar Eclipse and UFO (NET-6).
@@ -735,7 +736,7 @@ UI-41  Status-line alerts, when the status line would be all-is-well or empty
        brighter); upcoming alignments within 60 days: a conjunction (two planets
        within 2°, both at least 5° up, magnitude 1.5 or brighter, Sun below -6°;
        "Mars & Jupiter 1.2° apart - Nov 16 morning") and a planet parade (4 or more
-       such planets up at once; "Planet parade - 4 planets Nov 12 morning"). The
+       such planets up at once; "Planet parade: Venus, Mars, Jupiter and Saturn - Nov 12 morning"; the details card names them too). The
        alignment look-ahead samples every half hour, one day per tick, hourly. Icons:
        MDI glyphs (space-station, aurora) or 20 px pictures (planets; the alignment
        icon), text in mono15 (every alert the same font) in the alert's colour, 3 px
@@ -1046,8 +1047,8 @@ UI-91  An axolotl visits (a visit in five, with the dinosaur, octopus, UFO and c
        must, and beats its tail harder the faster it goes. Its body is a bendable spine, not a stiff piece: the head leads into a climb or a dive and each part behind
        it takes the heading the head had a moment earlier, so the tail trails along the path (a little wave runs through it as it swims). It picks 2 to 4 small things on the map (the ISS and satellites,
        bright stars; not the Sun, Moon, planets or constellations), nearest first, stalks each for half a second, lunges, gapes and sucks it into its mouth (the
-       thing shrinks as it flies in), puffs its cheeks and blows bubbles. When it has eaten them all they regrow on the map with a sparkle and it swims off by
-       another edge. Its lines: before the first gulp ("Snack time.", "Is that a worm?", "Blub.") and as they regrow ("Regrows nicely.", "Don't worry, I can regrow
+       thing shrinks as it flies in), puffs its cheeks and blows bubbles. When it has eaten them all it swims off by another edge, and they regrow on the map
+       with a sparkle only once it is off the screen. Its lines: before the first gulp ("Snack time.", "Is that a worm?", "Blub.") and as they regrow ("Regrows nicely.", "Don't worry, I can regrow
        that."); the bubble sits above its head (beside it if there is no room), at its calm course's height. It reuses the cat's map patches (a thing taken off, and
        put back, by copying a patch of the map), 24 fps on the unit (the visit's step is 25 ms for it, 50 ms for the others), 43 to 60 kpx a frame. Not eaten yet:
        a Starlink train's row of cars. Comps: docs/comps/axolotl_strip.png (poses and four colours), axolotl_visit_strip.png and axolotl_visit.gif (the planned visit
@@ -1063,6 +1064,30 @@ UI-92  Audrey, a man-eating plant, visits (a visit in six; the Play Audrey Anima
        the redraw box is worked from what it paints (pot and tentacles, the stem with its leaves, the head, the tongue, the sparkles), and the host test checks that nothing
        is painted outside it, for it and the axolotl, over a whole visit (anything outside is clipped away and smears). Comps: docs/comps/audrey_strip.png, audrey_neck_closeup.png,
        audrey_anim_strip.png and audrey_anim.gif (tools/host_test/make_critter_comps.py after the host test with CRITTER_GIF=1).
+UI-93  Starship catch (8.5 s; the Play Starship Catch Animation button, web Animations group only: internal, not in the API or Home Assistant; debug "anim catch"; plays by itself at the time of a catch-attempt event (UI-94)
+       triggers it), after the real Flight 15 catch: a launch tower (a lattice column, 40 px wide) stands on the left of the sky disc on a pad, its carriage on the column and a
+       beam out to the right at y=190 carrying the two orange arms (Mechazilla's chopsticks), hinged 52 px either side of where the ship will hang, always at the
+       beam's height and swung wide: short stubs pointing at the viewer and spread outward. A Starship (34 px wide, 120 tall, stainless silver on the left, black heat shield on the
+       right, aft flaps, forward flaps tucked up, catch pins 52 px under its tip) comes in tail-first from off the top right, away from the tower, tilted 26 degrees (nose to
+       the right) on a diagonal, one fall that eases to nothing over 5.2 s (position = place + (138, -(y+190)) u^2, u the fraction of the time left), straightening as it goes and
+       drifting sideways into its place beside the tower. Its exhaust is a thin, long pale pink-violet plume (three nested narrow triangles, 60 to 110 px, flickering softly, along the
+       ship's axis). The arms start closing at 3.3 s while the ship is still slowing, sinking and drifting, and are shut by 5.2 s as it comes to rest (smoothstep): each an
+       elbowed thick line (hinge, elbow, tip) drawn in front of the ship that wraps round its upper body and meets the other's tip at its front under the pins. The engines cut at
+       5.4 s (plume dies in 0.25 s) and six large slow steam billows (the launch's unused ground-cloud discs) swell and thin round the arms for about 1.3 s, with a burst of 14
+       puffs; the ship is held cradled in the wrapped arms to 8.5 s. Banner "Starship catch: Ship 42 caught by the tower" (SpaceX's first catch of an upper stage, Flight 15,
+       14 Nov 2026), tap to skip, frame log. Tower, arms, ship and plume are one full-screen object drawing rectangles, triangles (the ship's parts, turned with its tilt) and
+       thick lines (no pictures, no buffers); only the ship's and arms' boxes are invalidated; the steam is the shared smoke discs (UI-69i). Host test: CATCH_GIF=1 writes
+       out/cgif frames.
+UI-94  A Starship launch whose booster and/or ship the launch tower is to catch (Launch Library 2: the stage's landing type is
+       "Return to Launch Site"; an ocean splashdown says "Ocean") says so on its details card: "Tower catch planned for the
+       upper stage" (the ship only: a booster catch is not mentioned or animated). Read from the per-launch call that already fetches the webcast link (the filter
+       adds the two stages' landing types), kept with the link for six hours; asked of Starships only, as a Falcon's
+       "Return to Launch Site" is a landing pad.
+       The catch itself is timed by Launch Library's own event "Starship Orbital Catch Attempt" (type Spacecraft Landing; its
+       launch timeline carries the same moment, about 22.5 h after liftoff for Flight 15): when the event's time is exact the
+       catch scene (UI-93) plays at that time, once, with the event's name on the banner (the scene shows a catch whether or
+       not the attempt works, as the launch scene shows a liftoff), and the event is on the status line ahead of it like any
+       space event (the Sky events switch). The time follows the launch's slips as Launch Library updates the event.
 UI-89  A visible ISS pass that starts within 10 minutes or is under way is drawn on the map as its path (the selected pass's
        arc, with the rise dot), with nothing selected and the ISS alerts on. Selecting the ISS or Tiangong, or a Sun or Moon
        card, shows its own arc as before.
@@ -1663,7 +1688,7 @@ PERF-19 Screen-drawing numbers: LVGL's REFR, RENDER and FLUSH events are timed (
         command "perf"; a refresh over 150 ms is logged as it happens. The minute line also says whether LVGL's draw
         buffer is in internal RAM or PSRAM, and how much internal RAM is free.
 PERF-20 Debug commands over the network, without a finger: the API action debug_cmd (tools/dbg.py calls it and reads
-        the log stream) takes "perf", "mem", "anim <launch|dock|undock|splash|octopus>", "reset", "state", "close", "open <sun|moon|earth|region|uaf|planet N>" and "page
+        the log stream) takes "perf", "mem", "anim <launch|dock|undock|splash|octopus>", "reset", "state", "close" (the viewers, a card, the finder, and it returns to the sky page), "open <sun|moon|earth|region|uaf|planet N>" and "page
         <sky|list|settings|about|debug>"; a command counts as a touch (the one-minute idle close would shut what it
         opened). No serial port is needed: opening it resets the board, and a reset within a minute of a flash rolls the
         update back (safe mode's "boot is good" mark comes after a minute). tools/dbg_screens.txt opens every screen.
@@ -1727,6 +1752,9 @@ NET-1  ESPHome's web server runs on port 80 (version 3, with the UI bundled loca
        hardcodes it in its bundled page): tracker-common's tracker::web swaps the link in the
        page it serves at "/" (NET-10; it replaces the build-time patch in __init__.py). A
        later ESPHome that words the page differently leaves the link alone and warns.
+NET-1b The 22 entities of the web page's Sky, Satellites and ISS sections (aurora and solar wind, Next Launch,
+       the satellite counts and layer switches, LEO cone, the ISS pass) are `internal: true`: shown on the web page
+       (`include_internal`) but not in the API, so Home Assistant gets no state for them. The other sections are unchanged.
 NET-2  Fallback AP "Sky Tracker - XXXX", where XXXX is the last 4 hex digits of the
        MAC, with no password. The captive portal serves Wi-Fi setup while the AP is
        up. The name is set at boot (on_boot priority 1100, before Wi-Fi), because
@@ -1854,6 +1882,21 @@ NET-16b The AES hardware takes an internal-RAM DMA buffer for each TLS record (t
        download after 15887 bytes. Hardware crypto stays; internal RAM is freed instead: the sat_net stack 20 -> 12 KB and the astro
        stack 8 -> 5 KB (measured peaks 6 and 2 KB: the mem command prints each task's use). Nothing is moved to PSRAM that the panel's
        scan-out would compete with.
+NET-16d The picture decoder task (jpgdec) took a 6 KB internal-RAM stack for every picture download, so internal RAM was at its
+       lowest (8 KB free, 7 KB largest block) just when the TLS reads needed their AES buffers ("esp-aes: Failed to allocate memory",
+       the Moon picture cut after 13679 bytes). Its stack is 3.5 KB (it uses 1.3 to 1.5 KB: the log prints it) and the sat_net stack
+       10 KB (7 KB used). Measured over the Moon and Earth pictures: internal lowest free 13 KB (was 8), 19 KB free and an 11 KB largest block when idle; no download error.
+NET-19 The Wi-Fi driver's hot paths are not kept in IRAM (CONFIG_ESP_WIFI_IRAM_OPT and CONFIG_ESP_WIFI_RX_IRAM_OPT off; both
+       are on by default): 18 KB of IRAM (.wifi0iram 7.8, .wifislprxiram 6.6, .wifirxiram 3.6 KB in the map), which the
+       heap gets back. Measured on the unit: internal RAM free 20 -> 33 KB at rest (lowest ever 17 -> 24 KB, largest block
+       12 -> 23 KB), PSRAM total 64 KB less (the code now sits there). Cost: the Wi-Fi code runs from PSRAM like the rest, and
+       the panel's resync counter ("frame start put right") read 4-5 in the first minutes of downloads against 2 before
+       (none when idle). A download-speed comparison was inconclusive (the NOAA images are cached and the CDN varies); watch
+       the "KB in N s" log lines. To undo: set both options back to y.
+NET-17 TLS 1.3 is enabled (CONFIG_MBEDTLS_SSL_PROTO_TLS1_3, with SSL_KEEP_PEER_CERTIFICATE, which it needs). NASA's SVS (the Moon
+       picture) answers a TLS 1.2 hello with a "protocol version" alert (mbedtls -0x7780, "could not reach NASA"). The other hosts
+       still talk 1.2. Checked: the Moon picture loads, the main task's stack peak is unchanged (6.5 KB), internal RAM free was
+       17 KB at the viewer open (was 23 to 26 KB).
 NET-16c The Earth and region downloads need ~1.5 MB of PSRAM at once (JPEG buffer + the box filter's sums). PSRAM free had shrunk to
        ~1.2 MB ("picture 2: out of memory"), 360 KB of it the Planets tab's picture buffers kept after the viewer closed. They are
        freed when the viewer closes (unless a picture job is running); the JPEG buffer is 768 KB, else 640 or 512 KB (the Earth
@@ -1861,6 +1904,7 @@ NET-16c The Earth and region downloads need ~1.5 MB of PSRAM at once (JPEG buffe
 UI-80c Launch and event QR codes: the link is the best-ranked https video link, else the best info page; none, no QR.
        A launch's links come from its own reply (/launches/<id>/, 48 KB): the list has none. At most two such calls per list
        refresh, only when no launch is inside 120 min of its time, a link kept per id for 6 h (and in the flash cache).
+UI-80d QR codes are scannable through glare: the event and launch cards show a "QR code" button (a code small enough for the card, 3 px a module, cannot be scanned on this screen); it opens the code on a white screen, 424 px (about 11 px a module, with a wide white margin), "Tap to close"; it closes on a tap or after a minute. (The launch countdown's own code is unchanged.)
 NET-15 DNS check (dns_check, sat_tracker.h): on Wi-Fi connect and once a minute the DNS servers the unit holds are read; a
        change is logged ("dns (connected): main x, backup y, gateway z"); a unit with no main DNS server (a DHCP reply without
        one) gets the gateway as its main one, and every unit gets Cloudflare 1.1.1.1 as a backup when it has none, which
@@ -1873,9 +1917,11 @@ NET-14 The firmware check's and install's TLS connection MUST NOT start while th
        in the web log, 4.6.36). sat::upd asks the data task to stay off the network (net_hold: 25 s
        for a check, 40 s for an install); the task drops its kept connection as it wakes (a JOB_DROP
        wakes an idle one), and the request starts once net_quiet() (no job running, no kept
-       connection) or after 6 s. A download in progress is stopped: http_stream's read loop
-       ends when the hold (or BUILD-6's pause) is on, and the job fails as a read error (its own
-       backoff). One request waits at a time: a second while one waits only replaces it when its
+       connection) or after 6 s. An install stops a download in progress: http_stream's read loop
+       ends when its hold (or BUILD-6's pause) is on, and the job fails as a read error (its own
+       backoff). A CHECK (hourly or tapped) does not: its hold only keeps new requests off the
+       network (net_hold(ms, cut=false)), the request in flight finishes, and the check starts
+       once net_quiet(), or after 3 min. One request waits at a time: a second while one waits only replaces it when its
        hold is longer (an install over a check); a check dropped that way is repeated hourly.
 NET-13a Firmware update checks go through sat::upd (boot +3 min, hourly interval, Settings, the
        Upgrade Check button; the entity's own polling is off) and log "firmware: GET <manifest>"

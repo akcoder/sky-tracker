@@ -47,6 +47,7 @@ inline HostUpdate host;  // the update entity the tests set and read
 struct Deferred {
   void (*fn)();
   uint32_t t0, hold_ms;
+  bool gentle;  // a check: no new request starts, but the one in flight finishes (the install cuts it short)
 };
 inline Deferred *deferred = nullptr;  // the one request waiting (a second one would run its own blocking fetch beside it)
 inline void when_quiet(void (*fn)(), uint32_t hold_ms) {
@@ -54,16 +55,23 @@ inline void when_quiet(void (*fn)(), uint32_t hold_ms) {
     if (hold_ms > deferred->hold_ms) {
       deferred->fn = fn;
       deferred->hold_ms = hold_ms;
+      deferred->gentle = false;
       net_hold(hold_ms);
     }
     return;
   }
-  net_hold(hold_ms);
-  deferred = new Deferred{fn, esphome::millis(), hold_ms};
+  const bool gentle = hold_ms == CHECK_HOLD_MS;  // (the install's hold is longer)
+  net_hold(hold_ms, !gentle);
+  deferred = new Deferred{fn, esphome::millis(), hold_ms, gentle};
   lv_timer_create(
       [](lv_timer_t *t) {
         Deferred *d = deferred;
-        if (net_quiet() || esphome::millis() - d->t0 > 6000) {
+        // a check waits (up to 3 min) for the request in flight, and keeps new ones off the network meanwhile
+        if (d->gentle && !net_quiet() && esphome::millis() - d->t0 < 180000) {
+          net_hold(d->hold_ms, false);
+          return;
+        }
+        if (net_quiet() || esphome::millis() - d->t0 > (d->gentle ? 180000u : 6000u)) {
           void (*fn)() = d->fn;
           delete d;
           deferred = nullptr;  // (before the call: the fetch blocks the loop, and its own hooks may call back)

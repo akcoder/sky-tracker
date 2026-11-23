@@ -3205,7 +3205,6 @@ inline void draw_trail(lv_layer_t *layer, const lv_area_t &clip, int ox, int oy,
 // empty sky closes the card; with no card open it flips the page as before (UI-2).
 constexpr int TAP_R = 22;          // px: how near a tap must land
 constexpr double CARD_TIMEOUT_S = 90;
-constexpr int CARD_QR_PX = 120;  // UI-80b: the event card's QR code (3 px a module for a YouTube link, as UI-80)
 
 // UI-28: project the GEO list to dots (on fresh GEO data and when the view changes).
 inline void geo_project(double t) {
@@ -3916,6 +3915,7 @@ struct AlignEv {
   int a = -1, b = -1;  // conjunction pair
   float sep = 99;
   int count = 0;       // parade size
+  unsigned mask = 0;   // which planets are in the parade (bit per planet)
 };
 struct AlignScan {
   bool running = false;
@@ -3924,6 +3924,18 @@ struct AlignScan {
   AlignEv c, p;
 };
 inline AlignScan align_scan;
+inline void parade_names(const AlignEv &v, char *out, size_t n) {  // "Venus, Mars and Jupiter"
+  out[0] = 0;
+  int left = 0;
+  for (int p = 0; p < planets::N_PLANETS; p++)
+    left += (v.mask >> p) & 1;
+  size_t o = 0;
+  for (int p = 0; p < planets::N_PLANETS && o < n; p++)
+    if ((v.mask >> p) & 1) {
+      left--;
+      o += snprintf(out + o, n - o, "%s%s", planets::name(p), left == 0 ? "" : left == 1 ? " and " : ", ");
+    }
+}
 inline AlignEv conj_ev, parade_ev;  // the UI's
 inline AlignEv conj_out, parade_out;  // PERF-15: from the astro task, taken by astro_collect
 inline std::atomic<bool> align_ready{false};
@@ -3949,16 +3961,19 @@ inline void align_step(double t, int per = 48) {
     geo::AzEl az[planets::N_PLANETS];
     bool vis[planets::N_PLANETS];
     int n = 0;
+    unsigned mask = 0;
     for (int p = 0; p < planets::N_PLANETS; p++) {
       const planets::Pos ps = planets::position(p, j);
       az[p] = astro::horizontal(ps.equ, c.lat, lst);
       vis[p] = az[p].el >= ALIGN_EL && ps.mag <= ALIGN_MAG;
       n += vis[p];
+      mask |= vis[p] ? 1u << p : 0u;
     }
     if (n >= PARADE_MIN && (!S.p.valid || (n > S.p.count && ts - S.p.t < 3 * 86400.0))) {
       S.p.valid = true;
       S.p.t = ts;
       S.p.count = n;
+      S.p.mask = mask;
     }
     for (int a = 0; a < planets::N_PLANETS; a++)
       for (int b2 = a + 1; b2 < planets::N_PLANETS; b2++) {
@@ -4527,7 +4542,9 @@ inline int collect_alerts(double t, Alert *out, int max) {
       if (Alert *a = add(C_ALIGN, nullptr, align_dsc())) {
         a->info = AI_PARADE;
         when_text(t, parade_ev.t, w, sizeof(w));
-        snprintf(a->text, sizeof(a->text), "Planet parade - %d planets %s", parade_ev.count, w);
+        char pn[64];
+        parade_names(parade_ev, pn, sizeof(pn));
+        snprintf(a->text, sizeof(a->text), "Planet parade: %s - %s", pn, w);
       }
   }
   // UI-52 Tiangong: a visible pass soon or in progress, like the ISS
@@ -5273,14 +5290,58 @@ inline void card_pad_update() {
   const bool buttons = !info || info_alert.info == AI_AURORA || info_alert.info == AI_WIND || info_alert.info == AI_SWX || info_alert.info == AI_FULLMOON;
   lv_obj_set_style_pad_bottom(ui.card, buttons ? 52 : 10, 0);
 }
+// UI-80d: the card's "QR code" button opens the code: white all over, the code 424 px (about 11 px a module, against 3), "Tap to close"; it closes
+// on a tap or after a minute. (A phone has to read it through glare, over a few feet.)
+inline lv_obj_t *qr_big = nullptr;
+inline lv_timer_t *qr_big_timer = nullptr;
+inline void qr_big_close() {
+  if (qr_big_timer) {
+    lv_timer_delete(qr_big_timer);
+    qr_big_timer = nullptr;
+  }
+  if (qr_big) {
+    lv_obj_delete(qr_big);
+    qr_big = nullptr;
+  }
+}
+inline bool qr_big_open() {
+  if (qr_big || ui.card_qr_text[0] == 0)
+    return false;
+  qr_big = lv_obj_create(lv_layer_top());
+  lv_obj_remove_style_all(qr_big);
+  lv_obj_set_size(qr_big, 480, 480);
+  lv_obj_set_pos(qr_big, 0, 0);
+  lv_obj_set_style_bg_color(qr_big, lv_color_hex(0xFFFFFF), 0);
+  lv_obj_set_style_bg_opa(qr_big, LV_OPA_COVER, 0);
+  lv_obj_remove_flag(qr_big, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(qr_big, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t *q = lv_qrcode_create(qr_big);
+  lv_qrcode_set_size(q, 424);
+  lv_qrcode_set_dark_color(q, lv_color_hex(0x000000));
+  lv_qrcode_set_light_color(q, lv_color_hex(0xFFFFFF));
+  lv_qrcode_update(q, ui.card_qr_text, (uint32_t) strlen(ui.card_qr_text));
+  lv_obj_align(q, LV_ALIGN_TOP_MID, 0, 8);
+  lv_obj_remove_flag(q, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t *l = lv_label_create(qr_big);
+  if (ui.w.label_font)
+    lv_obj_set_style_text_font(l, ui.w.label_font, 0);
+  lv_obj_set_style_text_color(l, lv_color_hex(0x404040), 0);
+  lv_label_set_text(l, "Tap to close");
+  lv_obj_align(l, LV_ALIGN_BOTTOM_MID, 0, -16);
+  lv_obj_add_event_cb(qr_big, [](lv_event_t *) { qr_big_close(); }, LV_EVENT_CLICKED, nullptr);
+  qr_big_timer = lv_timer_create([](lv_timer_t *) {
+    qr_big_timer = nullptr;  // (a one-shot timer deletes itself)
+    qr_big_close();
+  }, 60000, nullptr);
+  lv_timer_set_repeat_count(qr_big_timer, 1);
+  return true;
+}
 // UI-80b/c: the card's QR code for a launch or event link; nothing (hidden) when it has none
 inline void card_qr_show(const char *link) {
   if (ui.card_qr == nullptr || link == nullptr || link[0] == 0)
     return;
   if (strcmp(ui.card_qr_text, link) != 0) {
     net::copy_cstr(ui.card_qr_text, sizeof(ui.card_qr_text), link);
-    if (lv_qrcode_update(ui.card_qr, ui.card_qr_text, (uint32_t) strlen(ui.card_qr_text)) != LV_RESULT_OK)
-      ui.card_qr_text[0] = 0;
   }
   if (ui.card_qr_text[0])
     lv_obj_remove_flag(ui.card_qr, LV_OBJ_FLAG_HIDDEN);
@@ -5384,8 +5445,9 @@ inline void info_card_update(double t) {
       const float km = launch_km(l, &brg);
       if (!std::isnan(km))
         snprintf(far, sizeof(far), "\n%.0f %s away, to the %s", dist(km), dist_unit(), compass(brg));  // UI-29
-      snprintf(body, sizeof(body), "%s\n%s %s (%s%s)\nFrom %s\nStatus: %s%s", mission, d0, h0, l.net > t ? "in " : "",
-               cd, l.where, l.status[0] ? l.status : "unknown", far);
+      snprintf(body, sizeof(body), "%s\n%s %s (%s%s)\nFrom %s\nStatus: %s%s%s", mission, d0, h0, l.net > t ? "in " : "",
+               cd, l.where, l.status[0] ? l.status : "unknown", far,
+               (l.tower & 2) ? "\nTower catch planned for the upper stage" : "");  // UI-94 (the ship; the booster is not mentioned)
       card_qr_show(l.watch);  // UI-80c: its webcast or page
       break;
     }
@@ -5434,8 +5496,12 @@ inline void info_card_update(double t) {
         snprintf(body, sizeof(body), "Closest %s %s, %.1f\xC2\xB0 apart (a thumb's width at arm's length is "
                  "about 2\xC2\xB0).\nThey only look close: they line up as seen from Earth.", d0, h0, v.sep);
       else
-        snprintf(body, sizeof(body), "%d planets above the horizon together, %s %s.\nThey sit along the ecliptic, "
-                 "the Sun's path across the sky.", v.count, d0, h0);
+      {
+        char pn[64];
+        parade_names(v, pn, sizeof(pn));
+        snprintf(body, sizeof(body), "%s: %d planets above the horizon together, %s %s.\nThey sit along the ecliptic, "
+                 "the Sun's path across the sky.", pn, v.count, d0, h0);
+      }
       break;
     }
     case AI_ECLIPSE: {
@@ -6588,13 +6654,14 @@ struct ImgReq {
 };
 inline ImgReq img_req[net::IMG_N];
 constexpr double IMG_REFRESH_S = 600, IMG_RETRY_S = 90, ALLSKY_REFRESH_S = 10;
+constexpr double IMG_RETRY_OPEN_S = 15;  // UI-59g: with the viewer or a card open (it closes after a minute untouched, UI-72) the user is waiting
 inline bool img_view_open() { return sv.root != nullptr; }
 inline bool img_loading(int k) { return img_req[k].asked && live.img[k].seq == img_req[k].seq; }
 inline void img_request(int k, double t) {
   ImgReq &q = img_req[k];
   if (!net::link_up || img_loading(k))
     return;
-  const double wait = q.asked && !live.img[k].ok ? (!strcmp(live.img[k].err, "out of memory") ? 10.0 : IMG_RETRY_S)
+  const double wait = q.asked && !live.img[k].ok ? (!strcmp(live.img[k].err, "out of memory") ? 10.0 : (img_view_open() || ui.sel_kind >= 0) ? IMG_RETRY_OPEN_S : IMG_RETRY_S)
                      : k == net::IMG_ALLSKY            ? ALLSKY_REFRESH_S  // UI-75: a new frame every minute or two
                                                        : IMG_REFRESH_S;
   if (q.asked && t - q.at < wait)
@@ -7920,12 +7987,23 @@ inline void card_build() {
   ui.card_pic = lv_image_create(ui.card);  // UI-77b: filled from the net task's buffer (hist_pic_card)
   lv_obj_remove_flag(ui.card_pic, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_add_flag(ui.card_pic, LV_OBJ_FLAG_HIDDEN);
-  // UI-80b: the next row of the column, a QR code to a space event's webcast (as the countdown's, UI-80)
-  ui.card_qr = lv_qrcode_create(ui.card);
-  lv_qrcode_set_size(ui.card_qr, CARD_QR_PX);
-  lv_qrcode_set_dark_color(ui.card_qr, lv_color_hex(0x000000));
-  lv_qrcode_set_light_color(ui.card_qr, lv_color_hex(0xFFFFFF));
-  lv_obj_remove_flag(ui.card_qr, (lv_obj_flag_t) (LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+  // UI-80b/d: the next row of the column, a "QR code" button for a space event's webcast: it opens the full-screen code (qr_big_open). A code
+  // small enough for the card (3 px a module) cannot be scanned on this screen, through glare and its own pixel grid, whatever its margin.
+  ui.card_qr = lv_button_create(ui.card);
+  lv_obj_set_size(ui.card_qr, 132, 40);
+  lv_obj_set_style_margin_top(ui.card_qr, 8, 0);
+  lv_obj_set_style_bg_color(ui.card_qr, lv_color_hex(0x24356A), 0);
+  lv_obj_set_style_shadow_width(ui.card_qr, 0, 0);
+  lv_obj_set_ext_click_area(ui.card_qr, 12);
+  {
+    lv_obj_t *ql = lv_label_create(ui.card_qr);
+    if (ui.w.title_font)
+      lv_obj_set_style_text_font(ql, ui.w.title_font, 0);
+    lv_obj_set_style_text_color(ql, lv_color_hex(0xEEF2FF), 0);
+    lv_label_set_text(ql, "QR code");
+    lv_obj_center(ql);
+  }
+  lv_obj_add_event_cb(ui.card_qr, [](lv_event_t *) { qr_big_open(); }, LV_EVENT_CLICKED, nullptr);
   lv_obj_add_flag(ui.card_qr, LV_OBJ_FLAG_HIDDEN);
   // UI-57: "Find" at the bottom right of every card
   lv_obj_set_style_pad_bottom(ui.card, 52, 0);
@@ -8279,6 +8357,7 @@ void play_now();
 void play_undock_now();
 void play_dock_now();
 void play_splash_now();
+void play_catch_now();
 void countdown_show(int launch);  // the launch countdown for that listed launch (debug cdtest)
 }  // namespace rocket
 namespace octo {
@@ -8449,7 +8528,7 @@ inline void run(const char *cmd) {
     }
     ESP_LOGI(UI_TAG, "dbg: list %d rows: STR %d, PL %d, CON %d (stars shown %d, sun el %.1f)", n, str, pl, con, (int) ui.stars_shown,
              (double) ui.view_sun_el);
-  } else if (!strncmp(cmd, "anim ", 5)) {  // the Play ... Animation buttons: launch dock undock splash octopus
+  } else if (!strncmp(cmd, "anim ", 5)) {  // the Play ... Animation buttons: launch dock undock splash catch octopus
     const char *a = cmd + 5;
     if (!strcmp(a, "launch"))
       rocket::play_now();
@@ -8459,6 +8538,8 @@ inline void run(const char *cmd) {
       rocket::play_undock_now();
     else if (!strcmp(a, "splash"))
       rocket::play_splash_now();
+    else if (!strcmp(a, "catch"))
+      rocket::play_catch_now();
     else if (!strcmp(a, "octopus"))
       ESP_LOGI(UI_TAG, "dbg: octopus %s", octo::play_now() ? "started" : "NOT started");
     else if (!strcmp(a, "ufo") || !strcmp(a, "cat") || !strcmp(a, "axo") || !strcmp(a, "audrey"))
